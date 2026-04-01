@@ -1,0 +1,18 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@keyframes chat-bubble-flash {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+  20%,
+  55% {
+    box-shadow: 0 0 0 2px var(--accent, #f87171);
+  }
+}
+
+.chat-bubble-flash {
+  animation: chat-bubble-flash 2.2s ease-out;
+}

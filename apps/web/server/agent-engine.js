@@ -92,7 +92,8 @@ async function executeTools(toolUseBlocks, tools) {
     // 执行工具
     try {
       const result = await tool.call(block.input, {});
-      results.push(tool.makeToolResultBlock(block.id, result.data));
+      const resultBlock = tool.makeToolResultBlock(block.id, result.data);
+      results.push(resultBlock);
     } catch (err) {
       results.push({
         type: "tool_result",
@@ -141,6 +142,7 @@ export async function queryAgent({
   let inputTokensTotal = 0;
   let outputTokensTotal = 0;
   let turnCount = 0;
+  let forcedSummary = false;
 
   // 2. 查询循环（对应 Python while True 循环）
   while (true) {
@@ -192,8 +194,19 @@ export async function queryAgent({
     const stopReason = response.stop_reason;
 
     if (stopReason === "tool_use") {
-      // 有工具需要执行
       const toolUseBlocks = assistantContent.filter((b) => b.type === "tool_use");
+      // 防止空 tool_use 死循环：注入提示让 Agent 强制总结
+      if (toolUseBlocks.length === 0) {
+        const textBlock = assistantContent.find((b) => b.type === "text");
+        if (textBlock?.text) return { text: textBlock.text, tokens: inputTokensTotal + outputTokensTotal };
+        if (!forcedSummary) {
+          forcedSummary = true;
+          appendToSession(agentId, sessionId, { role: "assistant", content: assistantContent });
+          appendToSession(agentId, sessionId, { role: "user", content: "请根据你已经获取到的信息，直接给出结果总结。" });
+          continue;
+        }
+        return { text: "(任务完成，无额外输出)", tokens: inputTokensTotal + outputTokensTotal };
+      }
       const toolResults = await executeTools(toolUseBlocks, tools);
 
       // 将工具结果作为用户消息追加，继续循环

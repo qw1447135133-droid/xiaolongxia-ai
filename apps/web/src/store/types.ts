@@ -1,4 +1,3 @@
-// 核心类型（内联，避免 workspace 依赖问题）
 export type AgentId = "orchestrator" | "explorer" | "writer" | "designer" | "performer" | "greeter";
 export type AgentStatus = "idle" | "running" | "error";
 export type TaskComplexity = "high" | "medium" | "low";
@@ -24,7 +23,7 @@ export interface Task {
   imageUrl?: string;
   createdAt: number;
   completedAt?: number;
-  isUserMessage?: boolean;  // 标记是否为用户消息
+  isUserMessage?: boolean;
 }
 
 export interface Activity {
@@ -35,9 +34,7 @@ export interface Activity {
   detail?: string;
   timestamp: number;
   durationMs?: number;
-  /** 关联对话任务 id，用于从活动记录跳转到气泡 */
   taskId?: string;
-  /** 产生该活动时的会话 id（前端写入） */
   sessionId?: string;
 }
 
@@ -47,47 +44,121 @@ export interface CostSummary {
   byAgent: Record<AgentId, number>;
 }
 
-// ── 模型供应商配置 ──
 export interface ModelProvider {
-  id: string;          // 唯一标识，如 "openai" / "siliconflow" / "custom-1"
-  name: string;        // 显示名称
+  id: string;
+  name: string;
   apiKey: string;
-  baseUrl: string;     // 如 https://api.openai.com/v1
+  baseUrl: string;
 }
 
-// ── 单个 Agent 的个性化配置 ──
+export interface AgentSkill {
+  id: string;
+  name: string;
+  description: string;
+  category: string;
+}
+
+export const AGENT_SKILLS = [
+  {
+    id: "frontend",
+    name: "前端开发",
+    description: "构建页面、组件、交互和样式改造。",
+    category: "基础技能",
+  },
+  {
+    id: "doc_word",
+    name: "Word 文档",
+    description: "编写和整理 Word 文档、方案、报告。",
+    category: "文档编写",
+  },
+  {
+    id: "doc_ppt",
+    name: "PPT 演示",
+    description: "编写和生成汇报、方案、路演幻灯片。",
+    category: "文档编写",
+  },
+  {
+    id: "doc_excel",
+    name: "Excel 表格",
+    description: "整理表格、数据台账、公式与统计内容。",
+    category: "文档编写",
+  },
+  {
+    id: "screenshot",
+    name: "截图处理",
+    description: "截取界面、保存关键画面并辅助问题说明。",
+    category: "图像处理",
+  },
+  {
+    id: "image_edit",
+    name: "图片修改",
+    description: "裁剪、标注、替换和优化现有图片素材。",
+    category: "图像处理",
+  },
+] as const satisfies readonly AgentSkill[];
+
+export type AgentSkillId = typeof AGENT_SKILLS[number]["id"];
+
 export interface AgentConfig {
   id: AgentId;
-  name: string;        // 自定义名字
-  emoji: string;       // 自定义 emoji
-  personality: string; // 性格/system prompt 补充
-  model: string;       // 模型名，如 gpt-4o / Qwen/Qwen2.5-72B-Instruct
-  providerId: string;  // 关联的 ModelProvider.id
+  name: string;
+  emoji: string;
+  personality: string;
+  model: string;
+  providerId: string;
+  skills: AgentSkillId[];
 }
 
-// 默认 agent 元数据（不可变，用于初始化）
 export const AGENT_META: Record<AgentId, { name: string; emoji: string; badge: string; defaultPersonality: string }> = {
-  orchestrator: { name: "虾总管",   emoji: "🦞", badge: "badge-orchestrator", defaultPersonality: "你是跨境电商 AI 团队的总调度员，负责任务拆解和团队协调。" },
-  explorer:     { name: "探海龙虾", emoji: "🔍", badge: "badge-explorer",     defaultPersonality: "你是跨境电商选品专家，专注竞品分析、选品趋势研究和市场数据分析。提供具体可操作的洞察。" },
-  writer:       { name: "执笔龙虾", emoji: "✍️", badge: "badge-writer",       defaultPersonality: "你是跨境电商文案专家，专注多语种文案创作、SEO 优化标题和商品详情页撰写。输出高转化率文案。" },
-  designer:     { name: "幻影龙虾", emoji: "🎨", badge: "badge-designer",     defaultPersonality: "你是电商视觉设计专家。当需要生成图片时，请先输出一段英文图片生成提示词（以 [IMAGE_PROMPT] 开头），然后再输出设计方案说明。" },
-  performer:    { name: "戏精龙虾", emoji: "🎬", badge: "badge-performer",    defaultPersonality: "你是短视频内容专家，专注数字人视频脚本、TikTok/抖音内容策略和多平台矩阵发布计划。" },
-  greeter:      { name: "迎客龙虾", emoji: "💬", badge: "badge-greeter",      defaultPersonality: "你是多语种客服专家，专注客服话术、评论回复模板和买家互动策略。保持友好专业语气。" },
+  orchestrator: {
+    name: "虾总管",
+    emoji: "🦞",
+    badge: "badge-orchestrator",
+    defaultPersonality: "你是跨境电商 AI 团队的总调度员，负责任务拆解和团队协调。",
+  },
+  explorer: {
+    name: "探海龙虾",
+    emoji: "🔎",
+    badge: "badge-explorer",
+    defaultPersonality: "你是跨境电商选品专家，专注竞品分析、选品趋势研究和市场数据分析，提供具体可执行的洞察。",
+  },
+  writer: {
+    name: "执笔龙虾",
+    emoji: "✍️",
+    badge: "badge-writer",
+    defaultPersonality: "你是跨境电商文案专家，专注多语种文案创作、SEO 标题优化和商品详情页撰写，输出高转化率文案。",
+  },
+  designer: {
+    name: "幻影龙虾",
+    emoji: "🎨",
+    badge: "badge-designer",
+    defaultPersonality: "你是电商视觉设计专家。当需要生成图片时，请先输出一段英文图片生成提示词（以 [IMAGE_PROMPT] 开头），然后再输出设计方案说明。",
+  },
+  performer: {
+    name: "戏精龙虾",
+    emoji: "🎭",
+    badge: "badge-performer",
+    defaultPersonality: "你是短视频内容专家，专注数字人视频脚本、TikTok/抖音内容策略和多平台矩阵发布计划。",
+  },
+  greeter: {
+    name: "迎客龙虾",
+    emoji: "💬",
+    badge: "badge-greeter",
+    defaultPersonality: "你是多语种客服专家，专注客服话术、评论回复模板和买家互动策略，保持友好专业语气。",
+  },
 };
 
-// 内置供应商预设
 export const PROVIDER_PRESETS: Omit<ModelProvider, "apiKey">[] = [
-  { id: "anthropic",     name: "Anthropic (Claude)",  baseUrl: "https://api.anthropic.com" },
-  { id: "openai",          name: "OpenAI",              baseUrl: "https://api.openai.com/v1" },
-  { id: "siliconflow",     name: "SiliconFlow",         baseUrl: "https://api.siliconflow.cn/v1" },
-  { id: "deepseek",        name: "DeepSeek",            baseUrl: "https://api.deepseek.com/v1" },
-  { id: "aliyun",          name: "阿里云百炼",           baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1" },
-  { id: "aliyun-coding",   name: "阿里云百炼 Coding Plan", baseUrl: "https://coding.dashscope.aliyuncs.com/v1" },
-  { id: "4sapi",           name: "4sAPI",               baseUrl: "https://api.4sapi.com/v1" },
-  { id: "custom",          name: "自定义",               baseUrl: "" },
+  { id: "anthropic", name: "Anthropic (Claude)", baseUrl: "https://api.anthropic.com" },
+  { id: "openai", name: "OpenAI", baseUrl: "https://api.openai.com/v1" },
+  { id: "siliconflow", name: "SiliconFlow", baseUrl: "https://api.siliconflow.cn/v1" },
+  { id: "deepseek", name: "DeepSeek", baseUrl: "https://api.deepseek.com/v1" },
+  { id: "aliyun", name: "阿里云百炼", baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1" },
+  { id: "aliyun-coding", name: "阿里云百炼 Coding Plan", baseUrl: "https://coding.dashscope.aliyuncs.com/v1" },
+  { id: "4sapi", name: "4sAPI", baseUrl: "https://api.4sapi.com/v1" },
+  { id: "custom", name: "自定义", baseUrl: "" },
 ];
 
-// 各供应商常用模型
 export const PROVIDER_MODELS: Record<string, string[]> = {
   anthropic: [
     "claude-sonnet-4-6",
@@ -112,18 +183,16 @@ export const PROVIDER_MODELS: Record<string, string[]> = {
     "deepseek-chat",
     "deepseek-reasoner",
   ],
-  // 阿里云百炼 - 标准接口（普通 API Key）
   aliyun: [
-    "qwen3.5-plus",           // 文本生成、深度思考、视觉理解
-    "qwen3-max-2026-01-23",   // 文本生成、深度思考
-    "qwen3-coder-next",       // 代码生成
-    "qwen3-coder-plus",       // 代码生成
-    "glm-5",                  // 智谱 - 文本生成、深度思考
-    "glm-4.7",                // 智谱 - 文本生成、深度思考
-    "kimi-k2.5",              // Kimi - 文本生成、深度思考、视觉理解
-    "MiniMax-M2.5",           // MiniMax - 文本生成、深度思考
+    "qwen3.5-plus",
+    "qwen3-max-2026-01-23",
+    "qwen3-coder-next",
+    "qwen3-coder-plus",
+    "glm-5",
+    "glm-4.7",
+    "kimi-k2.5",
+    "MiniMax-M2.5",
   ],
-  // 阿里云百炼 Coding Plan - 需要专属 API Key
   "aliyun-coding": [
     "qwen3.5-plus",
     "qwen3-max-2026-01-23",
@@ -143,8 +212,6 @@ export const PROVIDER_MODELS: Record<string, string[]> = {
   custom: [],
 };
 
-// ── 消息平台集成 ──
-
 export interface PlatformFieldDef {
   key: string;
   label: string;
@@ -152,7 +219,7 @@ export interface PlatformFieldDef {
   required: boolean;
   secret?: boolean;
   hint?: string;
-  toggleable?: boolean; // 带开关，关闭时不传该字段
+  toggleable?: boolean;
 }
 
 export interface PlatformDef {
@@ -160,7 +227,7 @@ export interface PlatformDef {
   name: string;
   emoji: string;
   description: string;
-  webhookBased: boolean; // true = 需要公网 Webhook 地址
+  webhookBased: boolean;
   fields: PlatformFieldDef[];
 }
 
@@ -176,60 +243,151 @@ export const PLATFORM_DEFINITIONS: PlatformDef[] = [
     id: "telegram",
     name: "Telegram",
     emoji: "✈️",
-    description: "通过 Telegram Bot 接收指令，Agent 执行后自动回复",
+    description: "通过 Telegram 机器人接收指令，智能体执行后自动回复。",
     webhookBased: false,
     fields: [
-      { key: "botToken", label: "Bot Token", placeholder: "1234567890:ABCdefGHIjklMNO...", required: true, secret: true, hint: "从 @BotFather 创建 Bot 后获取" },
-      { key: "proxy", label: "代理地址", placeholder: "http://127.0.0.1:7890 或 socks5://127.0.0.1:7890", required: false, hint: "Clash 默认 7890，V2Ray 默认 10809", toggleable: true },
-      { key: "defaultChatId", label: "默认 Chat ID", placeholder: "123456789", required: false, hint: "用于会议结束后主动发送文档" },
+      {
+        key: "botToken",
+        label: "机器人令牌（Bot Token）",
+        placeholder: "1234567890:ABCdefGHIjklMNO...",
+        required: true,
+        secret: true,
+        hint: "从 @BotFather 创建机器人后获取",
+      },
+      {
+        key: "proxy",
+        label: "代理地址",
+        placeholder: "http://127.0.0.1:7890 或 socks5://127.0.0.1:7890",
+        required: false,
+        hint: "Clash 默认 7890，V2Ray 默认 10809",
+        toggleable: true,
+      },
+      {
+        key: "defaultChatId",
+        label: "默认会话 ID（Chat ID）",
+        placeholder: "123456789",
+        required: false,
+        hint: "用于会议结束后主动发送文案",
+      },
     ],
   },
   {
     id: "line",
     name: "LINE",
-    emoji: "💚",
-    description: "通过 LINE Official Account Webhook 接收消息并回复",
+    emoji: "📱",
+    description: "通过 LINE 官方账号 Webhook 接收消息并回复。",
     webhookBased: true,
     fields: [
-      { key: "channelAccessToken", label: "Channel Access Token", placeholder: "Long lived channel access token...", required: true, secret: true, hint: "LINE Developers Console → Messaging API" },
-      { key: "channelSecret", label: "Channel Secret", placeholder: "Channel secret...", required: true, secret: true },
+      {
+        key: "channelAccessToken",
+        label: "频道访问令牌（Channel Access Token）",
+        placeholder: "长期有效的频道访问令牌...",
+        required: true,
+        secret: true,
+        hint: "LINE 开发者控制台 -> Messaging API",
+      },
+      {
+        key: "channelSecret",
+        label: "频道密钥（Channel Secret）",
+        placeholder: "频道密钥...",
+        required: true,
+        secret: true,
+      },
     ],
   },
   {
     id: "feishu",
     name: "飞书",
-    emoji: "🪶",
-    description: "通过飞书机器人 Webhook 接收消息并回复",
+    emoji: "🪽",
+    description: "通过飞书机器人 Webhook 接收消息并回复。",
     webhookBased: true,
     fields: [
-      { key: "appId", label: "App ID", placeholder: "cli_xxxxxxxxxx", required: true, hint: "飞书开放平台 → 应用凭证" },
-      { key: "appSecret", label: "App Secret", placeholder: "App Secret...", required: true, secret: true },
-      { key: "verifyToken", label: "Verification Token", placeholder: "Verification Token...", required: true, secret: true },
-      { key: "encryptKey", label: "Encrypt Key（可选）", placeholder: "留空则不加密", required: false, secret: true },
-      { key: "defaultOpenId", label: "默认 Open ID", placeholder: "ou_xxxxxxxxxx", required: false, hint: "用于会议结束后主动发送文档" },
+      {
+        key: "appId",
+        label: "应用 ID（App ID）",
+        placeholder: "cli_xxxxxxxxxx",
+        required: true,
+        hint: "飞书开放平台 -> 应用凭证",
+      },
+      {
+        key: "appSecret",
+        label: "应用密钥（App Secret）",
+        placeholder: "应用密钥...",
+        required: true,
+        secret: true,
+      },
+      {
+        key: "verifyToken",
+        label: "验证令牌（Verification Token）",
+        placeholder: "验证令牌...",
+        required: true,
+        secret: true,
+      },
+      {
+        key: "encryptKey",
+        label: "加密密钥（Encrypt Key，可选）",
+        placeholder: "留空则不加密",
+        required: false,
+        secret: true,
+      },
+      {
+        key: "defaultOpenId",
+        label: "默认用户 Open ID",
+        placeholder: "ou_xxxxxxxxxx",
+        required: false,
+        hint: "用于会议结束后主动发送文案",
+      },
     ],
   },
   {
     id: "wecom",
     name: "企业微信",
     emoji: "💼",
-    description: "通过企业微信自建应用接收员工消息",
+    description: "通过企业微信自建应用接收员工消息。",
     webhookBased: true,
     fields: [
-      { key: "corpId", label: "Corp ID", placeholder: "ww...", required: true, hint: "企业微信管理后台 → 我的企业" },
-      { key: "agentId", label: "Agent ID", placeholder: "1000001", required: true, hint: "应用管理 → 自建应用 → AgentId" },
-      { key: "secret", label: "Secret", placeholder: "应用 Secret...", required: true, secret: true },
-      { key: "token", label: "Token", placeholder: "自定义 Token...", required: true, secret: true },
-      { key: "encodingAESKey", label: "EncodingAESKey", placeholder: "43 位字符...", required: true, secret: true },
+      {
+        key: "corpId",
+        label: "企业 ID（Corp ID）",
+        placeholder: "ww...",
+        required: true,
+        hint: "企业微信管理后台 -> 我的企业",
+      },
+      {
+        key: "agentId",
+        label: "应用 ID（Agent ID）",
+        placeholder: "1000001",
+        required: true,
+        hint: "应用管理 -> 自建应用 -> AgentId",
+      },
+      {
+        key: "secret",
+        label: "应用密钥（Secret）",
+        placeholder: "应用密钥...",
+        required: true,
+        secret: true,
+      },
+      {
+        key: "token",
+        label: "回调令牌（Token）",
+        placeholder: "自定义回调令牌...",
+        required: true,
+        secret: true,
+      },
+      {
+        key: "encodingAESKey",
+        label: "消息加密密钥（EncodingAESKey）",
+        placeholder: "43 位字符...",
+        required: true,
+        secret: true,
+      },
     ],
   },
 ];
 
-// 根据 provider id（可能带随机后缀如 aliyun-coding-abc123）找模型列表
 export function getModelsForProvider(providerId: string): string[] {
-  // 精确匹配
   if (PROVIDER_MODELS[providerId]) return PROVIDER_MODELS[providerId]!;
-  // 前缀匹配：aliyun-coding-abc123 → aliyun-coding
-  const preset = PROVIDER_PRESETS.find(p => providerId.startsWith(p.id + "-") || providerId === p.id);
+
+  const preset = PROVIDER_PRESETS.find(p => providerId.startsWith(`${p.id}-`) || providerId === p.id);
   return preset ? (PROVIDER_MODELS[preset.id] ?? []) : [];
 }

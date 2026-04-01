@@ -12,6 +12,28 @@ const { spawn } = require('child_process');
 const fs = require('fs');
 const http = require('http');
 
+// ── 加载 .env.local（强制覆盖，优先级高于系统环境变量）──
+function loadEnvLocal() {
+  const envPath = path.join(__dirname, '..', '.env.local');
+  try {
+    const lines = fs.readFileSync(envPath, 'utf-8').split(/\r?\n/);
+    for (const line of lines) {
+      const m = line.trim().match(/^([A-Z_][A-Z0-9_]*)=(.*)$/);
+      if (m) {
+        if (m[2].trim() === "") {
+          delete process.env[m[1]]; // 空值 = 清除系统环境变量
+        } else {
+          process.env[m[1]] = m[2].trim();
+        }
+      }
+    }
+    console.log('[main] .env.local loaded');
+  } catch (e) {
+    console.warn('[main] .env.local not found, using system env');
+  }
+}
+loadEnvLocal();
+
 // 使用函数延迟访问 app.isPackaged，避免在 app 初始化前访问
 const isDev = () => process.env.NODE_ENV === 'development' || !app.isPackaged;
 const WS_PORT = 3001;

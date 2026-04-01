@@ -1,6 +1,16 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
-import type { AgentId, AgentState, AgentStatus, Task, Activity, CostSummary, AgentConfig, ModelProvider, PlatformConfig } from "./types";
+import type {
+  AgentConfig,
+  AgentId,
+  AgentState,
+  AgentStatus,
+  Activity,
+  CostSummary,
+  ModelProvider,
+  PlatformConfig,
+  Task,
+} from "./types";
 import { AGENT_META, PLATFORM_DEFINITIONS } from "./types";
 import {
   type ChatSession,
@@ -12,14 +22,12 @@ import {
   newSessionId,
 } from "@/lib/chat-sessions";
 
-// ── Agent slice ──
 interface AgentSlice {
   agents: Record<AgentId, AgentState>;
   setAgentStatus: (id: AgentId, status: AgentStatus, currentTask?: string) => void;
   addTokens: (id: AgentId, tokens: number) => void;
 }
 
-// ── Task slice ──
 interface TaskSlice {
   tasks: Task[];
   addTask: (task: Task) => void;
@@ -27,7 +35,6 @@ interface TaskSlice {
   clearTasks: () => void;
 }
 
-// ── Chat sessions ──
 interface ChatSlice {
   chatSessions: ChatSession[];
   activeSessionId: string;
@@ -36,13 +43,11 @@ interface ChatSlice {
   deleteChatSession: (id: string) => void;
 }
 
-// ── Activity slice ──
 interface ActivitySlice {
   activities: Activity[];
   addActivity: (activity: Activity) => void;
 }
 
-// ── 活动 → 对话跳转 ──
 interface TaskNavigationSlice {
   pendingScrollTaskId: string | null;
   highlightTaskId: string | null;
@@ -51,13 +56,11 @@ interface TaskNavigationSlice {
   clearHighlightTask: () => void;
 }
 
-// ── Cost slice ──
 interface CostSlice {
   cost: CostSummary;
   addCost: (agentId: AgentId, tokens: number) => void;
 }
 
-// ── Meeting slice ──
 export interface MeetingSpeech {
   id: string;
   agentId: string;
@@ -85,7 +88,6 @@ interface MeetingSlice {
   finalizeMeeting: (payload: { topic: string; summary: string; finishedAt?: number }) => void;
 }
 
-// ── Settings slice（持久化到 localStorage）──
 interface SettingsSlice {
   providers: ModelProvider[];
   agentConfigs: Record<AgentId, AgentConfig>;
@@ -98,7 +100,6 @@ interface SettingsSlice {
   updatePlatformField: (platformId: string, fieldKey: string, value: string) => void;
 }
 
-// ── UI slice ──
 interface UISlice {
   theme: "dark" | "coral" | "jade";
   leftOpen: boolean;
@@ -110,13 +111,11 @@ interface UISlice {
   setTab: (t: UISlice["activeTab"]) => void;
 }
 
-// ── Connection slice ──
 interface ConnectionSlice {
   wsStatus: "connecting" | "connected" | "disconnected";
   setWsStatus: (s: ConnectionSlice["wsStatus"]) => void;
 }
 
-// ── Dispatch slice ──
 interface DispatchSlice {
   isDispatching: boolean;
   lastInstruction: string;
@@ -124,12 +123,30 @@ interface DispatchSlice {
   setLastInstruction: (v: string) => void;
 }
 
-type Store = AgentSlice & TaskSlice & ChatSlice & ActivitySlice & TaskNavigationSlice & CostSlice & SettingsSlice & UISlice & ConnectionSlice & DispatchSlice & MeetingSlice;
+type Store =
+  & AgentSlice
+  & TaskSlice
+  & ChatSlice
+  & ActivitySlice
+  & TaskNavigationSlice
+  & CostSlice
+  & SettingsSlice
+  & UISlice
+  & ConnectionSlice
+  & DispatchSlice
+  & MeetingSlice;
 
 function initAgents(): Record<AgentId, AgentState> {
   const result = {} as Record<AgentId, AgentState>;
   for (const [id, meta] of Object.entries(AGENT_META) as [AgentId, typeof AGENT_META[AgentId]][]) {
-    result[id] = { id, name: meta.name, emoji: meta.emoji, status: "idle", tokenUsage: 0, lastUpdated: Date.now() };
+    result[id] = {
+      id,
+      name: meta.name,
+      emoji: meta.emoji,
+      status: "idle",
+      tokenUsage: 0,
+      lastUpdated: Date.now(),
+    };
   }
   return result;
 }
@@ -138,15 +155,54 @@ function initAgentConfigs(): Record<AgentId, AgentConfig> {
   const result = {} as Record<AgentId, AgentConfig>;
   for (const [id, meta] of Object.entries(AGENT_META) as [AgentId, typeof AGENT_META[AgentId]][]) {
     result[id] = {
-      id: id as AgentId,
+      id,
       name: meta.name,
       emoji: meta.emoji,
       personality: meta.defaultPersonality,
-      model: "",        // 空 = 使用供应商默认
-      providerId: "",   // 空 = 使用全局默认
+      model: "",
+      providerId: "",
+      skills: [],
     };
   }
   return result;
+}
+
+function normalizeAgentConfigs(
+  currentConfigs: Record<AgentId, AgentConfig>,
+  persistedConfigs?: Partial<Record<AgentId, Partial<AgentConfig>>>
+): Record<AgentId, AgentConfig> {
+  return Object.fromEntries(
+    (Object.keys(AGENT_META) as AgentId[]).map(id => {
+      const fallback = currentConfigs[id];
+      const persisted = persistedConfigs?.[id];
+      return [
+        id,
+        {
+          ...fallback,
+          ...persisted,
+          skills: Array.isArray(persisted?.skills) ? persisted.skills : fallback.skills,
+        },
+      ];
+    })
+  ) as Record<AgentId, AgentConfig>;
+}
+
+function syncAgentsWithConfigs(
+  currentAgents: Record<AgentId, AgentState>,
+  configs: Record<AgentId, AgentConfig>,
+  persistedAgents?: Partial<Record<AgentId, Partial<AgentState>>>
+): Record<AgentId, AgentState> {
+  return Object.fromEntries(
+    (Object.keys(AGENT_META) as AgentId[]).map(id => [
+      id,
+      {
+        ...currentAgents[id],
+        ...persistedAgents?.[id],
+        name: configs[id].name || currentAgents[id].name,
+        emoji: configs[id].emoji || currentAgents[id].emoji,
+      },
+    ])
+  ) as Record<AgentId, AgentState>;
 }
 
 const seedSession = makeEmptySession();
@@ -154,28 +210,38 @@ const seedSession = makeEmptySession();
 export const useStore = create<Store>()(
   persist(
     (set) => ({
-      // Agent slice
       agents: initAgents(),
       setAgentStatus: (id, status, currentTask) =>
-        set(s => ({ agents: { ...s.agents, [id]: { ...s.agents[id], status, currentTask, lastUpdated: Date.now() } } })),
+        set(s => ({
+          agents: {
+            ...s.agents,
+            [id]: { ...s.agents[id], status, currentTask, lastUpdated: Date.now() },
+          },
+        })),
       addTokens: (id, tokens) =>
-        set(s => ({ agents: { ...s.agents, [id]: { ...s.agents[id], tokenUsage: s.agents[id].tokenUsage + tokens } } })),
+        set(s => ({
+          agents: {
+            ...s.agents,
+            [id]: { ...s.agents[id], tokenUsage: s.agents[id].tokenUsage + tokens },
+          },
+        })),
 
-      // Task slice（与当前 activeSession.tasks 同步）
       tasks: seedSession.tasks,
       addTask: (task) =>
         set(s => {
           const sid = s.activeSessionId;
           const nextTasks = capTaskList([task, ...s.tasks]);
-          const sessions = s.chatSessions.map(sess => {
-            if (sess.id !== sid) return sess;
-            let title = sess.title;
-            if (title === DEFAULT_CHAT_TITLE && task.isUserMessage && task.description.trim()) {
-              const d = task.description.trim();
-              title = d.length > 28 ? `${d.slice(0, 28)}…` : d;
-            }
-            return { ...sess, tasks: nextTasks, updatedAt: Date.now(), title };
-          }).sort((a, b) => b.updatedAt - a.updatedAt);
+          const sessions = s.chatSessions
+            .map(sess => {
+              if (sess.id !== sid) return sess;
+              let title = sess.title;
+              if (title === DEFAULT_CHAT_TITLE && task.isUserMessage && task.description.trim()) {
+                const desc = task.description.trim();
+                title = desc.length > 28 ? `${desc.slice(0, 28)}...` : desc;
+              }
+              return { ...sess, tasks: nextTasks, updatedAt: Date.now(), title };
+            })
+            .sort((a, b) => b.updatedAt - a.updatedAt);
           return { tasks: nextTasks, chatSessions: sessions };
         }),
       updateTask: (id, updates) =>
@@ -197,7 +263,6 @@ export const useStore = create<Store>()(
           ),
         })),
 
-      // Chat slice
       chatSessions: [seedSession],
       activeSessionId: seedSession.id,
       createChatSession: () =>
@@ -213,17 +278,18 @@ export const useStore = create<Store>()(
         }),
       setActiveChatSession: (id) =>
         set(s => {
-          const sess = s.chatSessions.find(x => x.id === id);
-          if (!sess) return {};
-          return { activeSessionId: id, tasks: sess.tasks };
+          const session = s.chatSessions.find(x => x.id === id);
+          if (!session) return {};
+          return { activeSessionId: id, tasks: session.tasks };
         }),
       deleteChatSession: (id) =>
         set(s => {
-          let sessions = s.chatSessions.filter(sess => sess.id !== id);
+          const sessions = s.chatSessions.filter(sess => sess.id !== id);
           if (sessions.length === 0) {
             const empty = makeEmptySession();
             return { chatSessions: [empty], activeSessionId: empty.id, tasks: [] };
           }
+
           const nextActive =
             id === s.activeSessionId
               ? [...sessions].sort((a, b) => b.updatedAt - a.updatedAt)[0]!.id
@@ -232,7 +298,6 @@ export const useStore = create<Store>()(
           return { chatSessions: sessions, activeSessionId: nextActive, tasks: active.tasks };
         }),
 
-      // Activity slice
       activities: [],
       addActivity: (activity) =>
         set(s => ({
@@ -245,16 +310,15 @@ export const useStore = create<Store>()(
           ].slice(0, 500),
         })),
 
-      // 对话跳转（活动记录 → 气泡）
       pendingScrollTaskId: null,
       highlightTaskId: null,
       navigateToTask: (taskId) =>
         set(s => {
-          const sess = s.chatSessions.find(se => se.tasks.some(t => t.id === taskId));
-          if (!sess) return {};
-          const needSwitch = sess.id !== s.activeSessionId;
+          const session = s.chatSessions.find(se => se.tasks.some(t => t.id === taskId));
+          if (!session) return {};
+          const needSwitch = session.id !== s.activeSessionId;
           return {
-            ...(needSwitch ? { activeSessionId: sess.id, tasks: sess.tasks } : {}),
+            ...(needSwitch ? { activeSessionId: session.id, tasks: session.tasks } : {}),
             pendingScrollTaskId: taskId,
             highlightTaskId: taskId,
             activeTab: "tasks",
@@ -263,7 +327,6 @@ export const useStore = create<Store>()(
       finishPendingScroll: () => set({ pendingScrollTaskId: null }),
       clearHighlightTask: () => set({ highlightTaskId: null }),
 
-      // Cost slice
       cost: { totalTokens: 0, totalCostUsd: 0, byAgent: {} as Record<AgentId, number> },
       addCost: (agentId, tokens) =>
         set(s => {
@@ -277,7 +340,6 @@ export const useStore = create<Store>()(
           };
         }),
 
-      // Settings slice
       providers: [],
       agentConfigs: initAgentConfigs(),
       platformConfigs: Object.fromEntries(
@@ -290,16 +352,24 @@ export const useStore = create<Store>()(
         set(s => ({ providers: s.providers.filter(p => p.id !== id) })),
       updateAgentConfig: (id, updates) =>
         set(s => ({
-          agentConfigs: { ...s.agentConfigs, [id]: { ...s.agentConfigs[id], ...updates } },
-          // 同步更新 agents 显示名/emoji
-          agents: updates.name || updates.emoji ? {
-            ...s.agents,
+          agentConfigs: {
+            ...s.agentConfigs,
             [id]: {
-              ...s.agents[id],
-              ...(updates.name ? { name: updates.name } : {}),
-              ...(updates.emoji ? { emoji: updates.emoji } : {}),
+              ...s.agentConfigs[id],
+              ...updates,
+              skills: Array.isArray(updates.skills) ? updates.skills : s.agentConfigs[id].skills,
             },
-          } : s.agents,
+          },
+          agents: updates.name || updates.emoji
+            ? {
+                ...s.agents,
+                [id]: {
+                  ...s.agents[id],
+                  ...(updates.name ? { name: updates.name } : {}),
+                  ...(updates.emoji ? { emoji: updates.emoji } : {}),
+                },
+              }
+            : s.agents,
         })),
       updatePlatformConfig: (id, updates) =>
         set(s => ({
@@ -319,7 +389,6 @@ export const useStore = create<Store>()(
           },
         })),
 
-      // UI slice
       theme: "dark",
       leftOpen: true,
       rightOpen: true,
@@ -334,24 +403,21 @@ export const useStore = create<Store>()(
       toggleRight: () => set(s => ({ rightOpen: !s.rightOpen })),
       setTab: (activeTab) => set({ activeTab }),
 
-      // Connection slice
       wsStatus: "disconnected",
       setWsStatus: (wsStatus) => set({ wsStatus }),
 
-      // Dispatch slice
       isDispatching: false,
       lastInstruction: "",
       setDispatching: (isDispatching) => set({ isDispatching }),
       setLastInstruction: (lastInstruction) => set({ lastInstruction }),
 
-      // Meeting slice
       meetingSpeeches: [],
       meetingActive: false,
       meetingTopic: "",
       latestMeetingRecord: null,
-      addMeetingSpeech: (s) => set(st => ({ meetingSpeeches: [...st.meetingSpeeches, s] })),
+      addMeetingSpeech: (speech) => set(st => ({ meetingSpeeches: [...st.meetingSpeeches, speech] })),
       clearMeeting: () => set({ meetingSpeeches: [], meetingActive: false }),
-      setMeetingActive: (v) => set({ meetingActive: v }),
+      setMeetingActive: (meetingActive) => set({ meetingActive }),
       setMeetingTopic: (meetingTopic) => set({ meetingTopic }),
       finalizeMeeting: ({ topic, summary, finishedAt }) =>
         set(st => ({
@@ -376,9 +442,16 @@ export const useStore = create<Store>()(
         latestMeetingRecord: s.latestMeetingRecord,
       }),
       merge: (persisted, current) => {
-        const p = (persisted ?? {}) as Partial<Store>;
-        const merged = { ...current, ...p } as Store;
-        return ensureChatHydration(merged) as Store;
+        const persistedStore = (persisted ?? {}) as Partial<Store>;
+        const merged = { ...current, ...persistedStore } as Store;
+        const agentConfigs = normalizeAgentConfigs(current.agentConfigs, persistedStore.agentConfigs);
+        const agents = syncAgentsWithConfigs(current.agents, agentConfigs, persistedStore.agents);
+
+        return ensureChatHydration({
+          ...merged,
+          agentConfigs,
+          agents,
+        }) as Store;
       },
     }
   )

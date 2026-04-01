@@ -1,7 +1,22 @@
 import { WebSocketServer, WebSocket } from "ws";
 import { createServer } from "http";
-import { promises as fs } from "fs";
+import { promises as fs, readFileSync, existsSync } from "fs";
+import { fileURLToPath } from "url";
+import { dirname, join } from "path";
 import Anthropic from "@anthropic-ai/sdk";
+
+// ── 加载 .env.local（强制覆盖系统环境变量）──
+const __dirname_ws = dirname(fileURLToPath(import.meta.url));
+const envPath = join(__dirname_ws, '..', '.env.local');
+if (existsSync(envPath)) {
+  for (const line of readFileSync(envPath, 'utf-8').split(/\r?\n/)) {
+    const m = line.trim().match(/^([A-Z_][A-Z0-9_]*)=(.*)$/);
+    if (m) {
+      if (m[2].trim() === '') delete process.env[m[1]];
+      else process.env[m[1]] = m[2].trim();
+    }
+  }
+}
 import { randomUUID } from "crypto";
 import { startPlatform, stopPlatform, sendToPlatform, sendFileToPlatform } from "./platforms/platform-manager.js";
 import { exportMeetingDocument } from "./meeting-exporter.js";
@@ -21,8 +36,9 @@ const clients = new Set();
 let settings = { providers: [], agentConfigs: {} };
 
 const ROUTING_RULES = [
+  { keywords: ["浏览器", "打开网页", "打开网站", "截图", "爬取", "爬虫", "搜索网页", "访问网址", "访问网站", "点击", "填写表单", "自动化操作", "browser"], agent: "orchestrator", complexity: "medium" },
   { keywords: ["新闻", "热点", "资讯", "时事", "头条", "舆情", "列出", "对比"], agent: "explorer", complexity: "medium" },
-  { keywords: ["竞品", "选品", "爬取", "趋势", "数据", "市场", "分析"], agent: "explorer", complexity: "medium" },
+  { keywords: ["竞品", "选品", "趋势", "数据", "市场", "分析"], agent: "explorer", complexity: "medium" },
   { keywords: ["文案", "标题", "seo", "详情", "描述", "翻译", "多语"], agent: "writer", complexity: "medium" },
   { keywords: ["图片", "海报", "设计", "素材", "banner", "视觉", "生图", "绘图"], agent: "designer", complexity: "high" },
   { keywords: ["视频", "数字人", "tiktok", "抖音", "发布", "矩阵", "脚本"], agent: "performer", complexity: "high" },
@@ -32,7 +48,11 @@ const ROUTING_RULES = [
 const BREVITY = "\n\n【输出要求】言简意赅、直入主题；先结论后补充；避免冗长寒暄与套话；除必须条目外尽量控制在300字内。";
 
 const SYSTEM_PROMPTS = {
-  orchestrator: "你是跨境电商 AI 团队的总协调员虾总管，负责任务拆解和团队协调。回复与汇报都要简短有力。" + BREVITY,
+  orchestrator: "你是跨境电商 AI 团队的总协调员虾总管，负责任务拆解和团队协调。回复与汇报都要简短有力。"
+    + "\n\n你拥有浏览器控制能力，可以使用以下工具：browser_goto（导航到URL）、browser_get_text（读取页面文字内容，搜索后必须用这个提取结果）、browser_page_info（获取页面信息）、browser_screenshot（截图识图）、browser_act（自然语言操作，如点击/填写/滚动）、browser_act_single（精确选择器操作）、browser_act_multi（批量操作）。"
+    + "\n\n【搜索流程】：1.browser_goto 导航到搜索页 → 2.browser_get_text 读取页面内容 → 3.整理结果回复用户。不要反复跳转，读到内容就总结。"
+    + "\n\n【遇到登录页】：换用百度/必应搜索该关键词，或直接总结已知信息。"
+    + BREVITY,
   explorer: "你是探海龙虾，跨境电商选品专家，专注竞品分析、选品趋势研究和市场数据分析，提供可执行洞察。" + BREVITY,
   writer: "你是执笔龙虾，跨境电商文案专家，专注多语种文案创作、SEO 标题和详情页撰写，输出高转化文案。" + BREVITY,
   designer: "你是幻影龙虾，电商视觉设计专家；需要出图时先给出 [IMAGE_PROMPT] 英文提示词，再补充设计说明。" + BREVITY,
@@ -115,6 +135,59 @@ function shouldForceDecomposition(text) {
   return false;
 }
 
+function shouldReplyDirectlyByOrchestrator(text) {
+  const t = String(text || "").trim();
+  if (!t) return true;
+
+  if (/^(?:你好|您好|嗨|哈喽|hello|hi|在吗|早上好|中午好|下午好|晚上好|谢谢|感谢|再见|拜拜)[!！。.?？\s]*$/i.test(t)) {
+    return true;
+  }
+
+  if (/^(?:你是谁|你是干什么的|你能做什么|怎么用|介绍一下自己)[!！。.?？\s]*$/i.test(t)) {
+    return true;
+  }
+
+  if (shouldForceDecomposition(t)) {
+    return false;
+  }
+
+  const hasRoutingKeyword = ROUTING_RULES.some((rule) =>
+    rule.keywords.some((kw) => t.toLowerCase().includes(String(kw).toLowerCase())),
+  );
+
+  if (hasRoutingKeyword) {
+    return false;
+  }
+
+  return t.length <= 12;
+}
+
+function buildDirectOrchestratorReply(text) {
+  const t = String(text || "").trim();
+
+  if (!t) return "我在，超哥可以直接说需求。";
+  if (/^(?:你好|您好|嗨|哈喽|hello|hi|早上好|中午好|下午好|晚上好)[!！。.?？\s]*$/i.test(t)) {
+    return "我在，超哥可以直接说需求，我来帮你判断是我直接回复，还是分给对应龙虾执行。";
+  }
+  if (/^(?:在吗)[!！。.?？\s]*$/i.test(t)) {
+    return "在，超哥直接说。";
+  }
+  if (/^(?:谢谢|感谢)[!！。.?？\s]*$/i.test(t)) {
+    return "不客气，超哥。";
+  }
+  if (/^(?:再见|拜拜)[!！。.?？\s]*$/i.test(t)) {
+    return "好，超哥，有需要随时叫我。";
+  }
+  if (/^(?:你是谁|介绍一下自己)[!！。.?？\s]*$/i.test(t)) {
+    return "我是虾总管，超哥可以把需求直接发给我，我会判断是由我直接回复，还是分配给选品、文案、设计、视频、客服这些执行龙虾。";
+  }
+  if (/^(?:你是干什么的|你能做什么|怎么用)[!！。.?？\s]*$/i.test(t)) {
+    return "我是负责调度的小龙虾主管。超哥可以直接发任务，比如选品分析、文案、海报、短视频脚本、客服话术，我会直接处理或安排合适的龙虾执行。";
+  }
+
+  return "";
+}
+
 let timeSeq = 0;
 function nextTaskTimestamp() {
   timeSeq += 1;
@@ -128,7 +201,7 @@ function routeTask(instruction) {
       return { agent: rule.agent, complexity: rule.complexity };
     }
   }
-  return { agent: "writer", complexity: "medium" };
+  return { agent: "orchestrator", complexity: "medium" };
 }
 
 function getDefaultModel() {
@@ -182,6 +255,71 @@ async function callAgent(agentId, task, complexity, maxTokensOverride, sessionId
 async function dispatch(instruction, sessionId = "default") {
   idleAllExcept("orchestrator");
   broadcast({ type: "agent_status", agentId: "orchestrator", status: "running", currentTask: "理解指令中..." });
+
+  if (shouldReplyDirectlyByOrchestrator(instruction)) {
+    try {
+      const directReply = buildDirectOrchestratorReply(instruction);
+      let text = directReply;
+      let tokens = 0;
+
+      if (!text) {
+        const response = await callAgent(
+          "orchestrator",
+          `用户发来的是简单对话或短问句，请你以虾总管身份直接接话回复。
+
+要求：
+- 不要拆解任务
+- 不要提及其他 agent
+- 不要写“收到指令”“本次由某某处理”这类调度话术
+- 像真实对话一样自然、简短、友好
+
+用户消息：${instruction}`,
+          "low",
+          220,
+          sessionId,
+        );
+        text = response.text;
+        tokens = response.tokens;
+      }
+
+      const ts = nextTaskTimestamp();
+      broadcast({
+        type: "task_add",
+        task: {
+          id: randomUUID(),
+          description: instruction,
+          assignedTo: "orchestrator",
+          complexity: "low",
+          status: "done",
+          result: text,
+          createdAt: ts,
+          completedAt: ts,
+        },
+      });
+      if (tokens > 0) {
+        broadcast({ type: "cost", agentId: "orchestrator", tokens });
+      }
+    } catch (err) {
+      const ts = nextTaskTimestamp();
+      broadcast({
+        type: "task_add",
+        task: {
+          id: randomUUID(),
+          description: instruction,
+          assignedTo: "orchestrator",
+          complexity: "low",
+          status: "done",
+          result: "我在，超哥可以直接说需求。",
+          createdAt: ts,
+          completedAt: ts,
+        },
+      });
+      console.error("[dispatch] direct orchestrator reply failed:", err?.message || err);
+    }
+
+    broadcast({ type: "agent_status", agentId: "orchestrator", status: "idle" });
+    return;
+  }
 
   const reportTaskId = randomUUID();
   broadcast({ type: "activity", activity: { agentId: "orchestrator", type: "dispatch", summary: instruction, timestamp: Date.now(), taskId: reportTaskId } });

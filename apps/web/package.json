@@ -59,11 +59,13 @@
     }
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.36.0",
+    "@browserbasehq/stagehand": "^3.2.0",
     "docx": "^9.6.1",
     "exceljs": "^4.4.0",
-    "@anthropic-ai/sdk": "^0.36.0",
     "next": "14.2.5",
     "node-telegram-bot-api": "^0.67.0",
+    "openai": "^6.33.0",
     "pptxgenjs": "^4.0.1",
     "react": "^18.3.0",
     "react-dom": "^18.3.0",

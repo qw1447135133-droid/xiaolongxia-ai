@@ -9,7 +9,7 @@ export function PlatformSettings() {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
       <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 4 }}>
-        为每个平台单独配置接入凭证。启用后 Agent 可通过该平台接收指令并回复结果。
+        为每个平台单独配置接入凭证。启用后智能体可通过该平台接收指令并回复结果。
       </div>
       {PLATFORM_DEFINITIONS.map(def => (
         <PlatformCard key={def.id} def={def} />
@@ -141,7 +141,7 @@ function PlatformCard({ def }: { def: PlatformDef }) {
               border: "1px solid rgba(var(--accent-rgb),0.2)",
               color: "var(--accent)",
             }}>
-              ⚠️ 此平台需要公网 Webhook 地址。开发阶段可用{" "}
+              ⚠️ 此平台需要公网 Webhook 回调地址。开发阶段可用{" "}
               <code style={{ fontFamily: "monospace", background: "rgba(0,0,0,0.15)", padding: "1px 4px", borderRadius: 3 }}>
                 ngrok http 3001
               </code>{" "}

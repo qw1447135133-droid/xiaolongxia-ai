@@ -66,12 +66,23 @@ export interface MeetingSpeech {
   timestamp: number;
 }
 
+export interface MeetingRecord {
+  topic: string;
+  summary: string;
+  speeches: MeetingSpeech[];
+  finishedAt: number;
+}
+
 interface MeetingSlice {
   meetingSpeeches: MeetingSpeech[];
   meetingActive: boolean;
+  meetingTopic: string;
+  latestMeetingRecord: MeetingRecord | null;
   addMeetingSpeech: (s: MeetingSpeech) => void;
   clearMeeting: () => void;
   setMeetingActive: (v: boolean) => void;
+  setMeetingTopic: (topic: string) => void;
+  finalizeMeeting: (payload: { topic: string; summary: string; finishedAt?: number }) => void;
 }
 
 // ── Settings slice（持久化到 localStorage）──
@@ -336,9 +347,22 @@ export const useStore = create<Store>()(
       // Meeting slice
       meetingSpeeches: [],
       meetingActive: false,
+      meetingTopic: "",
+      latestMeetingRecord: null,
       addMeetingSpeech: (s) => set(st => ({ meetingSpeeches: [...st.meetingSpeeches, s] })),
       clearMeeting: () => set({ meetingSpeeches: [], meetingActive: false }),
       setMeetingActive: (v) => set({ meetingActive: v }),
+      setMeetingTopic: (meetingTopic) => set({ meetingTopic }),
+      finalizeMeeting: ({ topic, summary, finishedAt }) =>
+        set(st => ({
+          meetingActive: false,
+          latestMeetingRecord: {
+            topic,
+            summary,
+            speeches: st.meetingSpeeches,
+            finishedAt: finishedAt ?? Date.now(),
+          },
+        })),
     }),
     {
       name: "xiaolongxia-settings",
@@ -349,6 +373,7 @@ export const useStore = create<Store>()(
         theme: s.theme,
         chatSessions: s.chatSessions,
         activeSessionId: s.activeSessionId,
+        latestMeetingRecord: s.latestMeetingRecord,
       }),
       merge: (persisted, current) => {
         const p = (persisted ?? {}) as Partial<Store>;

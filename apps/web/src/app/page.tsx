@@ -12,6 +12,7 @@ import { CostBar } from "@/components/CostBar";
 import { SettingsPanel } from "@/components/SettingsPanel";
 import { PresetTasksPanel } from "@/components/PresetTasksPanel";
 import { ScheduledTasksPanel } from "@/components/ScheduledTasksPanel";
+import { MeetingRecordPanel } from "@/components/MeetingRecordPanel";
 import { checkAndExecuteTasks } from "@/lib/scheduled-tasks";
 import { randomId } from "@/lib/utils";
 import { sendWs } from "@/hooks/useWebSocket";
@@ -193,9 +194,13 @@ export default function App() {
                 display: "flex",
                 flexDirection: "column",
                 padding: 10,
+                gap: 10,
               }}
             >
-              <ActivityPanel />
+              <MeetingRecordPanel />
+              <div style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
+                <ActivityPanel />
+              </div>
             </div>
           </div>
         )}
@@ -295,7 +300,7 @@ function DashboardTab() {
 
 function MeetingTab() {
   const [topic, setTopic] = useState("");
-  const { wsStatus, meetingSpeeches, meetingActive, clearMeeting, setMeetingActive } = useStore();
+  const { wsStatus, meetingSpeeches, meetingActive, clearMeeting, setMeetingActive, setMeetingTopic } = useStore();
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // 新发言自动滚到底部
@@ -308,10 +313,11 @@ function MeetingTab() {
   const startMeeting = () => {
     if (!topic.trim() || meetingActive || wsStatus !== "connected") return;
     clearMeeting();
+    setMeetingTopic(topic.trim());
     setMeetingActive(true);
     const { providers, agentConfigs } = useStore.getState();
     sendWs({ type: "settings_sync", providers, agentConfigs });
-    sendWs({ type: "meeting", topic });
+    sendWs({ type: "meeting", topic: topic.trim() });
   };
 
   const AGENT_INFO: Record<string, { name: string; emoji: string; color: string }> = {

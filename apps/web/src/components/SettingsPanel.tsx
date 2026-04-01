@@ -4,21 +4,13 @@ import { useStore } from "@/store";
 import { AGENT_META, PROVIDER_PRESETS, PROVIDER_MODELS, getModelsForProvider } from "@/store/types";
 import type { AgentId, ModelProvider } from "@/store/types";
 import { randomId } from "@/lib/utils";
+import { resolveBackendUrl } from "@/lib/backend-url";
 import { PlatformSettings } from "./PlatformSettings";
 import { sendWs } from "@/hooks/useWebSocket";
 
 // ── 测试结果类型 ──
 type TestResult = { ok: true; latencyMs: number; model: string; tokens: number; reply: string }
                 | { ok: false; error: string };
-
-async function resolveBackendUrl(path: string): Promise<string> {
-  if (typeof window === "undefined") return path;
-  const isDesktopRuntime = window.location.protocol === "file:" || Boolean((window as unknown as { electronAPI?: unknown }).electronAPI);
-  if (!isDesktopRuntime) return path;
-  const electronAPI = (window as unknown as { electronAPI?: { getWsPort?: () => Promise<number> } }).electronAPI;
-  const port = electronAPI?.getWsPort ? await electronAPI.getWsPort() : 3001;
-  return `http://localhost:${port}${path}`;
-}
 
 async function testModel(apiKey: string, baseUrl: string, model: string): Promise<TestResult> {
   const url = await resolveBackendUrl("/api/test-model");

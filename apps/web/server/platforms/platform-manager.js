@@ -73,3 +73,20 @@ export async function sendToPlatform(platformId, userId, text) {
     console.error(`[platforms] ${platformId} sendMessage failed:`, err.message);
   }
 }
+
+export async function sendFileToPlatform(platformId, userId, payload) {
+  const adapter = runningAdapters[platformId];
+  if (!adapter) {
+    throw new Error(`平台 ${platformId} 未连接`);
+  }
+  if (typeof adapter.sendFile !== "function") {
+    throw new Error(`平台 ${platformId} 暂不支持发送文件`);
+  }
+
+  try {
+    await adapter.sendFile(userId, payload);
+  } catch (err) {
+    console.error(`[platforms] ${platformId} sendFile failed:`, err.message);
+    throw err;
+  }
+}

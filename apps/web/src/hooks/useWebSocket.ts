@@ -13,7 +13,7 @@ type WsMessage =
   | { type: "task_update"; taskId: string; updates: Partial<Task> }
   | { type: "activity"; activity: Omit<Activity, "id"> }
   | { type: "cost"; agentId: AgentId; tokens: number }
-  | { type: "meeting_result"; result?: string; error?: string }
+  | { type: "meeting_result"; topic?: string; result?: string; error?: string }
   | { type: "meeting_speech"; agentId: string; role: string; text: string; timestamp: number; meetingId?: string };
 
 // 模块级单例（参考 openhanako websocket.ts）
@@ -38,7 +38,7 @@ export function sendWs(msg: object): boolean {
 }
 
 export function useWebSocket() {
-  const { setWsStatus, setAgentStatus, addTask, updateTask, addActivity, addCost, addTokens, addMeetingSpeech, setMeetingActive } = useStore();
+  const { setWsStatus, setAgentStatus, addTask, updateTask, addActivity, addCost, addTokens, addMeetingSpeech, setMeetingActive, finalizeMeeting } = useStore();
   const connectedRef = useRef(false);
 
   useEffect(() => {
@@ -166,6 +166,14 @@ export function useWebSocket() {
           break;
         case "meeting_result":
           setMeetingActive(false);
+          if (msg.result) {
+            const { meetingTopic } = useStore.getState();
+            finalizeMeeting({
+              topic: msg.topic ?? meetingTopic,
+              summary: msg.result,
+              finishedAt: Date.now(),
+            });
+          }
           break;
       }
     }

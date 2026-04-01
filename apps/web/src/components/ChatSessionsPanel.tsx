@@ -113,7 +113,7 @@ export function ChatSessionsPanel() {
                     >
                       {short}
                     </div>
-                    <div style={{ fontSize: 10, color: "var(--text-muted)", marginTop: 4 }}>
+                    <div style={{ fontSize: 10, color: "var(--text-muted)", marginTop: 4 }} suppressHydrationWarning>
                       {timeAgo(sess.updatedAt)}
                     </div>
                   </div>

@@ -9,7 +9,7 @@
     "dev:ws": "node server/ws-server.js",
     "dev:next": "next dev -p 3000",
     "dev": "concurrently -n WS,Next -c cyan,yellow \"node server/ws-server.js\" \"next dev -p 3000\"",
-    "electron:dev": "concurrently -n WS,Next,Electron -c cyan,yellow,green \"node server/ws-server.js\" \"next dev -p 3000\" \"npx wait-on http://localhost:3000 && cross-env NODE_ENV=development electron .\"",
+    "electron:dev": "concurrently -n WS,Next,Electron -c cyan,yellow,green \"node server/ws-server.js\" \"next dev -p 3000\" \"npx wait-on http://localhost:3000 && node electron-launch.js\"",
     "build": "next build",
     "electron:build": "cross-env ELECTRON_BUILD=true next build && electron-builder --win nsis portable",
     "electron:build:mac": "cross-env ELECTRON_BUILD=true next build && electron-builder --mac",
@@ -59,9 +59,12 @@
     }
   },
   "dependencies": {
+    "docx": "^9.6.1",
+    "exceljs": "^4.4.0",
+    "@anthropic-ai/sdk": "^0.36.0",
     "next": "14.2.5",
     "node-telegram-bot-api": "^0.67.0",
-    "openai": "^4.104.0",
+    "pptxgenjs": "^4.0.1",
     "react": "^18.3.0",
     "react-dom": "^18.3.0",
     "ws": "^8.20.0",

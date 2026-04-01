@@ -77,6 +77,7 @@ export const AGENT_META: Record<AgentId, { name: string; emoji: string; badge: s
 
 // 内置供应商预设
 export const PROVIDER_PRESETS: Omit<ModelProvider, "apiKey">[] = [
+  { id: "anthropic",     name: "Anthropic (Claude)",  baseUrl: "https://api.anthropic.com" },
   { id: "openai",          name: "OpenAI",              baseUrl: "https://api.openai.com/v1" },
   { id: "siliconflow",     name: "SiliconFlow",         baseUrl: "https://api.siliconflow.cn/v1" },
   { id: "deepseek",        name: "DeepSeek",            baseUrl: "https://api.deepseek.com/v1" },
@@ -88,6 +89,11 @@ export const PROVIDER_PRESETS: Omit<ModelProvider, "apiKey">[] = [
 
 // 各供应商常用模型
 export const PROVIDER_MODELS: Record<string, string[]> = {
+  anthropic: [
+    "claude-sonnet-4-6",
+    "claude-opus-4-6",
+    "claude-haiku-4-5-20251001",
+  ],
   openai: [
     "gpt-4o",
     "gpt-4o-mini",
@@ -175,6 +181,7 @@ export const PLATFORM_DEFINITIONS: PlatformDef[] = [
     fields: [
       { key: "botToken", label: "Bot Token", placeholder: "1234567890:ABCdefGHIjklMNO...", required: true, secret: true, hint: "从 @BotFather 创建 Bot 后获取" },
       { key: "proxy", label: "代理地址", placeholder: "http://127.0.0.1:7890 或 socks5://127.0.0.1:7890", required: false, hint: "Clash 默认 7890，V2Ray 默认 10809", toggleable: true },
+      { key: "defaultChatId", label: "默认 Chat ID", placeholder: "123456789", required: false, hint: "用于会议结束后主动发送文档" },
     ],
   },
   {
@@ -199,6 +206,7 @@ export const PLATFORM_DEFINITIONS: PlatformDef[] = [
       { key: "appSecret", label: "App Secret", placeholder: "App Secret...", required: true, secret: true },
       { key: "verifyToken", label: "Verification Token", placeholder: "Verification Token...", required: true, secret: true },
       { key: "encryptKey", label: "Encrypt Key（可选）", placeholder: "留空则不加密", required: false, secret: true },
+      { key: "defaultOpenId", label: "默认 Open ID", placeholder: "ou_xxxxxxxxxx", required: false, hint: "用于会议结束后主动发送文档" },
     ],
   },
   {

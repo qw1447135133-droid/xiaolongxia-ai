@@ -1,16 +1,27 @@
 "use client";
 
 import { useEffect } from "react";
+import { applyDesktopLaunchNavigation } from "@/lib/desktop-launch-routing";
 import { useStore } from "@/store";
 import { randomId } from "@/lib/utils";
 import type { AgentId, AgentStatus, Task, Activity, ExecutionEvent, ExecutionRunSource, ExecutionRunStatus } from "@/store/types";
-import type { NativeAppLaunchPayload, NativeAppLaunchResult, NativeInstalledApplication } from "@/types/electron-api";
+import type {
+  DesktopInputControlPayload,
+  DesktopInputControlResult,
+  DesktopScreenshotPayload,
+  DesktopScreenshotResult,
+  NativeAppLaunchPayload,
+  NativeAppLaunchResult,
+  NativeInstalledApplication,
+} from "@/types/electron-api";
 
 type WsMessage =
   | { type: "connected" }
   | { type: "settings_ack" }
   | { type: "pong" }
-  | { type: "desktop_launch_request"; requestId: string; payload: NativeAppLaunchPayload }
+  | { type: "desktop_launch_request"; requestId: string; payload: NativeAppLaunchPayload; executionRunId?: string; taskId?: string; sessionId?: string }
+  | { type: "desktop_input_request"; requestId: string; payload: DesktopInputControlPayload; executionRunId?: string; taskId?: string; sessionId?: string }
+  | { type: "desktop_capture_request"; requestId: string; payload?: DesktopScreenshotPayload }
   | { type: "desktop_installed_apps_request"; requestId: string; payload?: { forceRefresh?: boolean } }
   | { type: "agent_status"; agentId: AgentId; status: AgentStatus; currentTask?: string; executionRunId?: string }
   | { type: "task_add"; task: Task; executionRunId?: string }
@@ -61,6 +72,8 @@ function syncSettingsToSocket() {
       isElectron: Boolean(window.electronAPI?.isElectron),
       canLaunchNativeApplications: Boolean(window.electronAPI?.launchNativeApplication),
       canListInstalledApplications: Boolean(window.electronAPI?.listInstalledApplications),
+      canControlDesktopInput: Boolean(window.electronAPI?.controlDesktopInput),
+      canCaptureDesktopScreenshot: Boolean(window.electronAPI?.captureDesktopScreenshot),
     },
   }));
 
@@ -77,7 +90,11 @@ function syncSettingsToSocket() {
 }
 
 async function handleDesktopLaunchRequest(msg: Extract<WsMessage, { type: "desktop_launch_request" }>) {
-  const { desktopProgramSettings } = getStore();
+  const {
+    desktopProgramSettings,
+    setTab,
+    setActiveControlCenterSection,
+  } = getStore();
   const sendResult = (payload: { ok: boolean; result?: NativeAppLaunchResult; error?: string }) => {
     if (_ws?.readyState !== WebSocket.OPEN) return;
     _ws.send(JSON.stringify({
@@ -104,9 +121,218 @@ async function handleDesktopLaunchRequest(msg: Extract<WsMessage, { type: "deskt
         })),
       },
     });
+    if (result.ok) {
+      applyDesktopLaunchNavigation(msg.payload.target, {
+        setTab,
+        setActiveControlCenterSection,
+      });
+    }
     sendResult({ ok: true, result });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    sendResult({ ok: false, error: message });
+  }
+}
+
+function focusDesktopControlPanel() {
+  const { setTab, setActiveControlCenterSection } = getStore();
+  setActiveControlCenterSection("desktop");
+  setTab("settings");
+}
+
+function buildDesktopVerificationResumeInstruction(meta: {
+  sessionId?: string;
+  executionRunId?: string;
+  taskId?: string;
+  intent?: string;
+  target?: string;
+}) {
+  const store = getStore();
+  const task = meta.taskId ? store.tasks.find(item => item.id === meta.taskId) ?? null : null;
+  const run = meta.executionRunId ? store.executionRuns.find(item => item.id === meta.executionRunId) ?? null : null;
+
+  return [
+    "验证码或验证步骤已由人工在桌面端完成，请从刚才中断的位置继续执行。",
+    "不要重复打开程序，不要重复触发验证；先重新截图确认当前界面，再继续后续动作。",
+    run?.instruction ? `原始运行指令: ${run.instruction}` : "",
+    task?.description ? `当前任务: ${task.description}` : "",
+    meta.intent ? `最近桌面意图: ${meta.intent}` : "",
+    meta.target ? `目标界面/程序: ${meta.target}` : "",
+    meta.executionRunId ? `关联运行ID: ${meta.executionRunId}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+async function handleDesktopInputRequest(msg: Extract<WsMessage, { type: "desktop_input_request" }>) {
+  const {
+    desktopProgramSettings,
+    setDesktopInputSession,
+    setAutomationPaused,
+  } = getStore();
+  const sendResult = (payload: { ok: boolean; result?: DesktopInputControlResult; error?: string }) => {
+    if (_ws?.readyState !== WebSocket.OPEN) return;
+    _ws.send(JSON.stringify({
+      type: "desktop_input_result",
+      requestId: msg.requestId,
+      ...payload,
+    }));
+  };
+
+  if (desktopProgramSettings.inputControl.autoOpenPanelOnAction) {
+    focusDesktopControlPanel();
+  }
+
+  setDesktopInputSession({
+    state: "running",
+    source: "agent",
+    lastAction: msg.payload.action,
+    lastIntent: msg.payload.intent,
+    target: msg.payload.target,
+    sessionId: msg.sessionId,
+    executionRunId: msg.executionRunId,
+    taskId: msg.taskId,
+    resumeInstruction: undefined,
+    message: "数字员工正在接管鼠标键盘。",
+  });
+
+  if (!window.electronAPI?.controlDesktopInput) {
+    const error = "当前客户端不是 Electron 桌面运行态，无法执行鼠标键盘接管。";
+    setDesktopInputSession({
+      state: "error",
+      source: "agent",
+      lastAction: msg.payload.action,
+      lastIntent: msg.payload.intent,
+      target: msg.payload.target,
+      sessionId: msg.sessionId,
+      executionRunId: msg.executionRunId,
+      taskId: msg.taskId,
+      message: error,
+    });
+    sendResult({ ok: false, error });
+    return;
+  }
+
+  try {
+    const result = await window.electronAPI.controlDesktopInput({
+      ...msg.payload,
+      policy: {
+        enabled: desktopProgramSettings.inputControl.enabled,
+        requireManualTakeoverForVerification: desktopProgramSettings.inputControl.requireManualTakeoverForVerification,
+      },
+    });
+    const retrySuggestionMessage = Array.isArray(result.retrySuggestions) && result.retrySuggestions.length > 0
+      ? ` 可在复核失败时尝试偏移点：${result.retrySuggestions
+          .slice(0, 3)
+          .map(item => `${item.label}(${item.nextX},${item.nextY})`)
+          .join(" / ")}。`
+      : "";
+    const resumeInstruction = result.manualRequired
+      ? buildDesktopVerificationResumeInstruction({
+          sessionId: msg.sessionId,
+          executionRunId: msg.executionRunId,
+          taskId: msg.taskId,
+          intent: msg.payload.intent,
+          target: msg.payload.target,
+        })
+      : undefined;
+    if (result.manualRequired) {
+      setAutomationPaused(true);
+    }
+    setDesktopInputSession({
+      state: result.manualRequired ? "manual-required" : "executed",
+      source: "agent",
+      lastAction: result.action,
+      lastIntent: msg.payload.intent,
+      target: msg.payload.target,
+      sessionId: msg.sessionId,
+      executionRunId: msg.executionRunId,
+      taskId: msg.taskId,
+      resumeInstruction,
+      message: result.manualRequired
+        ? `${result.message} 已自动暂停自动化，待人工完成后可一键继续。`
+        : `${result.message}${retrySuggestionMessage}`,
+    });
+    sendResult({ ok: true, result });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    setDesktopInputSession({
+      state: "error",
+      source: "agent",
+      lastAction: msg.payload.action,
+      lastIntent: msg.payload.intent,
+      target: msg.payload.target,
+      sessionId: msg.sessionId,
+      executionRunId: msg.executionRunId,
+      taskId: msg.taskId,
+      message,
+    });
+    sendResult({ ok: false, error: message });
+  }
+}
+
+async function handleDesktopCaptureRequest(msg: Extract<WsMessage, { type: "desktop_capture_request" }>) {
+  const {
+    desktopProgramSettings,
+    setDesktopScreenshot,
+  } = getStore();
+  const sendResult = (payload: { ok: boolean; result?: DesktopScreenshotResult; error?: string }) => {
+    if (_ws?.readyState !== WebSocket.OPEN) return;
+    _ws.send(JSON.stringify({
+      type: "desktop_capture_result",
+      requestId: msg.requestId,
+      ...payload,
+    }));
+  };
+
+  if (desktopProgramSettings.inputControl.autoOpenPanelOnAction) {
+    focusDesktopControlPanel();
+  }
+
+  setDesktopScreenshot({
+    status: "capturing",
+    source: "agent",
+    target: msg.payload?.target,
+    intent: msg.payload?.intent,
+    message: "数字员工正在抓取当前桌面截图。",
+  });
+
+  if (!window.electronAPI?.captureDesktopScreenshot) {
+    const error = "当前客户端不是 Electron 桌面运行态，无法抓取桌面截图。";
+    setDesktopScreenshot({
+      status: "error",
+      source: "agent",
+      target: msg.payload?.target,
+      intent: msg.payload?.intent,
+      message: error,
+    });
+    sendResult({ ok: false, error });
+    return;
+  }
+
+  try {
+    const result = await window.electronAPI.captureDesktopScreenshot(msg.payload);
+    setDesktopScreenshot({
+      status: "ready",
+      source: "agent",
+      target: msg.payload?.target,
+      intent: msg.payload?.intent,
+      imageDataUrl: result.dataUrl,
+      width: result.width,
+      height: result.height,
+      format: result.format,
+      message: result.message,
+    });
+    sendResult({ ok: true, result });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    setDesktopScreenshot({
+      status: "error",
+      source: "agent",
+      target: msg.payload?.target,
+      intent: msg.payload?.intent,
+      message,
+    });
     sendResult({ ok: false, error: message });
   }
 }
@@ -274,6 +500,14 @@ export function connectWebSocket(force = false) {
         const message = JSON.parse(e.data as string) as WsMessage;
         if (message.type === "desktop_launch_request") {
           void handleDesktopLaunchRequest(message);
+          return;
+        }
+        if (message.type === "desktop_input_request") {
+          void handleDesktopInputRequest(message);
+          return;
+        }
+        if (message.type === "desktop_capture_request") {
+          void handleDesktopCaptureRequest(message);
           return;
         }
         if (message.type === "desktop_installed_apps_request") {

@@ -13,12 +13,12 @@ export function getDesktopRuntimeTone(runtime: ReturnType<typeof useStore.getSta
     } as const;
   }
 
-  if (runtime.launchCapable > 0 && runtime.installedAppsCapable > 0) {
+  if (runtime.launchCapable > 0 && runtime.installedAppsCapable > 0 && runtime.inputCapable > 0 && runtime.screenshotCapable > 0) {
     return {
       tone: "ready",
       dot: "#86efac",
       label: "桌面运行态已连接",
-      detail: `已连接 ${runtime.totalClients} 个客户端，可启动程序 ${runtime.launchCapable}，可扫描程序 ${runtime.installedAppsCapable}。`,
+      detail: `已连接 ${runtime.totalClients} 个客户端，可启动程序 ${runtime.launchCapable}，可扫描程序 ${runtime.installedAppsCapable}，可接管输入 ${runtime.inputCapable}，可抓取截图 ${runtime.screenshotCapable}。`,
     } as const;
   }
 
@@ -27,7 +27,7 @@ export function getDesktopRuntimeTone(runtime: ReturnType<typeof useStore.getSta
       tone: "partial",
       dot: "#fbbf24",
       label: "桌面部分连接",
-      detail: `已有 ${runtime.launchCapable} 个客户端可启动程序，但扫描能力未完全就绪。`,
+      detail: `已有 ${runtime.launchCapable} 个客户端可启动程序；扫描能力 ${runtime.installedAppsCapable}，输入接管能力 ${runtime.inputCapable}，截图能力 ${runtime.screenshotCapable}。`,
     } as const;
   }
 

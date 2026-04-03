@@ -9,6 +9,8 @@ import type {
   AppTab,
   AutomationMode,
   CostSummary,
+  DesktopInputSession,
+  DesktopScreenshotState,
   DesktopProgramEntry,
   DesktopProgramSettings,
   DesktopRuntimeState,
@@ -180,8 +182,14 @@ interface UISlice {
 interface ConnectionSlice {
   wsStatus: "connecting" | "connected" | "disconnected";
   desktopRuntime: DesktopRuntimeState;
+  desktopInputSession: DesktopInputSession;
+  desktopScreenshot: DesktopScreenshotState;
   setWsStatus: (s: ConnectionSlice["wsStatus"]) => void;
   setDesktopRuntime: (runtime: Partial<DesktopRuntimeState>) => void;
+  setDesktopInputSession: (session: Partial<DesktopInputSession>) => void;
+  clearDesktopInputSession: () => void;
+  setDesktopScreenshot: (screenshot: Partial<DesktopScreenshotState>) => void;
+  clearDesktopScreenshot: () => void;
 }
 
 interface AutomationSlice {
@@ -502,6 +510,14 @@ function normalizeDesktopProgramSettings(
     whitelistMode: persistedSettings?.whitelistMode ?? currentSettings.whitelistMode,
     favorites: normalizeDesktopProgramEntries(persistedSettings?.favorites ?? currentSettings.favorites),
     whitelist: normalizeDesktopProgramEntries(persistedSettings?.whitelist ?? currentSettings.whitelist),
+    inputControl: {
+      enabled: persistedSettings?.inputControl?.enabled ?? currentSettings.inputControl.enabled,
+      autoOpenPanelOnAction:
+        persistedSettings?.inputControl?.autoOpenPanelOnAction ?? currentSettings.inputControl.autoOpenPanelOnAction,
+      requireManualTakeoverForVerification:
+        persistedSettings?.inputControl?.requireManualTakeoverForVerification
+        ?? currentSettings.inputControl.requireManualTakeoverForVerification,
+    },
   };
 }
 
@@ -530,14 +546,33 @@ const DEFAULT_DESKTOP_PROGRAM_SETTINGS: DesktopProgramSettings = {
   whitelistMode: false,
   favorites: [],
   whitelist: [],
+  inputControl: {
+    enabled: false,
+    autoOpenPanelOnAction: true,
+    requireManualTakeoverForVerification: true,
+  },
 };
 
 const DEFAULT_DESKTOP_RUNTIME_STATE: DesktopRuntimeState = {
   totalClients: 0,
   launchCapable: 0,
   installedAppsCapable: 0,
+  inputCapable: 0,
+  screenshotCapable: 0,
   lastCheckedAt: null,
   fetchState: "idle",
+};
+
+const DEFAULT_DESKTOP_INPUT_SESSION: DesktopInputSession = {
+  state: "idle",
+  source: null,
+  updatedAt: null,
+};
+
+const DEFAULT_DESKTOP_SCREENSHOT_STATE: DesktopScreenshotState = {
+  status: "idle",
+  source: null,
+  updatedAt: null,
 };
 
 function makeEmptyWorkspaceProjectView(rootPath: string | null = null): WorkspaceProjectViewState {
@@ -1024,6 +1059,12 @@ export const useStore = create<Store>()(
             ...updates,
             favorites: updates.favorites ?? s.desktopProgramSettings.favorites,
             whitelist: updates.whitelist ?? s.desktopProgramSettings.whitelist,
+            inputControl: updates.inputControl
+              ? {
+                  ...s.desktopProgramSettings.inputControl,
+                  ...updates.inputControl,
+                }
+              : s.desktopProgramSettings.inputControl,
           },
         })),
       saveDesktopFavorite: (payload) =>
@@ -1073,6 +1114,8 @@ export const useStore = create<Store>()(
 
       wsStatus: "disconnected",
       desktopRuntime: DEFAULT_DESKTOP_RUNTIME_STATE,
+      desktopInputSession: DEFAULT_DESKTOP_INPUT_SESSION,
+      desktopScreenshot: DEFAULT_DESKTOP_SCREENSHOT_STATE,
       setWsStatus: (wsStatus) => set({ wsStatus }),
       setDesktopRuntime: (desktopRuntime) =>
         set(s => ({
@@ -1081,6 +1124,24 @@ export const useStore = create<Store>()(
             ...desktopRuntime,
           },
         })),
+      setDesktopInputSession: (desktopInputSession) =>
+        set(s => ({
+          desktopInputSession: {
+            ...s.desktopInputSession,
+            ...desktopInputSession,
+            updatedAt: Date.now(),
+          },
+        })),
+      clearDesktopInputSession: () => set({ desktopInputSession: DEFAULT_DESKTOP_INPUT_SESSION }),
+      setDesktopScreenshot: (desktopScreenshot) =>
+        set(s => ({
+          desktopScreenshot: {
+            ...s.desktopScreenshot,
+            ...desktopScreenshot,
+            updatedAt: Date.now(),
+          },
+        })),
+      clearDesktopScreenshot: () => set({ desktopScreenshot: DEFAULT_DESKTOP_SCREENSHOT_STATE }),
 
       automationMode: "supervised",
       automationPaused: false,

@@ -4,6 +4,8 @@ import { useEffect } from "react";
 import { resolveBackendUrl } from "@/lib/backend-url";
 import { useStore } from "@/store";
 
+const DESKTOP_RUNTIME_REFRESH_EVENT = "xlx:desktop-runtime-refresh";
+
 async function fetchDesktopRuntime() {
   const url = await resolveBackendUrl("/api/desktop-runtime");
   const response = await fetch(url, {
@@ -20,7 +22,14 @@ async function fetchDesktopRuntime() {
     totalClients: number;
     launchCapable: number;
     installedAppsCapable: number;
+    inputCapable: number;
+    screenshotCapable: number;
   }>;
+}
+
+export function requestDesktopRuntimeRefresh() {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new CustomEvent(DESKTOP_RUNTIME_REFRESH_EVENT));
 }
 
 export function DesktopRuntimeBridge() {
@@ -35,6 +44,8 @@ export function DesktopRuntimeBridge() {
         if (cancelled) return;
         setDesktopRuntime({
           ...runtime,
+          inputCapable: runtime.inputCapable ?? 0,
+          screenshotCapable: runtime.screenshotCapable ?? 0,
           fetchState: "ready",
           error: undefined,
           lastCheckedAt: Date.now(),
@@ -45,6 +56,8 @@ export function DesktopRuntimeBridge() {
           totalClients: 0,
           launchCapable: 0,
           installedAppsCapable: 0,
+          inputCapable: 0,
+          screenshotCapable: 0,
           fetchState: "error",
           error: error instanceof Error ? error.message : String(error),
           lastCheckedAt: Date.now(),
@@ -59,9 +72,15 @@ export function DesktopRuntimeBridge() {
       void sync();
     }, 8000);
 
+    const handleRefresh = () => {
+      void sync();
+    };
+    window.addEventListener(DESKTOP_RUNTIME_REFRESH_EVENT, handleRefresh);
+
     return () => {
       cancelled = true;
       window.clearInterval(timer);
+      window.removeEventListener(DESKTOP_RUNTIME_REFRESH_EVENT, handleRefresh);
     };
   }, [setDesktopRuntime]);
 

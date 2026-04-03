@@ -130,12 +130,19 @@ export interface DesktopProgramSettings {
   whitelistMode: boolean;
   favorites: DesktopProgramEntry[];
   whitelist: DesktopProgramEntry[];
+  inputControl: {
+    enabled: boolean;
+    autoOpenPanelOnAction: boolean;
+    requireManualTakeoverForVerification: boolean;
+  };
 }
 
 export interface DesktopRuntimeSummary {
   totalClients: number;
   launchCapable: number;
   installedAppsCapable: number;
+  inputCapable: number;
+  screenshotCapable: number;
   updatedAt: number | null;
 }
 
@@ -145,9 +152,40 @@ export interface DesktopRuntimeState {
   totalClients: number;
   launchCapable: number;
   installedAppsCapable: number;
+  inputCapable: number;
+  screenshotCapable: number;
   lastCheckedAt: number | null;
   fetchState: DesktopRuntimeFetchState;
   error?: string;
+}
+
+export type DesktopInputSessionState = "idle" | "running" | "executed" | "manual-required" | "error";
+
+export interface DesktopInputSession {
+  state: DesktopInputSessionState;
+  source: "agent" | "manual" | null;
+  lastAction?: string;
+  lastIntent?: string;
+  target?: string;
+  message?: string;
+  sessionId?: string;
+  executionRunId?: string;
+  taskId?: string;
+  resumeInstruction?: string;
+  updatedAt: number | null;
+}
+
+export interface DesktopScreenshotState {
+  status: "idle" | "capturing" | "ready" | "error";
+  imageDataUrl?: string;
+  width?: number;
+  height?: number;
+  format?: "png" | "jpeg";
+  source: "agent" | "manual" | null;
+  target?: string;
+  intent?: string;
+  message?: string;
+  updatedAt: number | null;
 }
 
 export interface AgentSkill {

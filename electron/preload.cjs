@@ -10,6 +10,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   openWorkspacePreviewWindow: (preview) => ipcRenderer.invoke('open-workspace-preview-window', preview),
   runWorkspaceVerification: (targetPath) => ipcRenderer.invoke('run-workspace-verification', targetPath),
   launchNativeApplication: (payload) => ipcRenderer.invoke('launch-native-application', payload),
+  controlDesktopInput: (payload) => ipcRenderer.invoke('control-desktop-input', payload),
+  captureDesktopScreenshot: (payload) => ipcRenderer.invoke('capture-desktop-screenshot', payload),
   listInstalledApplications: (forceRefresh) => ipcRenderer.invoke('list-installed-applications', forceRefresh),
+  reloadDesktopWindow: () => ipcRenderer.invoke('reload-desktop-window'),
+  relaunchDesktopApp: () => ipcRenderer.invoke('relaunch-desktop-app'),
   isElectron: true,
 });

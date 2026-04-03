@@ -28,6 +28,7 @@ export function sendExecutionDispatch({
   includeUserMessage = false,
   taskDescription,
   includeActiveProjectMemory = false,
+  sessionId,
 }: {
   instruction: string;
   source?: ExecutionRunSource;
@@ -35,10 +36,14 @@ export function sendExecutionDispatch({
   includeUserMessage?: boolean;
   taskDescription?: string;
   includeActiveProjectMemory?: boolean;
+  sessionId?: string;
 }) {
   const trimmed = instruction.trim();
   const store = useStore.getState();
-  const activeSession = store.chatSessions.find(session => session.id === store.activeSessionId) ?? null;
+  const resolvedSessionId = sessionId && store.chatSessions.some(session => session.id === sessionId)
+    ? sessionId
+    : store.activeSessionId;
+  const activeSession = store.chatSessions.find(session => session.id === resolvedSessionId) ?? null;
   const scopedProjectMemories = filterByProjectScope(store.workspaceProjectMemories, activeSession ?? {});
   const scopedDeskNotes = filterByProjectScope(store.workspaceDeskNotes, activeSession ?? {});
   const scopedKnowledgeDocs = filterByProjectScope(store.semanticKnowledgeDocs, activeSession ?? {});
@@ -85,7 +90,7 @@ export function sendExecutionDispatch({
       ].filter(Boolean).join("\n\n---\n\n")
     : trimmed;
   const executionRunId = store.createExecutionRun({
-    sessionId: store.activeSessionId,
+    sessionId: resolvedSessionId,
     instruction: trimmed,
     source,
   });
@@ -162,7 +167,7 @@ export function sendExecutionDispatch({
     type: "dispatch",
     instruction: finalInstruction,
     attachments,
-    sessionId: store.activeSessionId,
+    sessionId: resolvedSessionId,
     executionRunId,
     source,
   });

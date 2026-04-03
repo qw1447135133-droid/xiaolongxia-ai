@@ -1334,8 +1334,8 @@ function MeetingTab() {
     clearMeeting();
     setMeetingTopic(topic.trim());
     setMeetingActive(true);
-    const { providers, agentConfigs } = useStore.getState();
-    sendWs({ type: "settings_sync", providers, agentConfigs });
+    const { providers, agentConfigs, userNickname, desktopProgramSettings } = useStore.getState();
+    sendWs({ type: "settings_sync", providers, agentConfigs, userNickname, desktopProgramSettings });
     sendWs({ type: "meeting", topic: topic.trim() });
   };
 

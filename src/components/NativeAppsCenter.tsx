@@ -3,6 +3,7 @@
 import { useDeferredValue, useEffect, useMemo, useState, startTransition } from "react";
 import { resolveBackendUrl } from "@/lib/backend-url";
 import { sendWs } from "@/hooks/useWebSocket";
+import { applyDesktopLaunchNavigation } from "@/lib/desktop-launch-routing";
 import { useStore } from "@/store";
 import { getSessionProjectLabel } from "@/lib/project-context";
 import type { DesktopProgramEntry } from "@/store/types";
@@ -15,6 +16,7 @@ type LaunchHistoryItem = NativeAppLaunchResult & {
   target: string;
   args: string[];
   createdAt: number;
+  destinationLabel?: string;
 };
 
 const DEFAULT_PRESETS = [
@@ -59,6 +61,8 @@ export function NativeAppsCenter() {
   const saveDesktopWhitelistEntry = useStore(s => s.saveDesktopWhitelistEntry);
   const removeDesktopWhitelistEntry = useStore(s => s.removeDesktopWhitelistEntry);
   const desktopRuntime = useStore(s => s.desktopRuntime);
+  const setTab = useStore(s => s.setTab);
+  const setActiveControlCenterSection = useStore(s => s.setActiveControlCenterSection);
   const [target, setTarget] = useState("");
   const [argText, setArgText] = useState("");
   const [cwd, setCwd] = useState("");
@@ -212,6 +216,12 @@ export function NativeAppsCenter() {
         ...(nextCwd ? { cwd: nextCwd } : {}),
         policy: buildPolicy(),
       });
+      const destination = result.ok
+        ? applyDesktopLaunchNavigation(nextTarget, {
+            setTab,
+            setActiveControlCenterSection,
+          })
+        : null;
 
       setHistory(current => [
         {
@@ -220,10 +230,11 @@ export function NativeAppsCenter() {
           target: nextTarget,
           args: nextArgs,
           createdAt: Date.now(),
+          destinationLabel: destination?.label,
         },
         ...current,
       ].slice(0, 8));
-      setStatus(result.message);
+      setStatus(destination ? `${result.message} 已自动切到${destination.label}。` : result.message);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       const failedItem: LaunchHistoryItem = {
@@ -732,6 +743,9 @@ export function NativeAppsCenter() {
                   </span>
                 </div>
                 <div className="control-center__dispatch-note">{item.message}</div>
+                {item.destinationLabel ? (
+                  <div className="control-center__copy">已自动切到: {item.destinationLabel}</div>
+                ) : null}
                 {item.args.length > 0 ? (
                   <div className="control-center__copy">参数: {item.args.join(" ")}</div>
                 ) : null}

@@ -1409,7 +1409,7 @@ function DesktopProgramsSection() {
       <div className="card" style={{ padding: 14 }}>
         <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 6 }}>本机程序调用策略</div>
         <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.7 }}>
-          这里控制 Electron 桌面运行态是否允许启动本机程序，以及是否强制启用白名单模式。
+          这里控制 Electron 桌面运行态是否允许启动本机程序，以及是否允许 agent 接管鼠标键盘处理桌面端纯 UI 任务。
         </div>
         <div style={{ marginTop: 12 }}>
           <DesktopRuntimeBadge showDetail />
@@ -1449,6 +1449,72 @@ function DesktopProgramsSection() {
               }}
             />
           </label>
+
+          <label style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 600 }}>启用鼠标键盘接管</div>
+              <div style={{ fontSize: 11, color: "var(--text-muted)", lineHeight: 1.7 }}>
+                开启后，agent 在桌面端应用、系统弹窗或无法通过代码完成的交互里，可以请求鼠标和键盘接管。
+              </div>
+            </div>
+            <input
+              type="checkbox"
+              checked={desktopProgramSettings.inputControl.enabled}
+              onChange={event => {
+                updateDesktopProgramSettings({
+                  inputControl: {
+                    ...desktopProgramSettings.inputControl,
+                    enabled: event.target.checked,
+                  },
+                });
+                void syncToServer();
+              }}
+            />
+          </label>
+
+          <label style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 600 }}>agent 动作时自动切到桌面面板</div>
+              <div style={{ fontSize: 11, color: "var(--text-muted)", lineHeight: 1.7 }}>
+                当桌面输入接管发生时，自动切到桌面控制台，方便你观察和接管。
+              </div>
+            </div>
+            <input
+              type="checkbox"
+              checked={desktopProgramSettings.inputControl.autoOpenPanelOnAction}
+              onChange={event => {
+                updateDesktopProgramSettings({
+                  inputControl: {
+                    ...desktopProgramSettings.inputControl,
+                    autoOpenPanelOnAction: event.target.checked,
+                  },
+                });
+                void syncToServer();
+              }}
+            />
+          </label>
+
+          <label style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 600 }}>验证码 / 验证场景强制人工接管</div>
+              <div style={{ fontSize: 11, color: "var(--text-muted)", lineHeight: 1.7 }}>
+                检测到验证码、OTP、2FA 或人机验证时，不自动执行输入动作，直接切到人工接管状态。
+              </div>
+            </div>
+            <input
+              type="checkbox"
+              checked={desktopProgramSettings.inputControl.requireManualTakeoverForVerification}
+              onChange={event => {
+                updateDesktopProgramSettings({
+                  inputControl: {
+                    ...desktopProgramSettings.inputControl,
+                    requireManualTakeoverForVerification: event.target.checked,
+                  },
+                });
+                void syncToServer();
+              }}
+            />
+          </label>
         </div>
 
         <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 12 }}>
@@ -1463,6 +1529,9 @@ function DesktopProgramsSection() {
           </span>
           <span className="badge badge-writer">
             白名单 {desktopProgramSettings.whitelist.length}
+          </span>
+          <span className="badge badge-performer">
+            输入接管 {desktopProgramSettings.inputControl.enabled ? "已启用" : "已关闭"}
           </span>
         </div>
       </div>

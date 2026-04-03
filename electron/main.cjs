@@ -388,6 +388,415 @@ async function launchNativeApplication(payload) {
   }
 }
 
+const SEND_KEYS_MODIFIERS = {
+  CTRL: '^',
+  CONTROL: '^',
+  ALT: '%',
+  SHIFT: '+',
+};
+
+const SEND_KEYS_NAMED = {
+  ENTER: '{ENTER}',
+  RETURN: '{ENTER}',
+  TAB: '{TAB}',
+  ESC: '{ESC}',
+  ESCAPE: '{ESC}',
+  SPACE: ' ',
+  BACKSPACE: '{BACKSPACE}',
+  DELETE: '{DELETE}',
+  DEL: '{DELETE}',
+  UP: '{UP}',
+  DOWN: '{DOWN}',
+  LEFT: '{LEFT}',
+  RIGHT: '{RIGHT}',
+  HOME: '{HOME}',
+  END: '{END}',
+  PGUP: '{PGUP}',
+  PAGEUP: '{PGUP}',
+  PGDN: '{PGDN}',
+  PAGEDOWN: '{PGDN}',
+  F1: '{F1}',
+  F2: '{F2}',
+  F3: '{F3}',
+  F4: '{F4}',
+  F5: '{F5}',
+  F6: '{F6}',
+  F7: '{F7}',
+  F8: '{F8}',
+  F9: '{F9}',
+  F10: '{F10}',
+  F11: '{F11}',
+  F12: '{F12}',
+};
+
+function normalizeDesktopInputAction(action) {
+  const normalized = String(action || '').trim().toLowerCase();
+  const allowed = new Set(['move', 'click', 'double_click', 'right_click', 'scroll', 'type', 'key', 'hotkey', 'wait']);
+  if (!allowed.has(normalized)) {
+    throw new Error(`不支持的桌面输入动作：${action}`);
+  }
+  return normalized;
+}
+
+function normalizeCoordinate(value, label) {
+  if (value === undefined || value === null || value === '') return null;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    throw new Error(`${label} 必须是数字。`);
+  }
+  return Math.round(parsed);
+}
+
+function normalizeDesktopDuration(value, fallbackMs = 120) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallbackMs;
+  return Math.max(0, Math.min(10_000, Math.round(parsed)));
+}
+
+function escapePowerShellDoubleQuoted(value) {
+  return String(value ?? '').replace(/`/g, '``').replace(/"/g, '`"');
+}
+
+function escapeSendKeysText(text) {
+  return String(text ?? '').replace(/[+^%~(){}\[\]]/g, (match) => {
+    if (match === '{') return '{{}';
+    if (match === '}') return '{}}';
+    if (match === '[') return '{[}';
+    if (match === ']') return '{]}';
+    return `{${match}}`;
+  });
+}
+
+function resolveSendKeysToken(rawKey) {
+  const key = String(rawKey || '').trim();
+  if (!key) {
+    throw new Error('按键不能为空。');
+  }
+
+  const upper = key.toUpperCase();
+  if (SEND_KEYS_NAMED[upper]) {
+    return SEND_KEYS_NAMED[upper];
+  }
+
+  if (key.length === 1) {
+    return escapeSendKeysText(key);
+  }
+
+  throw new Error(`暂不支持的按键：${key}`);
+}
+
+function buildSendKeysChord(rawKeys) {
+  const keys = Array.isArray(rawKeys)
+    ? rawKeys.map(item => String(item || '').trim()).filter(Boolean)
+    : [];
+  if (keys.length === 0) {
+    throw new Error('组合键不能为空。');
+  }
+
+  const modifiers = [];
+  const mainKeys = [];
+  for (const key of keys) {
+    const upper = key.toUpperCase();
+    if (SEND_KEYS_MODIFIERS[upper]) {
+      modifiers.push(SEND_KEYS_MODIFIERS[upper]);
+      continue;
+    }
+    if (upper === 'WIN' || upper === 'META' || upper === 'CMD') {
+      throw new Error('当前版本暂不支持 Windows / Meta 键。');
+    }
+    mainKeys.push(resolveSendKeysToken(key));
+  }
+
+  if (mainKeys.length === 0) {
+    throw new Error('组合键缺少主键。');
+  }
+
+  return `${modifiers.join('')}${mainKeys.join('')}`;
+}
+
+function detectDesktopVerificationIntent(payload) {
+  const source = [
+    payload?.intent,
+    payload?.target,
+    payload?.text,
+    payload?.key,
+    ...(Array.isArray(payload?.keys) ? payload.keys : []),
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+
+  return /(captcha|otp|2fa|验证码|人机验证|短信验证|验证按钮|滑块验证|二次验证|验证)/i.test(source)
+    || payload?.riskCategory === 'verification';
+}
+
+function buildDesktopRetrySuggestions(action, x, y) {
+  if ((action !== 'click' && action !== 'double_click' && action !== 'right_click') || x === null || y === null) {
+    return [];
+  }
+
+  const offsets = [
+    { label: '右侧微调', dx: 14, dy: 0 },
+    { label: '左侧微调', dx: -14, dy: 0 },
+    { label: '下方微调', dx: 0, dy: 12 },
+    { label: '上方微调', dx: 0, dy: -12 },
+    { label: '右下补点', dx: 18, dy: 10 },
+    { label: '左上补点', dx: -18, dy: -10 },
+  ];
+
+  return offsets.map((offset) => ({
+    ...offset,
+    nextX: x + offset.dx,
+    nextY: y + offset.dy,
+  }));
+}
+
+async function controlDesktopInput(payload) {
+  const action = normalizeDesktopInputAction(payload?.action);
+  const policy = payload?.policy ?? {};
+
+  if (policy.enabled === false) {
+    throw new Error('桌面鼠标键盘控制已在设置中关闭。');
+  }
+
+  if (process.platform !== 'win32') {
+    throw new Error('当前桌面输入控制仅支持 Windows Electron 运行态。');
+  }
+
+  if (detectDesktopVerificationIntent(payload) && policy.requireManualTakeoverForVerification !== false) {
+    return {
+      ok: false,
+      action,
+      mode: 'manual-handoff',
+      manualRequired: true,
+      message: '检测到验证码或验证场景，已切换到人工接管模式，请人工完成验证后再继续。',
+    };
+  }
+
+  const x = normalizeCoordinate(payload?.x, 'x');
+  const y = normalizeCoordinate(payload?.y, 'y');
+  const deltaY = normalizeCoordinate(payload?.deltaY, 'deltaY');
+  const durationMs = normalizeDesktopDuration(payload?.durationMs, action === 'wait' ? 600 : 120);
+  const text = typeof payload?.text === 'string' ? payload.text : '';
+  const key = typeof payload?.key === 'string' ? payload.key : '';
+  const rawHotkeys = Array.isArray(payload?.keys) ? payload.keys : [];
+  const hotkeySequence = rawHotkeys.length > 0 ? buildSendKeysChord(rawHotkeys) : '';
+  const keySequence = key ? buildSendKeysChord([key]) : '';
+  const retrySuggestions = buildDesktopRetrySuggestions(action, x, y);
+
+  if ((action === 'move' || action === 'click' || action === 'double_click' || action === 'right_click') && (x === null || y === null)) {
+    throw new Error(`${action} 动作需要提供 x 和 y 坐标。`);
+  }
+
+  if (action === 'scroll' && deltaY === null) {
+    throw new Error('scroll 动作需要提供 deltaY。');
+  }
+
+  if (action === 'type' && !text) {
+    throw new Error('type 动作需要提供 text。');
+  }
+
+  if (action === 'key' && !key) {
+    throw new Error('key 动作需要提供 key。');
+  }
+
+  if (action === 'hotkey' && !hotkeySequence) {
+    throw new Error('hotkey 动作需要提供 keys。');
+  }
+
+  const escapedText = escapePowerShellDoubleQuoted(escapeSendKeysText(text));
+  const escapedHotkey = escapePowerShellDoubleQuoted(hotkeySequence);
+  const escapedKey = escapePowerShellDoubleQuoted(keySequence);
+  const clickButton = action === 'right_click' ? 'right' : 'left';
+
+  const script = `
+$ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public static class DesktopInputNative {
+  [StructLayout(LayoutKind.Sequential)]
+  public struct POINT {
+    public int X;
+    public int Y;
+  }
+  [DllImport("user32.dll")] public static extern bool SetCursorPos(int X, int Y);
+  [DllImport("user32.dll")] public static extern bool GetCursorPos(out POINT lpPoint);
+  [DllImport("user32.dll")] public static extern void mouse_event(uint dwFlags, uint dx, uint dy, uint dwData, UIntPtr dwExtraInfo);
+}
+"@
+function Get-CursorPoint {
+  $point = New-Object DesktopInputNative+POINT
+  [DesktopInputNative]::GetCursorPos([ref]$point) | Out-Null
+  return @{ x = $point.X; y = $point.Y }
+}
+function Invoke-MouseClick([string]$button) {
+  if ($button -eq 'right') {
+    [DesktopInputNative]::mouse_event(0x0008, 0, 0, 0, [UIntPtr]::Zero)
+    Start-Sleep -Milliseconds 45
+    [DesktopInputNative]::mouse_event(0x0010, 0, 0, 0, [UIntPtr]::Zero)
+    return
+  }
+  [DesktopInputNative]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
+  Start-Sleep -Milliseconds 45
+  [DesktopInputNative]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
+}
+$action = "${action}"
+$x = ${x === null ? '$null' : x}
+$y = ${y === null ? '$null' : y}
+$deltaY = ${deltaY === null ? '$null' : deltaY}
+$durationMs = ${durationMs}
+$button = "${clickButton}"
+$text = "${escapedText}"
+$hotkey = "${escapedHotkey}"
+$keySequence = "${escapedKey}"
+$message = ""
+$retryStrategy = ""
+switch ($action) {
+  'move' {
+    [DesktopInputNative]::SetCursorPos($x, $y) | Out-Null
+    Start-Sleep -Milliseconds $durationMs
+    $message = "已移动鼠标到 ($x, $y)"
+  }
+  'click' {
+    [DesktopInputNative]::SetCursorPos($x, $y) | Out-Null
+    Start-Sleep -Milliseconds 80
+    Invoke-MouseClick $button
+    Start-Sleep -Milliseconds $durationMs
+    $retryStrategy = "visual-recheck-offset"
+    $message = "已在 ($x, $y) 执行鼠标点击；若界面未变化，请先截图复核，再按附近偏移点补点一次。"
+  }
+  'double_click' {
+    [DesktopInputNative]::SetCursorPos($x, $y) | Out-Null
+    Start-Sleep -Milliseconds 80
+    Invoke-MouseClick $button
+    Start-Sleep -Milliseconds 120
+    Invoke-MouseClick $button
+    Start-Sleep -Milliseconds $durationMs
+    $retryStrategy = "visual-recheck-offset"
+    $message = "已在 ($x, $y) 执行鼠标双击；若界面未变化，请先截图复核，再按附近偏移点补点一次。"
+  }
+  'right_click' {
+    [DesktopInputNative]::SetCursorPos($x, $y) | Out-Null
+    Start-Sleep -Milliseconds 80
+    Invoke-MouseClick $button
+    Start-Sleep -Milliseconds $durationMs
+    $retryStrategy = "visual-recheck-offset"
+    $message = "已在 ($x, $y) 执行鼠标右键；若菜单未出现，请先截图复核，再按附近偏移点补点一次。"
+  }
+  'scroll' {
+    [DesktopInputNative]::mouse_event(0x0800, 0, 0, [uint32]([int]$deltaY), [UIntPtr]::Zero)
+    Start-Sleep -Milliseconds $durationMs
+    $message = "已滚动鼠标滚轮 $deltaY"
+  }
+  'type' {
+    [System.Windows.Forms.SendKeys]::SendWait($text)
+    Start-Sleep -Milliseconds $durationMs
+    $message = "已输入文本"
+  }
+  'key' {
+    [System.Windows.Forms.SendKeys]::SendWait($keySequence)
+    Start-Sleep -Milliseconds $durationMs
+    $message = "已发送按键 ${escapePowerShellDoubleQuoted(key || '')}"
+  }
+  'hotkey' {
+    [System.Windows.Forms.SendKeys]::SendWait($hotkey)
+    Start-Sleep -Milliseconds $durationMs
+    $message = "已发送组合键"
+  }
+  'wait' {
+    Start-Sleep -Milliseconds $durationMs
+    $message = "已等待 $durationMs ms"
+  }
+  default {
+    throw "Unsupported action: $action"
+  }
+}
+$result = @{
+  ok = $true
+  action = $action
+  mode = 'executed'
+  manualRequired = $false
+  message = $message
+  retryStrategy = if ($retryStrategy) { $retryStrategy } else { $null }
+  cursor = Get-CursorPoint
+}
+$result | ConvertTo-Json -Compress
+`;
+
+  const result = await runPowerShellJson(script);
+  return typeof result === 'object' && result
+    ? {
+      ...result,
+      ...(retrySuggestions.length > 0 ? { retrySuggestions } : {}),
+    }
+    : {
+      ok: true,
+      action,
+      mode: 'executed',
+      manualRequired: false,
+      message: '桌面输入动作已执行。',
+      ...(retrySuggestions.length > 0 ? { retryStrategy: 'visual-recheck-offset', retrySuggestions } : {}),
+    };
+}
+
+async function captureDesktopScreenshot(payload = {}) {
+  if (process.platform !== 'win32') {
+    throw new Error('当前桌面截图仅支持 Windows Electron 运行态。');
+  }
+
+  const maxWidth = Math.max(480, Math.min(1920, Number(payload?.maxWidth) || 1440));
+  const quality = Math.max(45, Math.min(90, Number(payload?.quality) || 72));
+
+  const script = `
+$ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+$bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+$sourceBitmap = New-Object System.Drawing.Bitmap $bounds.Width, $bounds.Height
+$graphics = [System.Drawing.Graphics]::FromImage($sourceBitmap)
+$graphics.CopyFromScreen($bounds.X, $bounds.Y, 0, 0, $bounds.Size)
+$targetWidth = [Math]::Min(${Math.round(maxWidth)}, $bounds.Width)
+$targetHeight = if ($targetWidth -lt $bounds.Width) { [int][Math]::Round($bounds.Height * ($targetWidth / $bounds.Width)) } else { $bounds.Height }
+$outputBitmap = if ($targetWidth -ne $bounds.Width) { New-Object System.Drawing.Bitmap $targetWidth, $targetHeight } else { $sourceBitmap }
+if ($targetWidth -ne $bounds.Width) {
+  $resizedGraphics = [System.Drawing.Graphics]::FromImage($outputBitmap)
+  $resizedGraphics.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+  $resizedGraphics.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::HighQuality
+  $resizedGraphics.DrawImage($sourceBitmap, 0, 0, $targetWidth, $targetHeight)
+  $resizedGraphics.Dispose()
+}
+$codec = [System.Drawing.Imaging.ImageCodecInfo]::GetImageEncoders() | Where-Object { $_.MimeType -eq 'image/jpeg' } | Select-Object -First 1
+$encoder = [System.Drawing.Imaging.Encoder]::Quality
+$encoderParams = New-Object System.Drawing.Imaging.EncoderParameters 1
+$encoderParams.Param[0] = New-Object System.Drawing.Imaging.EncoderParameter($encoder, [long]${Math.round(quality)})
+$stream = New-Object System.IO.MemoryStream
+$outputBitmap.Save($stream, $codec, $encoderParams)
+$base64 = [System.Convert]::ToBase64String($stream.ToArray())
+$result = @{
+  ok = $true
+  message = '已抓取当前桌面截图。'
+  dataUrl = "data:image/jpeg;base64,$base64"
+  width = $targetWidth
+  height = $targetHeight
+  format = 'jpeg'
+}
+$graphics.Dispose()
+if ($outputBitmap -ne $sourceBitmap) { $outputBitmap.Dispose() }
+$sourceBitmap.Dispose()
+$stream.Dispose()
+$result | ConvertTo-Json -Compress
+`;
+
+  const result = await runPowerShellJson(script);
+  if (typeof result === 'object' && result) {
+    return result;
+  }
+
+  throw new Error('桌面截图返回了无效结果。');
+}
+
 function readWorkspacePackageJson(rootPath) {
   const packagePath = path.join(rootPath, 'package.json');
   if (!safeExists(packagePath)) return null;
@@ -1027,6 +1436,29 @@ function createMainWindow() {
   });
 }
 
+function reloadDesktopWindow() {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    throw new Error('当前没有可重载的桌面窗口。');
+  }
+
+  mainWindow.webContents.reloadIgnoringCache();
+  return {
+    ok: true,
+    message: '已请求重载当前桌面窗口。',
+  };
+}
+
+function relaunchDesktopApp() {
+  app.relaunch();
+  setTimeout(() => {
+    app.exit(0);
+  }, 120);
+  return {
+    ok: true,
+    message: '已请求重启 Electron 桌面实例。',
+  };
+}
+
 // ── 应用启动 ──
 app.whenReady().then(async () => {
   log('[main] app.whenReady');
@@ -1059,6 +1491,22 @@ app.whenReady().then(async () => {
   ipcMain.handle('launch-native-application', async (_event, payload) => {
     return launchNativeApplication(payload);
   });
+  ipcMain.handle('control-desktop-input', async (_event, payload) => {
+    try {
+      return await controlDesktopInput(payload);
+    } catch (error) {
+      log('[main] control-desktop-input failed:', error);
+      throw error;
+    }
+  });
+  ipcMain.handle('capture-desktop-screenshot', async (_event, payload) => {
+    try {
+      return await captureDesktopScreenshot(payload);
+    } catch (error) {
+      log('[main] capture-desktop-screenshot failed:', error);
+      throw error;
+    }
+  });
   ipcMain.handle('list-installed-applications', async (_event, forceRefresh) => {
     try {
       return await listInstalledApplications(Boolean(forceRefresh));
@@ -1066,6 +1514,12 @@ app.whenReady().then(async () => {
       log('[main] list-installed-applications failed:', error);
       throw error;
     }
+  });
+  ipcMain.handle('reload-desktop-window', async () => {
+    return reloadDesktopWindow();
+  });
+  ipcMain.handle('relaunch-desktop-app', async () => {
+    return relaunchDesktopApp();
   });
 
   // 处理第二个实例尝试启动

@@ -6,7 +6,7 @@
  */
 
 import { getBrowser, getPage } from "./browser-manager.js";
-import { requestDesktopInstalledApplications, requestDesktopLaunch } from "./desktop-bridge.js";
+import { requestDesktopInputControl, requestDesktopInstalledApplications, requestDesktopLaunch, requestDesktopScreenshot } from "./desktop-bridge.js";
 
 // ---------------------------------------------------------------------------
 // ToolBase - 对应 Python ToolBase 基类
@@ -422,6 +422,167 @@ class DesktopListInstalledApplicationsTool extends ToolBase {
   }
 }
 
+class DesktopControlInputTool extends ToolBase {
+  name = "desktop_control_input";
+  searchHint = "在 Electron 桌面运行态模拟鼠标和键盘输入，适合桌面端应用、系统弹窗或无 API 的 UI 场景。若是基于 desktop_capture_screenshot 的截图做点击，请使用同一张图的像素坐标，左上角为 (0,0)。点击/双击/右键后若截图验证仍未成功，应优先参考工具返回的 retrySuggestions 做一次附近偏移重试，再决定是否转人工接管。若任务涉及验证码、人机验证、OTP/2FA，不要尝试自动绕过，应切换到人工接管。";
+
+  inputSchema() {
+    return {
+      type: "object",
+      properties: {
+        action: {
+          type: "string",
+          enum: ["move", "click", "double_click", "right_click", "scroll", "type", "key", "hotkey", "wait"],
+          description: "要执行的桌面输入动作。",
+        },
+        target: { type: "string", description: "目标程序或界面描述，可选。" },
+        intent: { type: "string", description: "当前动作的目的说明，可选。" },
+        x: { type: "number", description: "鼠标目标横坐标，move/click 类动作使用。" },
+        y: { type: "number", description: "鼠标目标纵坐标，move/click 类动作使用。" },
+        deltaY: { type: "number", description: "滚轮增量，scroll 动作使用。" },
+        text: { type: "string", description: "要输入的文本，type 动作使用。" },
+        key: { type: "string", description: "单个按键名称，key 动作使用，例如 Enter、Tab、Esc、a。" },
+        keys: {
+          type: "array",
+          items: { type: "string" },
+          description: "组合键列表，hotkey 动作使用，例如 ['Ctrl', 'L']。",
+        },
+        durationMs: { type: "number", description: "动作后等待多久，默认约 120ms。" },
+        riskCategory: {
+          type: "string",
+          enum: ["normal", "verification"],
+          description: "如果是验证码/验证场景，请标记为 verification，以触发人工接管。",
+        },
+      },
+      required: ["action"],
+    };
+  }
+
+  async call(args = {}, context = {}) {
+    const result = await requestDesktopInputControl(args, {
+      preferredWs: context.desktopClientWs,
+      executionRunId: context.executionRunId,
+      taskId: context.taskId,
+      sessionId: context.sessionId,
+    });
+
+    return {
+      data: JSON.stringify({
+        success: true,
+        ...result,
+      }),
+    };
+  }
+
+  makeToolResultBlock(toolUseId, data) {
+    let parsed = null;
+    try {
+      parsed = typeof data === "string" ? JSON.parse(data) : data;
+    } catch {
+      parsed = null;
+    }
+
+    if (!parsed || typeof parsed !== "object") {
+      return super.makeToolResultBlock(toolUseId, data);
+    }
+
+    const nextHint = parsed.manualRequired
+      ? "当前已转人工接管，不要继续自动点击。"
+      : "如果这是视觉定位任务，下一步建议再次调用 desktop_capture_screenshot 验证界面是否达到预期。";
+    const retrySuggestionText = Array.isArray(parsed.retrySuggestions) && parsed.retrySuggestions.length > 0
+      ? ` 如首次验证失败，可优先尝试这些偏移点之一：${parsed.retrySuggestions
+          .slice(0, 4)
+          .map(item => `${item.label} (${item.nextX}, ${item.nextY})`)
+          .join(" / ")}。`
+      : "";
+
+    return {
+      type: "tool_result",
+      tool_use_id: toolUseId,
+      content: [
+        {
+          type: "text",
+          text:
+            `${parsed.message || "桌面输入动作已执行。"}`
+            + `${parsed.cursor ? ` 当前光标约在 (${parsed.cursor.x}, ${parsed.cursor.y})。` : ""}`
+            + retrySuggestionText
+            + ` ${nextHint}`,
+        },
+      ],
+    };
+  }
+}
+
+class DesktopCaptureScreenshotTool extends ToolBase {
+  name = "desktop_capture_screenshot";
+  searchHint = "抓取当前 Electron 桌面客户端的桌面截图，返回图片供识图分析。适合在桌面端应用、系统弹窗或无法直接通过代码确认界面状态时先观察当前桌面。拿到截图后，可按图片像素坐标继续调用 desktop_control_input 完成点击/输入。";
+  maxResultSizeChars = 800_000;
+
+  inputSchema() {
+    return {
+      type: "object",
+      properties: {
+        target: { type: "string", description: "当前截图关注的程序或界面，可选。" },
+        intent: { type: "string", description: "截图用途说明，可选。" },
+        maxWidth: { type: "number", description: "输出最大宽度，默认 1440。" },
+        quality: { type: "number", description: "JPEG 质量 45-90，默认 72。" },
+      },
+      required: [],
+    };
+  }
+
+  async call(args = {}, context = {}) {
+    const result = await requestDesktopScreenshot(args, {
+      preferredWs: context.desktopClientWs,
+    });
+
+    return {
+      data: JSON.stringify({
+        ...result,
+        ...(args.target ? { target: args.target } : {}),
+        ...(args.intent ? { intent: args.intent } : {}),
+      }),
+    };
+  }
+
+  makeToolResultBlock(toolUseId, data) {
+    let parsed = null;
+    try {
+      parsed = typeof data === "string" ? JSON.parse(data) : data;
+    } catch {
+      parsed = null;
+    }
+
+    if (!parsed?.dataUrl || typeof parsed.dataUrl !== "string" || !parsed.dataUrl.startsWith("data:image/")) {
+      return super.makeToolResultBlock(toolUseId, data);
+    }
+
+    const [, mediaType = "image/jpeg", base64Data = ""] = parsed.dataUrl.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/) || [];
+    return {
+      type: "tool_result",
+      tool_use_id: toolUseId,
+      content: [
+        {
+          type: "text",
+          text:
+            `桌面截图完成，尺寸 ${parsed.width || "未知"}x${parsed.height || "未知"}，坐标系左上角为 (0,0)。`
+            + `${parsed.target ? ` 关注目标：${parsed.target}。` : ""}`
+            + `${parsed.intent ? ` 用途：${parsed.intent}。` : ""}`
+            + " 如需点击，请估算目标元素中心点坐标后调用 desktop_control_input；点击后建议再次截图验证结果。",
+        },
+        {
+          type: "image",
+          source: {
+            type: "base64",
+            media_type: mediaType,
+            data: base64Data,
+          },
+        },
+      ],
+    };
+  }
+}
+
 // ---------------------------------------------------------------------------
 // ---------------------------------------------------------------------------
 
@@ -442,6 +603,8 @@ const BROWSER_TOOLS = [
 const DESKTOP_TOOLS = [
   new DesktopListInstalledApplicationsTool(),
   new DesktopLaunchNativeApplicationTool(),
+  new DesktopControlInputTool(),
+  new DesktopCaptureScreenshotTool(),
 ];
 
 /**

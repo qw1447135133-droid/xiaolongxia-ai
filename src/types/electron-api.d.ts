@@ -23,6 +23,73 @@ export interface NativeAppLaunchResult {
   pid?: number | null;
 }
 
+export type DesktopInputAction =
+  | "move"
+  | "click"
+  | "double_click"
+  | "right_click"
+  | "scroll"
+  | "type"
+  | "key"
+  | "hotkey"
+  | "wait";
+
+export interface DesktopInputControlPayload {
+  action: DesktopInputAction;
+  target?: string;
+  intent?: string;
+  x?: number;
+  y?: number;
+  deltaY?: number;
+  text?: string;
+  key?: string;
+  keys?: string[];
+  durationMs?: number;
+  riskCategory?: "normal" | "verification";
+  policy?: {
+    enabled: boolean;
+    requireManualTakeoverForVerification: boolean;
+  };
+}
+
+export interface DesktopInputRetrySuggestion {
+  label: string;
+  dx: number;
+  dy: number;
+  nextX: number;
+  nextY: number;
+}
+
+export interface DesktopInputControlResult {
+  ok: boolean;
+  action: DesktopInputAction;
+  message: string;
+  mode: "executed" | "manual-handoff";
+  manualRequired?: boolean;
+  retryStrategy?: "visual-recheck-offset";
+  retrySuggestions?: DesktopInputRetrySuggestion[];
+  cursor?: {
+    x: number;
+    y: number;
+  };
+}
+
+export interface DesktopScreenshotPayload {
+  target?: string;
+  intent?: string;
+  maxWidth?: number;
+  quality?: number;
+}
+
+export interface DesktopScreenshotResult {
+  ok: boolean;
+  message: string;
+  dataUrl: string;
+  width: number;
+  height: number;
+  format: "png" | "jpeg";
+}
+
 export interface NativeInstalledApplication {
   id: string;
   name: string;
@@ -47,7 +114,11 @@ declare global {
         results: VerificationStepResult[];
       }>;
       launchNativeApplication?: (payload: NativeAppLaunchPayload) => Promise<NativeAppLaunchResult>;
+      controlDesktopInput?: (payload: DesktopInputControlPayload) => Promise<DesktopInputControlResult>;
+      captureDesktopScreenshot?: (payload?: DesktopScreenshotPayload) => Promise<DesktopScreenshotResult>;
       listInstalledApplications?: (forceRefresh?: boolean) => Promise<NativeInstalledApplication[]>;
+      reloadDesktopWindow?: () => Promise<{ ok: boolean; message: string }>;
+      relaunchDesktopApp?: () => Promise<{ ok: boolean; message: string }>;
     };
   }
 }

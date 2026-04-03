@@ -1,0 +1,14 @@
+{
+  "terminal.integrated.inheritEnv": true,
+  "terminal.integrated.shellIntegration.enabled": false,
+  "terminal.integrated.defaultProfile.windows": "PowerShell",
+  "terminal.integrated.env.windows": {
+    "SystemRoot": "C:\\Windows",
+    "windir": "C:\\Windows"
+  },
+  "terminal.integrated.profiles.windows": {
+    "PowerShell": {
+      "source": "PowerShell"
+    }
+  }
+}

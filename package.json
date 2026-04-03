@@ -1,46 +1,90 @@
 {
-  "name": "xiaolongxia-ai",
+  "name": "xiaolongxia-web",
   "version": "0.1.0",
-  "description": "小龙虾 AI 跨境电商多 Agent 团队",
+  "description": "小龙虾 AI 团队桌面应用",
+  "author": "OpenAI Codex",
   "private": true,
-  "type": "module",
-  "main": "dist/cli.js",
-  "bin": {
-    "xiaolongxia": "dist/cli.js"
-  },
+  "main": "electron/main.cjs",
   "scripts": {
-    "dev": "node -e \"const {execSync}=require('child_process'); execSync('npm run dev', {cwd:'apps/web', stdio:'inherit'})\"",
-    "install:web": "node -e \"const {execSync}=require('child_process'); execSync('npm install', {cwd:'apps/web', stdio:'inherit'})\"",
-    "build": "tsc",
-    "pkg": "node build.js",
-    "gui": "node gui-server.js"
+    "dev:ws": "node server/ws-server.js",
+    "dev:next": "next dev -p 3000",
+    "dev": "concurrently -n WS,Next -c cyan,yellow \"node server/ws-server.js\" \"next dev -p 3000\"",
+    "electron:dev": "node scripts/electron-dev.js",
+    "electron:dev:clean": "node scripts/electron-dev.js --clean",
+    "build": "next build",
+    "electron:build": "cross-env ELECTRON_BUILD=true next build && electron-builder --win nsis portable",
+    "electron:build:mac": "cross-env ELECTRON_BUILD=true next build && electron-builder --mac",
+    "start": "next start"
   },
-  "pkg": {
-    "assets": [
-      ".env.example",
-      "dist/**/*.js",
-      "gui/**/*"
+  "build": {
+    "appId": "com.xiaolongxia.ai",
+    "productName": "小龙虾AI团队",
+    "directories": {
+      "output": "dist-electron"
+    },
+    "files": [
+      "electron/**",
+      "out/**",
+      "server/**",
+      "public/**",
+      "node_modules/**",
+      "!node_modules/.cache",
+      "!node_modules/electron",
+      "!node_modules/electron-builder"
     ],
-    "scripts": [
-      "dist/**/*.js"
+    "asarUnpack": [
+      "out/**"
     ],
-    "targets": [
-      "node18-win-x64"
+    "extraResources": [
+      {
+        "from": "server/",
+        "to": "server/"
+      }
     ],
-    "outputPath": "release"
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ]
+    },
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "category": "public.app-category.productivity"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
   },
   "dependencies": {
-    "@openai/codex-sdk": "^0.116.0",
-    "openai": "^4.52.0",
-    "eventemitter3": "^5.0.0",
-    "dotenv": "^16.0.0",
-    "express": "^4.18.0",
-    "open": "^10.0.0"
+    "@anthropic-ai/sdk": "^0.36.0",
+    "@browserbasehq/stagehand": "^3.2.0",
+    "docx": "^9.6.1",
+    "exceljs": "^4.4.0",
+    "next": "14.2.5",
+    "node-telegram-bot-api": "^0.67.0",
+    "openai": "^6.33.0",
+    "pptxgenjs": "^4.0.1",
+    "react": "^18.3.0",
+    "react-dom": "^18.3.0",
+    "ws": "^8.20.0",
+    "zustand": "^4.5.0"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
-    "pkg": "^5.8.1",
-    "typescript": "^5.0.0",
-    "tsx": "^4.0.0"
+    "@types/react": "^18.3.0",
+    "@types/react-dom": "^18.3.0",
+    "autoprefixer": "^10.4.0",
+    "concurrently": "^9.2.1",
+    "cross-env": "^7.0.3",
+    "electron": "^30.0.0",
+    "electron-builder": "^26.8.1",
+    "postcss": "^8.4.0",
+    "tailwindcss": "^3.4.0",
+    "typescript": "^5.5.0",
+    "wait-on": "^8.0.0"
   }
 }

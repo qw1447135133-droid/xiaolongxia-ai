@@ -3,6 +3,7 @@
 import { useMemo } from "react";
 import { useStore } from "@/store";
 import { DEFAULT_CHAT_TITLE } from "@/lib/chat-sessions";
+import { buildBusinessAutomationQueue } from "@/lib/business-operations";
 import { filterByProjectScope, getSessionProjectLabel } from "@/lib/project-context";
 import { reconnectWebSocket } from "@/hooks/useWebSocket";
 
@@ -17,6 +18,12 @@ export function WorkspaceStatusBar() {
   const chatSessions = useStore(s => s.chatSessions);
   const activeSessionId = useStore(s => s.activeSessionId);
   const latestMeetingRecord = useStore(s => s.latestMeetingRecord);
+  const businessApprovals = useStore(s => s.businessApprovals);
+  const businessCustomers = useStore(s => s.businessCustomers);
+  const businessLeads = useStore(s => s.businessLeads);
+  const businessTickets = useStore(s => s.businessTickets);
+  const businessContentTasks = useStore(s => s.businessContentTasks);
+  const businessChannelSessions = useStore(s => s.businessChannelSessions);
   const workspaceProjectMemories = useStore(s => s.workspaceProjectMemories);
   const activeWorkspaceProjectMemoryId = useStore(s => s.activeWorkspaceProjectMemoryId);
   const automationMode = useStore(s => s.automationMode);
@@ -34,6 +41,34 @@ export function WorkspaceStatusBar() {
         ? filterByProjectScope(workspaceProjectMemories, activeSession ?? {}).find(memory => memory.id === activeWorkspaceProjectMemoryId) ?? null
         : null,
     [activeSession, activeWorkspaceProjectMemoryId, workspaceProjectMemories],
+  );
+  const businessAutomationQueue = useMemo(
+    () =>
+      buildBusinessAutomationQueue({
+        approvals: filterByProjectScope(businessApprovals, activeSession ?? {}),
+        customers: filterByProjectScope(businessCustomers, activeSession ?? {}),
+        leads: filterByProjectScope(businessLeads, activeSession ?? {}),
+        tickets: filterByProjectScope(businessTickets, activeSession ?? {}),
+        contentTasks: filterByProjectScope(businessContentTasks, activeSession ?? {}),
+        channelSessions: filterByProjectScope(businessChannelSessions, activeSession ?? {}),
+      }),
+    [
+      activeSession,
+      businessApprovals,
+      businessChannelSessions,
+      businessContentTasks,
+      businessCustomers,
+      businessLeads,
+      businessTickets,
+    ],
+  );
+  const pendingApprovalCount = useMemo(
+    () => businessAutomationQueue.filter(item => item.approvalState === "pending").length,
+    [businessAutomationQueue],
+  );
+  const readyDispatchCount = useMemo(
+    () => businessAutomationQueue.filter(item => item.automationState === "ready").length,
+    [businessAutomationQueue],
   );
 
   return (
@@ -62,6 +97,12 @@ export function WorkspaceStatusBar() {
         </span>
         <span>
           值守: {remoteSupervisorEnabled ? "开启" : "关闭"}
+        </span>
+        <span>
+          审批: {pendingApprovalCount} 待处理
+        </span>
+        <span>
+          可派发: {readyDispatchCount}
         </span>
       </div>
 

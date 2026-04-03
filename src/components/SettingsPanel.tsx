@@ -1,8 +1,11 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { filterByProjectScope, getSessionProjectLabel } from "@/lib/project-context";
 import { randomId } from "@/lib/utils";
 import { resolveBackendUrl } from "@/lib/backend-url";
+import { getSemanticMemoryProviderStatus } from "@/lib/semantic-memory";
+import { buildKnowledgeDocumentSnippet } from "@/lib/workspace-memory";
 import { sendWs } from "@/hooks/useWebSocket";
 import { useStore } from "@/store";
 import {
@@ -36,7 +39,7 @@ function toggleSkill(skills: AgentSkillId[], skillId: AgentSkillId): AgentSkillI
 }
 
 export function SettingsPanel() {
-  const [activeSection, setActiveSection] = useState<"agents" | "providers" | "platforms">("agents");
+  const [activeSection, setActiveSection] = useState<"agents" | "providers" | "platforms" | "semantic">("agents");
 
   return (
     <div style={{ display: "flex", gap: 0, height: "100%", overflow: "hidden" }}>
@@ -44,6 +47,7 @@ export function SettingsPanel() {
         {([
           { id: "agents", label: "Agent 设置" },
           { id: "providers", label: "模型供应商" },
+          { id: "semantic", label: "语义记忆" },
           { id: "platforms", label: "消息平台" },
         ] as const).map(section => (
           <button
@@ -71,6 +75,7 @@ export function SettingsPanel() {
       <div style={{ flex: 1, overflowY: "auto", padding: 16 }}>
         {activeSection === "agents" && <AgentsSection />}
         {activeSection === "providers" && <ProvidersSection />}
+        {activeSection === "semantic" && <SemanticSection />}
         {activeSection === "platforms" && <PlatformSettings />}
       </div>
     </div>
@@ -531,6 +536,357 @@ function renderSkillGroups(selectedSkills: AgentSkillId[], onToggle: (skillId: A
   );
 }
 
+function SemanticSection() {
+  const {
+    semanticMemoryConfig,
+    updateSemanticMemoryConfig,
+    updateSemanticMemoryPgvectorConfig,
+    semanticKnowledgeDocs,
+    createSemanticKnowledgeDoc,
+    deleteSemanticKnowledgeDoc,
+    chatSessions,
+    activeSessionId,
+    workspaceRoot,
+    appendCommandDraft,
+  } = useStore();
+  const [title, setTitle] = useState("");
+  const [sourceLabel, setSourceLabel] = useState("手动录入");
+  const [tags, setTags] = useState("");
+  const [content, setContent] = useState("");
+
+  const activeSession = useMemo(
+    () => chatSessions.find(session => session.id === activeSessionId) ?? null,
+    [activeSessionId, chatSessions],
+  );
+  const scopedKnowledgeDocs = useMemo(
+    () =>
+      filterByProjectScope(semanticKnowledgeDocs, {
+        projectId: activeSession?.projectId,
+        workspaceRoot: activeSession?.workspaceRoot ?? workspaceRoot,
+      }),
+    [activeSession?.projectId, activeSession?.workspaceRoot, semanticKnowledgeDocs, workspaceRoot],
+  );
+  const status = useMemo(
+    () => getSemanticMemoryProviderStatus(semanticMemoryConfig),
+    [semanticMemoryConfig],
+  );
+
+  const statusTone =
+    status.tone === "ready"
+      ? {
+          border: "rgba(var(--success-rgb), 0.28)",
+          background: "rgba(var(--success-rgb), 0.08)",
+          color: "var(--success)",
+        }
+      : {
+          border: "rgba(var(--warning-rgb), 0.28)",
+          background: "rgba(var(--warning-rgb), 0.08)",
+          color: "var(--warning)",
+        };
+
+  const handleCreateDoc = () => {
+    if (!title.trim() || !content.trim()) return;
+    createSemanticKnowledgeDoc({
+      title,
+      content,
+      tags: tags
+        .split(/[,\n，、]/)
+        .map(item => item.trim())
+        .filter(Boolean),
+      sourceLabel,
+    });
+    setTitle("");
+    setContent("");
+    setTags("");
+    setSourceLabel("手动录入");
+  };
+
+  const updateRecallFlag = (
+    key: "autoRecallProjectMemories" | "autoRecallDeskNotes" | "autoRecallKnowledgeDocs",
+    value: boolean,
+  ) => {
+    updateSemanticMemoryConfig({ [key]: value });
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      <div className="card" style={{ padding: 14 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", flexWrap: "wrap" }}>
+          <div>
+            <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 6 }}>语义记忆总开关</div>
+            <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.7 }}>
+              结构化业务数据继续放在主 store，语义层只负责召回项目记忆、Desk Notes 和知识文档。
+            </div>
+            <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 8 }}>
+              当前项目范围: {activeSession ? getSessionProjectLabel(activeSession) : "General"}
+            </div>
+          </div>
+
+          <div
+            style={{
+              minWidth: 220,
+              border: `1px solid ${statusTone.border}`,
+              background: statusTone.background,
+              color: statusTone.color,
+              borderRadius: 12,
+              padding: "10px 12px",
+            }}
+          >
+            <div style={{ fontSize: 12, fontWeight: 700 }}>{status.label}</div>
+            <div style={{ fontSize: 11, lineHeight: 1.6, marginTop: 4 }}>{status.detail}</div>
+          </div>
+        </div>
+      </div>
+
+      <div className="card" style={{ padding: 14 }}>
+        <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12 }}>检索 Provider</div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10 }}>
+          {([
+            {
+              id: "local",
+              label: "本地词法检索",
+              copy: "零依赖，适合当前 Electron 单机工作台。",
+            },
+            {
+              id: "pgvector",
+              label: "Pgvector 预备位",
+              copy: "先录入配置，等后端接通后再切真实向量检索。",
+            },
+          ] as const).map(option => {
+            const active = semanticMemoryConfig.providerId === option.id;
+            return (
+              <button
+                key={option.id}
+                type="button"
+                onClick={() => updateSemanticMemoryConfig({ providerId: option.id })}
+                style={{
+                  textAlign: "left",
+                  borderRadius: 12,
+                  border: `1px solid ${active ? "rgba(var(--accent-rgb), 0.35)" : "var(--border)"}`,
+                  background: active ? "rgba(var(--accent-rgb), 0.08)" : "rgba(255,255,255,0.02)",
+                  padding: 12,
+                  cursor: "pointer",
+                  color: "var(--text)",
+                }}
+              >
+                <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 4 }}>{option.label}</div>
+                <div style={{ fontSize: 11, color: "var(--text-muted)", lineHeight: 1.6 }}>{option.copy}</div>
+              </button>
+            );
+          })}
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10, marginTop: 14 }}>
+          {([
+            {
+              key: "autoRecallProjectMemories",
+              label: "自动召回项目记忆",
+              copy: "命中项目记忆时，自动把记忆摘要拼进执行上下文。",
+            },
+            {
+              key: "autoRecallDeskNotes",
+              label: "自动召回 Desk Notes",
+              copy: "把最近最相关的 Desk Note 自动带进派发指令。",
+            },
+            {
+              key: "autoRecallKnowledgeDocs",
+              label: "自动召回知识文档",
+              copy: "从知识库里补充 SOP、口径和业务背景。",
+            },
+          ] as const).map(item => {
+            const checked = semanticMemoryConfig[item.key];
+            return (
+              <label
+                key={item.key}
+                style={{
+                  display: "flex",
+                  gap: 10,
+                  alignItems: "flex-start",
+                  borderRadius: 12,
+                  border: "1px solid var(--border)",
+                  background: "rgba(255,255,255,0.02)",
+                  padding: 12,
+                  cursor: "pointer",
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  onChange={event => updateRecallFlag(item.key, event.target.checked)}
+                  style={{ marginTop: 2, accentColor: "var(--accent)" }}
+                />
+                <span style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: "var(--text)" }}>{item.label}</span>
+                  <span style={{ fontSize: 11, color: "var(--text-muted)", lineHeight: 1.6 }}>{item.copy}</span>
+                </span>
+              </label>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="card" style={{ padding: 14 }}>
+        <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12 }}>Pgvector 预配配置</div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10 }}>
+          <label style={semanticFieldStyle}>
+            <span style={labelStyle}>已启用</span>
+            <input
+              type="checkbox"
+              checked={semanticMemoryConfig.pgvector.enabled}
+              onChange={event => updateSemanticMemoryPgvectorConfig({ enabled: event.target.checked })}
+              style={{ alignSelf: "flex-start", accentColor: "var(--accent)" }}
+            />
+          </label>
+          <label style={semanticFieldStyle}>
+            <span style={labelStyle}>Connection String</span>
+            <input
+              className="input"
+              value={semanticMemoryConfig.pgvector.connectionString}
+              onChange={event => updateSemanticMemoryPgvectorConfig({ connectionString: event.target.value })}
+              placeholder="postgres://user:pass@host:5432/db"
+            />
+          </label>
+          <label style={semanticFieldStyle}>
+            <span style={labelStyle}>Schema</span>
+            <input
+              className="input"
+              value={semanticMemoryConfig.pgvector.schema}
+              onChange={event => updateSemanticMemoryPgvectorConfig({ schema: event.target.value })}
+            />
+          </label>
+          <label style={semanticFieldStyle}>
+            <span style={labelStyle}>Table</span>
+            <input
+              className="input"
+              value={semanticMemoryConfig.pgvector.table}
+              onChange={event => updateSemanticMemoryPgvectorConfig({ table: event.target.value })}
+            />
+          </label>
+          <label style={semanticFieldStyle}>
+            <span style={labelStyle}>Embedding Model</span>
+            <input
+              className="input"
+              value={semanticMemoryConfig.pgvector.embeddingModel}
+              onChange={event => updateSemanticMemoryPgvectorConfig({ embeddingModel: event.target.value })}
+            />
+          </label>
+          <label style={semanticFieldStyle}>
+            <span style={labelStyle}>Dimensions</span>
+            <input
+              className="input"
+              type="number"
+              min={1}
+              value={semanticMemoryConfig.pgvector.dimensions}
+              onChange={event => updateSemanticMemoryPgvectorConfig({ dimensions: Number(event.target.value) || 0 })}
+            />
+          </label>
+        </div>
+      </div>
+
+      <div className="card" style={{ padding: 14 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 12 }}>
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 700 }}>项目知识文档</div>
+            <div style={{ fontSize: 11, color: "var(--text-muted)", lineHeight: 1.6 }}>
+              当前项目下共有 {scopedKnowledgeDocs.length} 份知识文档，可被输入框推荐，也可在执行时自动召回。
+            </div>
+          </div>
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10 }}>
+          <label style={semanticFieldStyle}>
+            <span style={labelStyle}>标题</span>
+            <input className="input" value={title} onChange={event => setTitle(event.target.value)} placeholder="例如：客服退款 SOP" />
+          </label>
+          <label style={semanticFieldStyle}>
+            <span style={labelStyle}>来源标签</span>
+            <input className="input" value={sourceLabel} onChange={event => setSourceLabel(event.target.value)} placeholder="例如：运营手册 / 销售脚本" />
+          </label>
+          <label style={semanticFieldStyle}>
+            <span style={labelStyle}>Tags</span>
+            <input className="input" value={tags} onChange={event => setTags(event.target.value)} placeholder="客服, 退款, SOP" />
+          </label>
+        </div>
+
+        <div style={{ marginTop: 10 }}>
+          <label style={labelStyle}>正文内容</label>
+          <textarea
+            className="input"
+            style={{ minHeight: 140, resize: "vertical", fontFamily: "inherit" }}
+            value={content}
+            onChange={event => setContent(event.target.value)}
+            placeholder="录入可复用的业务口径、流程 SOP、销售脚本、内容规范等。"
+          />
+        </div>
+
+        <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 10 }}>
+          <button
+            type="button"
+            className="btn-primary"
+            style={{ padding: "8px 18px" }}
+            disabled={!title.trim() || !content.trim()}
+            onClick={handleCreateDoc}
+          >
+            保存知识文档
+          </button>
+        </div>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 14 }}>
+          {scopedKnowledgeDocs.length === 0 && (
+            <div style={{ fontSize: 12, color: "var(--text-muted)", padding: "12px 0" }}>
+              当前项目还没有知识文档，可以先录入客服 SOP、销售话术、内容发布规范等。
+            </div>
+          )}
+
+          {scopedKnowledgeDocs.map(document => (
+            <article
+              key={document.id}
+              style={{
+                borderRadius: 12,
+                border: "1px solid var(--border)",
+                background: "rgba(255,255,255,0.03)",
+                padding: 12,
+              }}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start" }}>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700 }}>{document.title}</div>
+                  <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>
+                    {document.sourceLabel}
+                    {document.tags.length > 0 ? ` · ${document.tags.join("、")}` : ""}
+                  </div>
+                </div>
+                <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+                  <button
+                    type="button"
+                    className="btn-ghost"
+                    style={{ fontSize: 12 }}
+                    onClick={() => appendCommandDraft(buildKnowledgeDocumentSnippet(document))}
+                  >
+                    注入输入框
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-ghost"
+                    style={{ fontSize: 12, color: "var(--danger)", borderColor: "rgba(var(--danger-rgb), 0.24)" }}
+                    onClick={() => deleteSemanticKnowledgeDoc(document.id)}
+                  >
+                    删除
+                  </button>
+                </div>
+              </div>
+
+              <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.7, marginTop: 10, whiteSpace: "pre-wrap" }}>
+                {document.content.length > 260 ? `${document.content.slice(0, 260).trim()}...` : document.content}
+              </div>
+            </article>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ProvidersSection() {
   const { providers, addProvider, updateProvider, removeProvider } = useStore();
   const [adding, setAdding] = useState(false);
@@ -869,4 +1225,10 @@ const labelStyle: CSSProperties = {
   fontWeight: 700,
   textTransform: "uppercase",
   letterSpacing: "0.05em",
+};
+
+const semanticFieldStyle: CSSProperties = {
+  display: "flex",
+  flexDirection: "column",
+  gap: 4,
 };

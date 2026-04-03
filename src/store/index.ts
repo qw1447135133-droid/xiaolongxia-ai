@@ -30,8 +30,25 @@ import {
   newSessionId,
   sortChatSessions,
 } from "@/lib/chat-sessions";
+import {
+  createDemoBusinessDataset,
+  getNextChannelSessionStatus,
+  getNextContentTaskStatus,
+  getNextLeadStage,
+  getNextTicketStatus,
+} from "@/lib/business-entities";
 import { buildProjectContext, getProjectScopeKey, matchProjectScope } from "@/lib/project-context";
 import { PLUGIN_PACKS } from "@/lib/plugin-runtime";
+import type {
+  BusinessApprovalRecord,
+  BusinessChannelSession,
+  BusinessContentTask,
+  BusinessCustomer,
+  BusinessEntityType,
+  BusinessLead,
+  BusinessOperationRecord,
+  BusinessTicket,
+} from "@/types/business-entities";
 import type {
   WorkspaceDeskNote,
   WorkspaceEntry,
@@ -39,6 +56,10 @@ import type {
   WorkspacePreview,
   WorkspaceReferenceBundle,
 } from "@/types/desktop-workspace";
+import type {
+  SemanticKnowledgeDocument,
+  SemanticMemoryConfig,
+} from "@/types/semantic-memory";
 import type { WorkflowRun } from "@/types/workflows";
 
 interface AgentSlice {
@@ -116,6 +137,7 @@ interface SettingsSlice {
   platformConfigs: Record<string, PlatformConfig>;
   enabledPluginIds: string[];
   userNickname: string;
+  semanticMemoryConfig: SemanticMemoryConfig;
   addProvider: (p: ModelProvider) => void;
   updateProvider: (id: string, updates: Partial<ModelProvider>) => void;
   removeProvider: (id: string) => void;
@@ -125,6 +147,8 @@ interface SettingsSlice {
   togglePlugin: (id: string) => void;
   applyPluginPack: (id: string) => void;
   setUserNickname: (nickname: string) => void;
+  updateSemanticMemoryConfig: (updates: Partial<SemanticMemoryConfig>) => void;
+  updateSemanticMemoryPgvectorConfig: (updates: Partial<SemanticMemoryConfig["pgvector"]>) => void;
 }
 
 interface UISlice {
@@ -173,6 +197,49 @@ interface WorkflowSlice {
   completeWorkflowRun: (workflowRunId: string) => void;
   archiveWorkflowRun: (workflowRunId: string) => void;
   removeWorkflowRun: (workflowRunId: string) => void;
+}
+
+interface BusinessEntitiesSlice {
+  businessApprovals: BusinessApprovalRecord[];
+  businessOperationLogs: BusinessOperationRecord[];
+  businessCustomers: BusinessCustomer[];
+  businessLeads: BusinessLead[];
+  businessTickets: BusinessTicket[];
+  businessContentTasks: BusinessContentTask[];
+  businessChannelSessions: BusinessChannelSession[];
+  createBusinessCustomer: (payload: Pick<BusinessCustomer, "name" | "tier" | "primaryChannel" | "company" | "summary">) => void;
+  createBusinessLead: (payload: Pick<BusinessLead, "title" | "customerId" | "source" | "stage" | "score" | "nextAction">) => void;
+  createBusinessTicket: (payload: Pick<BusinessTicket, "subject" | "customerId" | "channelSessionId" | "status" | "priority" | "summary">) => void;
+  createBusinessContentTask: (payload: Pick<BusinessContentTask, "title" | "customerId" | "leadId" | "channel" | "status" | "priority" | "brief">) => void;
+  createBusinessChannelSession: (payload: Pick<BusinessChannelSession, "title" | "customerId" | "channel" | "externalRef" | "status" | "summary">) => void;
+  advanceBusinessLeadStage: (id: string) => void;
+  advanceBusinessTicketStatus: (id: string) => void;
+  advanceBusinessContentTaskStatus: (id: string) => void;
+  advanceBusinessChannelSessionStatus: (id: string) => void;
+  setBusinessApprovalDecision: (payload: {
+    entityType: BusinessEntityType;
+    entityId: string;
+    status: BusinessApprovalRecord["status"];
+    note?: string;
+  }) => void;
+  recordBusinessOperation: (payload: {
+    entityType: BusinessEntityType;
+    entityId: string;
+    eventType: BusinessOperationRecord["eventType"];
+    trigger: BusinessOperationRecord["trigger"];
+    status: BusinessOperationRecord["status"];
+    title: string;
+    detail: string;
+    executionRunId?: string;
+  }) => void;
+  seedBusinessEntitiesForProject: (scope?: { projectId?: string | null; rootPath?: string | null }) => void;
+  clearBusinessEntitiesForProject: (scope?: { projectId?: string | null; rootPath?: string | null }) => void;
+}
+
+interface SemanticKnowledgeSlice {
+  semanticKnowledgeDocs: SemanticKnowledgeDocument[];
+  createSemanticKnowledgeDoc: (payload: Pick<SemanticKnowledgeDocument, "title" | "content" | "tags" | "sourceLabel">) => void;
+  deleteSemanticKnowledgeDoc: (id: string) => void;
 }
 
 interface ExecutionSlice {
@@ -285,6 +352,8 @@ type Store =
   & AutomationSlice
   & DispatchSlice
   & WorkflowSlice
+  & BusinessEntitiesSlice
+  & SemanticKnowledgeSlice
   & ExecutionSlice
   & MeetingSlice
   & WorkspaceSlice
@@ -359,10 +428,39 @@ function syncAgentsWithConfigs(
   ) as Record<AgentId, AgentState>;
 }
 
+function normalizeSemanticMemoryConfig(
+  currentConfig: SemanticMemoryConfig,
+  persistedConfig?: Partial<SemanticMemoryConfig>,
+): SemanticMemoryConfig {
+  return {
+    ...currentConfig,
+    ...persistedConfig,
+    pgvector: {
+      ...currentConfig.pgvector,
+      ...persistedConfig?.pgvector,
+    },
+  };
+}
+
 const seedSession = makeEmptySession();
 const MAX_EXECUTION_RUNS = 24;
 const MAX_EXECUTION_EVENTS = 40;
 const MAX_WORKSPACE_PROJECT_MEMORIES = 16;
+const MAX_BUSINESS_OPERATION_LOGS = 240;
+const DEFAULT_SEMANTIC_MEMORY_CONFIG: SemanticMemoryConfig = {
+  providerId: "local",
+  autoRecallProjectMemories: true,
+  autoRecallDeskNotes: true,
+  autoRecallKnowledgeDocs: true,
+  pgvector: {
+    enabled: false,
+    connectionString: "",
+    schema: "public",
+    table: "semantic_memory_documents",
+    embeddingModel: "text-embedding-3-small",
+    dimensions: 1536,
+  },
+};
 
 function makeEmptyWorkspaceProjectView(rootPath: string | null = null): WorkspaceProjectViewState {
   return {
@@ -394,6 +492,12 @@ function capWorkspaceProjectMemories(memories: WorkspaceProjectMemory[]): Worksp
   return [...memories]
     .sort((left, right) => right.updatedAt - left.updatedAt)
     .slice(0, MAX_WORKSPACE_PROJECT_MEMORIES);
+}
+
+function capBusinessOperationLogs(records: BusinessOperationRecord[]): BusinessOperationRecord[] {
+  return [...records]
+    .sort((left, right) => right.createdAt - left.createdAt)
+    .slice(0, MAX_BUSINESS_OPERATION_LOGS);
 }
 
 function resolveActiveProjectScope(state: Pick<Store, "chatSessions" | "activeSessionId" | "workspaceRoot">) {
@@ -470,6 +574,36 @@ function selectProjectMemoryNotes(
       linkedName: note.linkedName,
       linkedKind: note.linkedKind,
     }));
+}
+
+function resolveBusinessScope(state: Pick<Store, "chatSessions" | "activeSessionId" | "workspaceRoot">) {
+  const activeSession = state.chatSessions.find(session => session.id === state.activeSessionId) ?? null;
+  return {
+    projectId: activeSession?.projectId ?? null,
+    rootPath: activeSession?.workspaceRoot ?? state.workspaceRoot,
+  };
+}
+
+function getBusinessEntityTitle(
+  state: Pick<
+    Store,
+    "businessCustomers" | "businessLeads" | "businessTickets" | "businessContentTasks" | "businessChannelSessions"
+  >,
+  entityType: BusinessEntityType,
+  entityId: string,
+) {
+  switch (entityType) {
+    case "customer":
+      return state.businessCustomers.find(item => item.id === entityId)?.name ?? entityId;
+    case "lead":
+      return state.businessLeads.find(item => item.id === entityId)?.title ?? entityId;
+    case "ticket":
+      return state.businessTickets.find(item => item.id === entityId)?.subject ?? entityId;
+    case "contentTask":
+      return state.businessContentTasks.find(item => item.id === entityId)?.title ?? entityId;
+    case "channelSession":
+      return state.businessChannelSessions.find(item => item.id === entityId)?.title ?? entityId;
+  }
 }
 
 function buildSessionActivationState(
@@ -701,6 +835,7 @@ export const useStore = create<Store>()(
       agentConfigs: initAgentConfigs(),
       enabledPluginIds: [],
       userNickname: "您",
+      semanticMemoryConfig: DEFAULT_SEMANTIC_MEMORY_CONFIG,
       setUserNickname: (nickname) => set({ userNickname: nickname }),
       platformConfigs: Object.fromEntries(
         PLATFORM_DEFINITIONS.map(p => [p.id, { enabled: false, fields: {}, status: "idle" as const }])
@@ -762,6 +897,20 @@ export const useStore = create<Store>()(
             enabledPluginIds: Array.from(new Set([...s.enabledPluginIds, ...pack.pluginIds])),
           };
         }),
+      updateSemanticMemoryConfig: (updates) =>
+        set(s => ({
+          semanticMemoryConfig: normalizeSemanticMemoryConfig(s.semanticMemoryConfig, updates),
+        })),
+      updateSemanticMemoryPgvectorConfig: (updates) =>
+        set(s => ({
+          semanticMemoryConfig: {
+            ...s.semanticMemoryConfig,
+            pgvector: {
+              ...s.semanticMemoryConfig.pgvector,
+              ...updates,
+            },
+          },
+        })),
 
       theme: "dark",
       leftOpen: true,
@@ -881,6 +1030,299 @@ export const useStore = create<Store>()(
       removeWorkflowRun: (workflowRunId) =>
         set(s => ({
           workflowRuns: s.workflowRuns.filter(run => run.id !== workflowRunId),
+        })),
+
+      businessApprovals: [],
+      businessOperationLogs: [],
+      businessCustomers: [],
+      businessLeads: [],
+      businessTickets: [],
+      businessContentTasks: [],
+      businessChannelSessions: [],
+      createBusinessCustomer: (payload) =>
+        set(s => {
+          const now = Date.now();
+          const scope = resolveBusinessScope(s);
+          return {
+            businessCustomers: [
+              {
+                id: `customer-${now}-${Math.random().toString(36).slice(2, 7)}`,
+                projectId: scope.projectId,
+                rootPath: scope.rootPath,
+                createdAt: now,
+                updatedAt: now,
+                ownerAgentId: "greeter",
+                tags: [],
+                ...payload,
+              },
+              ...s.businessCustomers,
+            ],
+          };
+        }),
+      createBusinessLead: (payload) =>
+        set(s => {
+          const now = Date.now();
+          const scope = resolveBusinessScope(s);
+          return {
+            businessLeads: [
+              {
+                id: `lead-${now}-${Math.random().toString(36).slice(2, 7)}`,
+                projectId: scope.projectId,
+                rootPath: scope.rootPath,
+                createdAt: now,
+                updatedAt: now,
+                ownerAgentId: "explorer",
+                ...payload,
+              },
+              ...s.businessLeads,
+            ],
+          };
+        }),
+      createBusinessTicket: (payload) =>
+        set(s => {
+          const now = Date.now();
+          const scope = resolveBusinessScope(s);
+          return {
+            businessTickets: [
+              {
+                id: `ticket-${now}-${Math.random().toString(36).slice(2, 7)}`,
+                projectId: scope.projectId,
+                rootPath: scope.rootPath,
+                createdAt: now,
+                updatedAt: now,
+                ownerAgentId: "greeter",
+                ...payload,
+              },
+              ...s.businessTickets,
+            ],
+          };
+        }),
+      createBusinessContentTask: (payload) =>
+        set(s => {
+          const now = Date.now();
+          const scope = resolveBusinessScope(s);
+          return {
+            businessContentTasks: [
+              {
+                id: `content-${now}-${Math.random().toString(36).slice(2, 7)}`,
+                projectId: scope.projectId,
+                rootPath: scope.rootPath,
+                createdAt: now,
+                updatedAt: now,
+                ownerAgentId: "writer",
+                ...payload,
+              },
+              ...s.businessContentTasks,
+            ],
+          };
+        }),
+      createBusinessChannelSession: (payload) =>
+        set(s => {
+          const now = Date.now();
+          const scope = resolveBusinessScope(s);
+          return {
+            businessChannelSessions: [
+              {
+                id: `channel-session-${now}-${Math.random().toString(36).slice(2, 7)}`,
+                projectId: scope.projectId,
+                rootPath: scope.rootPath,
+                createdAt: now,
+                updatedAt: now,
+                lastMessageAt: now,
+                ...payload,
+              },
+              ...s.businessChannelSessions,
+            ],
+          };
+        }),
+      advanceBusinessLeadStage: (id) =>
+        set(s => ({
+          businessLeads: s.businessLeads.map(item =>
+            item.id === id
+              ? { ...item, stage: getNextLeadStage(item.stage), updatedAt: Date.now() }
+              : item,
+          ),
+        })),
+      advanceBusinessTicketStatus: (id) =>
+        set(s => ({
+          businessTickets: s.businessTickets.map(item =>
+            item.id === id
+              ? { ...item, status: getNextTicketStatus(item.status), updatedAt: Date.now() }
+              : item,
+          ),
+        })),
+      advanceBusinessContentTaskStatus: (id) =>
+        set(s => ({
+          businessContentTasks: s.businessContentTasks.map(item =>
+            item.id === id
+              ? { ...item, status: getNextContentTaskStatus(item.status), updatedAt: Date.now() }
+              : item,
+          ),
+        })),
+      advanceBusinessChannelSessionStatus: (id) =>
+        set(s => ({
+          businessChannelSessions: s.businessChannelSessions.map(item =>
+            item.id === id
+              ? { ...item, status: getNextChannelSessionStatus(item.status), updatedAt: Date.now() }
+              : item,
+          ),
+        })),
+      setBusinessApprovalDecision: ({ entityType, entityId, status, note }) =>
+        set(s => {
+          const now = Date.now();
+          const scope = resolveBusinessScope(s);
+          const entityTitle = getBusinessEntityTitle(s, entityType, entityId);
+          const existing = s.businessApprovals.find(
+            item => item.entityType === entityType && item.entityId === entityId,
+          );
+          const nextRecord: BusinessApprovalRecord = existing
+            ? {
+                ...existing,
+                status,
+                note: note?.trim() || existing.note,
+                decidedAt: status === "pending" ? undefined : now,
+                updatedAt: now,
+              }
+            : {
+                id: `approval-${now}-${Math.random().toString(36).slice(2, 7)}`,
+                entityType,
+                entityId,
+                status,
+                projectId: scope.projectId,
+                rootPath: scope.rootPath,
+                createdAt: now,
+                updatedAt: now,
+                requestedAt: now,
+                decidedAt: status === "pending" ? undefined : now,
+                note: note?.trim() || undefined,
+              };
+
+          return {
+            businessApprovals: [
+              nextRecord,
+              ...s.businessApprovals.filter(item => item.id !== nextRecord.id),
+            ].slice(0, 200),
+            businessOperationLogs: capBusinessOperationLogs([
+              {
+                id: `biz-op-${now}-${Math.random().toString(36).slice(2, 7)}`,
+                entityType,
+                entityId,
+                eventType: "approval",
+                trigger: "manual",
+                status,
+                title: entityTitle,
+                detail:
+                  status === "approved"
+                    ? "人工批准该业务对象进入自动执行链路。"
+                    : status === "rejected"
+                      ? "人工驳回该业务对象的自动执行请求。"
+                      : "重新打开审批，等待人工进一步确认。",
+                projectId: scope.projectId,
+                rootPath: scope.rootPath,
+                createdAt: now,
+                updatedAt: now,
+              },
+              ...s.businessOperationLogs,
+            ]),
+          };
+        }),
+      recordBusinessOperation: ({ entityType, entityId, eventType, trigger, status, title, detail, executionRunId }) =>
+        set(s => {
+          const now = Date.now();
+          const scope = resolveBusinessScope(s);
+          return {
+            businessOperationLogs: capBusinessOperationLogs([
+              {
+                id: `biz-op-${now}-${Math.random().toString(36).slice(2, 7)}`,
+                entityType,
+                entityId,
+                eventType,
+                trigger,
+                status,
+                title,
+                detail,
+                executionRunId,
+                projectId: scope.projectId,
+                rootPath: scope.rootPath,
+                createdAt: now,
+                updatedAt: now,
+              },
+              ...s.businessOperationLogs,
+            ]),
+          };
+        }),
+      seedBusinessEntitiesForProject: (scope) =>
+        set(s => {
+          const activeSession = s.chatSessions.find(session => session.id === s.activeSessionId) ?? null;
+          const resolvedScope = {
+            projectId: scope?.projectId ?? activeSession?.projectId ?? null,
+            rootPath: scope?.rootPath ?? activeSession?.workspaceRoot ?? s.workspaceRoot,
+          };
+          const existingInScope =
+            s.businessCustomers.some(item => matchProjectScope(item, resolvedScope)) ||
+            s.businessLeads.some(item => matchProjectScope(item, resolvedScope)) ||
+            s.businessTickets.some(item => matchProjectScope(item, resolvedScope)) ||
+            s.businessContentTasks.some(item => matchProjectScope(item, resolvedScope)) ||
+            s.businessChannelSessions.some(item => matchProjectScope(item, resolvedScope));
+
+          if (existingInScope) return {};
+
+          const demo = createDemoBusinessDataset(resolvedScope);
+          return {
+            businessCustomers: [...demo.customers, ...s.businessCustomers],
+            businessLeads: [...demo.leads, ...s.businessLeads],
+            businessTickets: [...demo.tickets, ...s.businessTickets],
+            businessContentTasks: [...demo.contentTasks, ...s.businessContentTasks],
+            businessChannelSessions: [...demo.channelSessions, ...s.businessChannelSessions],
+          };
+        }),
+      clearBusinessEntitiesForProject: (scope) =>
+        set(s => {
+          const activeSession = s.chatSessions.find(session => session.id === s.activeSessionId) ?? null;
+          const resolvedScope = {
+            projectId: scope?.projectId ?? activeSession?.projectId ?? null,
+            rootPath: scope?.rootPath ?? activeSession?.workspaceRoot ?? s.workspaceRoot,
+          };
+          return {
+            businessApprovals: s.businessApprovals.filter(item => !matchProjectScope(item, resolvedScope)),
+            businessOperationLogs: s.businessOperationLogs.filter(item => !matchProjectScope(item, resolvedScope)),
+            businessCustomers: s.businessCustomers.filter(item => !matchProjectScope(item, resolvedScope)),
+            businessLeads: s.businessLeads.filter(item => !matchProjectScope(item, resolvedScope)),
+            businessTickets: s.businessTickets.filter(item => !matchProjectScope(item, resolvedScope)),
+            businessContentTasks: s.businessContentTasks.filter(item => !matchProjectScope(item, resolvedScope)),
+            businessChannelSessions: s.businessChannelSessions.filter(item => !matchProjectScope(item, resolvedScope)),
+          };
+        }),
+
+      semanticKnowledgeDocs: [],
+      createSemanticKnowledgeDoc: (payload) =>
+        set(s => {
+          const now = Date.now();
+          const activeSession = s.chatSessions.find(session => session.id === s.activeSessionId) ?? null;
+          const nextDoc: SemanticKnowledgeDocument = {
+            id: `knowledge-${now}-${Math.random().toString(36).slice(2, 7)}`,
+            projectId: activeSession?.projectId ?? null,
+            rootPath: activeSession?.workspaceRoot ?? s.workspaceRoot,
+            createdAt: now,
+            updatedAt: now,
+            title: payload.title.trim() || "未命名知识文档",
+            content: payload.content.trim(),
+            tags: payload.tags
+              .map(tag => tag.trim())
+              .filter(Boolean),
+            sourceLabel: payload.sourceLabel.trim() || "手动录入",
+          };
+
+          return {
+            semanticKnowledgeDocs: [
+              nextDoc,
+              ...s.semanticKnowledgeDocs.filter(item => item.id !== nextDoc.id),
+            ].slice(0, 120),
+          };
+        }),
+      deleteSemanticKnowledgeDoc: (id) =>
+        set(s => ({
+          semanticKnowledgeDocs: s.semanticKnowledgeDocs.filter(item => item.id !== id),
         })),
 
       executionRuns: [],
@@ -1464,6 +1906,7 @@ export const useStore = create<Store>()(
         enabledPluginIds: s.enabledPluginIds,
         platformConfigs: s.platformConfigs,
         userNickname: s.userNickname,
+        semanticMemoryConfig: s.semanticMemoryConfig,
         theme: s.theme,
         leftOpen: s.leftOpen,
         rightOpen: s.rightOpen,
@@ -1485,17 +1928,33 @@ export const useStore = create<Store>()(
         activeWorkspaceProjectMemoryId: s.activeWorkspaceProjectMemoryId,
         workspaceDeskNotes: s.workspaceDeskNotes,
         workspaceScratchpad: s.workspaceScratchpad,
+        businessApprovals: s.businessApprovals,
+        businessOperationLogs: s.businessOperationLogs,
+        businessCustomers: s.businessCustomers,
+        businessLeads: s.businessLeads,
+        businessTickets: s.businessTickets,
+        businessContentTasks: s.businessContentTasks,
+        businessChannelSessions: s.businessChannelSessions,
+        semanticKnowledgeDocs: s.semanticKnowledgeDocs,
       }),
       merge: (persisted, current) => {
         const persistedStore = (persisted ?? {}) as Partial<Store>;
         const merged = { ...current, ...persistedStore } as Store;
         const agentConfigs = normalizeAgentConfigs(current.agentConfigs, persistedStore.agentConfigs);
         const agents = syncAgentsWithConfigs(current.agents, agentConfigs, persistedStore.agents);
+        const semanticMemoryConfig = normalizeSemanticMemoryConfig(
+          current.semanticMemoryConfig,
+          persistedStore.semanticMemoryConfig,
+        );
 
         return ensureChatHydration({
           ...merged,
           agentConfigs,
           agents,
+          semanticMemoryConfig,
+          semanticKnowledgeDocs: Array.isArray(persistedStore.semanticKnowledgeDocs)
+            ? persistedStore.semanticKnowledgeDocs
+            : current.semanticKnowledgeDocs,
         }) as Store;
       },
     }

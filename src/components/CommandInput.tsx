@@ -1,7 +1,17 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
-import { buildProjectMemorySnippet, describeProjectMemory, getRecommendedProjectMemories } from "@/lib/workspace-memory";
+import {
+  buildDeskNoteSnippet,
+  buildKnowledgeDocumentSnippet,
+  buildProjectMemorySnippet,
+  describeDeskNote,
+  describeKnowledgeDocument,
+  describeProjectMemory,
+  getRecommendedDeskNotes,
+  getRecommendedKnowledgeDocuments,
+  getRecommendedProjectMemories,
+} from "@/lib/workspace-memory";
 import { filterByProjectScope } from "@/lib/project-context";
 import { useStore } from "@/store";
 import { randomId } from "@/lib/utils";
@@ -96,7 +106,9 @@ export function CommandInput({
     workspaceCurrentPath,
     workspaceActivePreviewPath,
     workspacePinnedPreviews,
+    workspaceDeskNotes,
     workspaceProjectMemories,
+    semanticKnowledgeDocs,
     activeWorkspaceProjectMemoryId,
     chatSessions,
     activeSessionId,
@@ -117,6 +129,14 @@ export function CommandInput({
     () => filterByProjectScope(workspaceProjectMemories, activeSession ?? {}),
     [activeSession, workspaceProjectMemories],
   );
+  const scopedDeskNotes = useMemo(
+    () => filterByProjectScope(workspaceDeskNotes, activeSession ?? {}),
+    [activeSession, workspaceDeskNotes],
+  );
+  const scopedKnowledgeDocs = useMemo(
+    () => filterByProjectScope(semanticKnowledgeDocs, activeSession ?? {}),
+    [activeSession, semanticKnowledgeDocs],
+  );
 
   const activeProjectMemory = useMemo(
     () =>
@@ -135,7 +155,7 @@ export function CommandInput({
         activePreviewPath: workspaceActivePreviewPath,
         pinnedPaths: workspacePinnedPreviews.map(preview => preview.path),
         recentTranscript: tasks.slice(-8).map(task => task.result ?? task.description).join("\n\n"),
-      }).filter(item => item.memory.id !== activeProjectMemory?.id),
+      }).filter((item) => item.memory.id !== activeProjectMemory?.id),
     [
       activeProjectMemory?.id,
       commandDraft,
@@ -144,6 +164,50 @@ export function CommandInput({
       workspaceCurrentPath,
       workspacePinnedPreviews,
       scopedProjectMemories,
+      workspaceRoot,
+    ],
+  );
+
+  const recommendedDeskNotes = useMemo(
+    () =>
+      getRecommendedDeskNotes(scopedDeskNotes, {
+        instruction: commandDraft,
+        workspaceRoot,
+        workspaceCurrentPath,
+        activePreviewPath: workspaceActivePreviewPath,
+        pinnedPaths: workspacePinnedPreviews.map(preview => preview.path),
+        recentTranscript: tasks.slice(-8).map(task => task.result ?? task.description).join("\n\n"),
+      }).slice(0, activeProjectMemory ? 3 : 2),
+    [
+      activeProjectMemory?.id,
+      commandDraft,
+      scopedDeskNotes,
+      tasks,
+      workspaceActivePreviewPath,
+      workspaceCurrentPath,
+      workspacePinnedPreviews,
+      workspaceRoot,
+    ],
+  );
+
+  const recommendedKnowledgeDocuments = useMemo(
+    () =>
+      getRecommendedKnowledgeDocuments(scopedKnowledgeDocs, {
+        instruction: commandDraft,
+        workspaceRoot,
+        workspaceCurrentPath,
+        activePreviewPath: workspaceActivePreviewPath,
+        pinnedPaths: workspacePinnedPreviews.map(preview => preview.path),
+        recentTranscript: tasks.slice(-8).map(task => task.result ?? task.description).join("\n\n"),
+      }).slice(0, activeProjectMemory ? 3 : 2),
+    [
+      activeProjectMemory?.id,
+      commandDraft,
+      scopedKnowledgeDocs,
+      tasks,
+      workspaceActivePreviewPath,
+      workspaceCurrentPath,
+      workspacePinnedPreviews,
       workspaceRoot,
     ],
   );
@@ -222,7 +286,7 @@ export function CommandInput({
       attachments: attachmentMetas,
       includeUserMessage: true,
       taskDescription,
-      includeActiveProjectMemory: includeProjectMemory,
+      includeActiveProjectMemory: includeProjectMemory || !activeProjectMemory,
     });
 
     if (!ok) {
@@ -332,6 +396,38 @@ export function CommandInput({
         </div>
       )}
 
+      {recommendedDeskNotes.length > 0 && (
+        <div className="command-input__memory-rail">
+          {recommendedDeskNotes.map(item => (
+            <button
+              key={item.note.id}
+              type="button"
+              className="command-input__memory-chip"
+              onClick={() => appendCommandDraft(buildDeskNoteSnippet(item.note))}
+            >
+              <strong>{item.note.title}</strong>
+              <span>{item.reasons.join(" · ") || describeDeskNote(item.note)}</span>
+            </button>
+          ))}
+        </div>
+      )}
+
+      {recommendedKnowledgeDocuments.length > 0 && (
+        <div className="command-input__memory-rail">
+          {recommendedKnowledgeDocuments.map(item => (
+            <button
+              key={item.document.id}
+              type="button"
+              className="command-input__memory-chip"
+              onClick={() => appendCommandDraft(buildKnowledgeDocumentSnippet(item.document))}
+            >
+              <strong>{item.document.title}</strong>
+              <span>{item.reasons.join(" · ") || describeKnowledgeDocument(item.document)}</span>
+            </button>
+          ))}
+        </div>
+      )}
+
       {attachments.length > 0 && (
         <div className="attachment-list">
           {attachments.map(item => (
@@ -412,9 +508,13 @@ export function CommandInput({
           ? `${attachments.length} attachment(s) ready.${activeProjectMemory && includeProjectMemory ? ` Active memory: ${activeProjectMemory.name}.` : ""} You can also inject file context directly from Desk preview tabs.`
           : activeProjectMemory && includeProjectMemory
             ? `当前发送会自动附带项目记忆「${activeProjectMemory.name}」，也可以在上方随时关闭。`
-            : recommendedProjectMemories.length > 0
-              ? `未手动激活项目记忆时，系统会优先参考推荐结果，并在命中足够高时自动召回。`
-            : "Use the + button for attachments, or send file path/context from Desk with one click."}
+              : recommendedProjectMemories.length > 0
+                ? `未手动激活项目记忆时，系统会优先参考推荐结果，并在命中足够高时自动召回。`
+              : recommendedDeskNotes.length > 0
+                ? `系统已找到相关 Desk Notes，可一键注入输入框作为语义上下文。`
+                : recommendedKnowledgeDocuments.length > 0
+                  ? `系统已命中可复用知识文档，可直接注入输入框或在发送时自动参与召回。`
+              : "Use the + button for attachments, or send file path/context from Desk with one click."}
       </div>
     </div>
   );

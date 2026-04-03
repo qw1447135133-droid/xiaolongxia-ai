@@ -41,7 +41,7 @@ export interface Activity {
 }
 
 export type ExecutionRunStatus = "queued" | "analyzing" | "running" | "completed" | "failed";
-export type ExecutionRunSource = "chat" | "workspace" | "workflow" | "quick-start";
+export type ExecutionRunSource = "chat" | "workspace" | "workflow" | "quick-start" | "remote-ops";
 export type ExecutionEventType = "user" | "dispatch" | "agent" | "result" | "error" | "system";
 export type VerificationStatus = "idle" | "running" | "passed" | "failed" | "skipped";
 

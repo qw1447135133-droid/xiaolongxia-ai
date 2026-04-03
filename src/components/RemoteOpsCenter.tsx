@@ -2,7 +2,12 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { reconnectWebSocket } from "@/hooks/useWebSocket";
+import { sendExecutionDispatch } from "@/lib/execution-dispatch";
 import { useStore } from "@/store";
+import {
+  buildBusinessAutomationQueue,
+  decorateBusinessDispatchQueue,
+} from "@/lib/business-operations";
 import { getScheduledTasks, type ScheduledTask } from "@/lib/scheduled-tasks";
 import {
   filterByProjectScope,
@@ -14,11 +19,19 @@ import { type AutomationMode, PLATFORM_DEFINITIONS } from "@/store/types";
 
 export function RemoteOpsCenter() {
   const [scheduledTasks, setScheduledTasks] = useState<ScheduledTask[]>([]);
+  const [dispatchingKey, setDispatchingKey] = useState<string | null>(null);
 
   const providers = useStore(s => s.providers);
   const platformConfigs = useStore(s => s.platformConfigs);
   const workflowRuns = useStore(s => s.workflowRuns);
   const executionRuns = useStore(s => s.executionRuns);
+  const businessApprovals = useStore(s => s.businessApprovals);
+  const businessOperationLogs = useStore(s => s.businessOperationLogs);
+  const businessCustomers = useStore(s => s.businessCustomers);
+  const businessLeads = useStore(s => s.businessLeads);
+  const businessTickets = useStore(s => s.businessTickets);
+  const businessContentTasks = useStore(s => s.businessContentTasks);
+  const businessChannelSessions = useStore(s => s.businessChannelSessions);
   const workspaceProjectMemories = useStore(s => s.workspaceProjectMemories);
   const workspaceDeskNotes = useStore(s => s.workspaceDeskNotes);
   const chatSessions = useStore(s => s.chatSessions);
@@ -31,7 +44,10 @@ export function RemoteOpsCenter() {
   const setAutomationPaused = useStore(s => s.setAutomationPaused);
   const setRemoteSupervisorEnabled = useStore(s => s.setRemoteSupervisorEnabled);
   const setAutoDispatchScheduledTasks = useStore(s => s.setAutoDispatchScheduledTasks);
+  const setBusinessApprovalDecision = useStore(s => s.setBusinessApprovalDecision);
+  const recordBusinessOperation = useStore(s => s.recordBusinessOperation);
   const setTab = useStore(s => s.setTab);
+  const wsStatus = useStore(s => s.wsStatus);
 
   useEffect(() => {
     setScheduledTasks(getScheduledTasks());
@@ -75,6 +91,34 @@ export function RemoteOpsCenter() {
     () => filterByProjectScope(workspaceDeskNotes, currentProjectScope),
     [currentProjectScope, workspaceDeskNotes],
   );
+  const scopedApprovals = useMemo(
+    () => filterByProjectScope(businessApprovals, currentProjectScope),
+    [businessApprovals, currentProjectScope],
+  );
+  const scopedOperationLogs = useMemo(
+    () => filterByProjectScope(businessOperationLogs, currentProjectScope),
+    [businessOperationLogs, currentProjectScope],
+  );
+  const scopedCustomers = useMemo(
+    () => filterByProjectScope(businessCustomers, currentProjectScope),
+    [businessCustomers, currentProjectScope],
+  );
+  const scopedLeads = useMemo(
+    () => filterByProjectScope(businessLeads, currentProjectScope),
+    [businessLeads, currentProjectScope],
+  );
+  const scopedTickets = useMemo(
+    () => filterByProjectScope(businessTickets, currentProjectScope),
+    [businessTickets, currentProjectScope],
+  );
+  const scopedContentTasks = useMemo(
+    () => filterByProjectScope(businessContentTasks, currentProjectScope),
+    [businessContentTasks, currentProjectScope],
+  );
+  const scopedChannelSessions = useMemo(
+    () => filterByProjectScope(businessChannelSessions, currentProjectScope),
+    [businessChannelSessions, currentProjectScope],
+  );
 
   const verificationReadyRuns = recentProjectRuns.filter(
     run => run.verificationStatus === "passed" || run.verificationStatus === "failed",
@@ -90,6 +134,42 @@ export function RemoteOpsCenter() {
     verificationReadyRuns > 0,
   ].filter(Boolean).length;
   const remoteReadinessPercent = Math.round((remoteReadinessScore / 5) * 100);
+  const businessAutomationQueue = useMemo(
+    () =>
+      buildBusinessAutomationQueue({
+        approvals: scopedApprovals,
+        customers: scopedCustomers,
+        leads: scopedLeads,
+        tickets: scopedTickets,
+        contentTasks: scopedContentTasks,
+        channelSessions: scopedChannelSessions,
+      }),
+    [scopedApprovals, scopedChannelSessions, scopedContentTasks, scopedCustomers, scopedLeads, scopedTickets],
+  );
+  const approvalQueue = useMemo(
+    () => businessAutomationQueue.filter(item => item.decision.humanApprovalRequired),
+    [businessAutomationQueue],
+  );
+  const pendingApprovals = approvalQueue.filter(item => item.approvalState === "pending").length;
+  const approvedApprovals = approvalQueue.filter(item => item.approvalState === "approved").length;
+  const rejectedApprovals = approvalQueue.filter(item => item.approvalState === "rejected").length;
+  const entityReadyCount = businessAutomationQueue.filter(item => item.automationState === "ready").length;
+  const entityBlockedCount = businessAutomationQueue.length - entityReadyCount;
+
+  const dispatchQueue = useMemo(
+    () =>
+      decorateBusinessDispatchQueue(businessAutomationQueue, {
+        wsStatus,
+        automationMode,
+        automationPaused,
+        remoteSupervisorEnabled,
+      }),
+    [automationMode, automationPaused, businessAutomationQueue, remoteSupervisorEnabled, wsStatus],
+  );
+  const recentOperationLogs = useMemo(
+    () => scopedOperationLogs.slice(0, 8),
+    [scopedOperationLogs],
+  );
 
   const scenarioCards = [
     buildScenarioCard({
@@ -168,6 +248,14 @@ export function RemoteOpsCenter() {
             {verificationReadyRuns}/{recentProjectRuns.length || 0}
           </div>
         </div>
+        <div className="control-center__stat-card">
+          <div className="control-center__stat-label">可自动派发</div>
+          <div className="control-center__stat-value" style={{ color: "#22c55e" }}>{entityReadyCount}</div>
+        </div>
+        <div className="control-center__stat-card">
+          <div className="control-center__stat-label">待审批</div>
+          <div className="control-center__stat-value" style={{ color: "#ef4444" }}>{pendingApprovals}</div>
+        </div>
       </div>
 
       <div className="control-center__columns">
@@ -233,6 +321,195 @@ export function RemoteOpsCenter() {
         <button type="button" className="btn-ghost" onClick={() => setTab("settings")}>
           打开执行与渠道面板
         </button>
+      </div>
+
+      <div className="control-center__panel">
+        <div className="control-center__panel-title">业务自动派发队列</div>
+        <div className="control-center__list">
+          <div>可自动派发: <strong className="control-center__strong">{entityReadyCount}</strong></div>
+          <div>已阻断对象: <strong className="control-center__strong">{entityBlockedCount}</strong></div>
+          <div>当前链路: <strong className="control-center__strong">{wsStatus === "connected" ? "在线" : wsStatus === "connecting" ? "连接中" : "离线"}</strong></div>
+        </div>
+
+        <div className="control-center__dispatch-list">
+          {dispatchQueue.length === 0 ? (
+            <div className="control-center__copy">当前项目还没有可进入业务自动化队列的对象。</div>
+          ) : (
+            dispatchQueue.map(item => {
+              const badgeTone = item.canDispatch
+                ? "ready"
+                : item.approvalState === "pending"
+                  ? "partial"
+                  : "blocked";
+              const badgeLabel = item.canDispatch
+                ? "可派发"
+                : item.approvalState === "pending"
+                  ? "待审批"
+                  : item.approvalState === "rejected"
+                    ? "已驳回"
+                    : "已阻断";
+              const itemKey = `${item.entityType}-${item.entityId}`;
+              const isDispatching = dispatchingKey === itemKey;
+
+              return (
+                <article key={itemKey} className="control-center__dispatch-card">
+                  <div className="control-center__approval-head">
+                    <div>
+                      <div className="control-center__panel-title">{item.title}</div>
+                      <div className="control-center__copy">{item.subtitle} · 风险分 {item.score}</div>
+                    </div>
+                    <span className={`control-center__scenario-badge is-${badgeTone}`}>
+                      {badgeLabel}
+                    </span>
+                  </div>
+
+                  <div className="control-center__copy">{item.summary}</div>
+                  <div className="control-center__dispatch-meta">
+                    <span>自动化判断: {item.decision.autoRunEligible ? "可推进" : "建议观察"}</span>
+                    <span>审批状态: {item.approvalState === "not-required" ? "无需审批" : item.approvalState === "approved" ? "已批准" : item.approvalState === "rejected" ? "已驳回" : "待审批"}</span>
+                  </div>
+                  <div className="control-center__dispatch-note">
+                    {item.dispatchBlockedReason ?? "满足量化和审批条件，允许从远程运营面板直接派发执行。"}
+                  </div>
+
+                  <div className="control-center__quick-actions">
+                    <button
+                      type="button"
+                      className="btn-ghost"
+                      disabled={!item.canDispatch || isDispatching}
+                      onClick={() => {
+                        setDispatchingKey(itemKey);
+                        const { ok, executionRunId } = sendExecutionDispatch({
+                          instruction: item.instruction,
+                          source: "remote-ops",
+                          includeUserMessage: true,
+                          taskDescription: item.taskDescription,
+                          includeActiveProjectMemory: true,
+                        });
+                        recordBusinessOperation({
+                          entityType: item.entityType,
+                          entityId: item.entityId,
+                          eventType: "dispatch",
+                          trigger: "manual",
+                          status: ok ? "sent" : "blocked",
+                          title: item.title,
+                          detail: ok
+                            ? "人工从远程运营面板派发了该业务对象。"
+                            : "人工尝试派发该业务对象，但发送链路未成功建立。",
+                          executionRunId: ok ? executionRunId : undefined,
+                        });
+                        window.setTimeout(() => setDispatchingKey(current => (current === itemKey ? null : current)), 900);
+                      }}
+                    >
+                      {isDispatching ? "派发中..." : "派发执行"}
+                    </button>
+                    <button type="button" className="btn-ghost" onClick={() => setTab("tasks")}>
+                      去聊天页人工接管
+                    </button>
+                  </div>
+                </article>
+              );
+            })
+          )}
+        </div>
+      </div>
+
+      <div className="control-center__panel">
+        <div className="control-center__panel-title">审批队列</div>
+        <div className="control-center__list">
+          <div>待审批: <strong className="control-center__strong">{pendingApprovals}</strong></div>
+          <div>已批准: <strong className="control-center__strong">{approvedApprovals}</strong></div>
+          <div>已驳回: <strong className="control-center__strong">{rejectedApprovals}</strong></div>
+        </div>
+
+        <div className="control-center__approval-list">
+          {approvalQueue.length === 0 ? (
+            <div className="control-center__copy">当前项目还没有需要人工审批的业务对象。</div>
+          ) : (
+            approvalQueue.map(item => {
+              const status = item.approvalState === "not-required" ? "pending" : item.approvalState;
+              return (
+                <article key={`${item.entityType}-${item.entityId}`} className="control-center__approval-card">
+                  <div className="control-center__approval-head">
+                    <div>
+                      <div className="control-center__panel-title">{item.title}</div>
+                      <div className="control-center__copy">{item.subtitle} · 风险分 {item.score}</div>
+                    </div>
+                    <span className={`control-center__scenario-badge is-${status === "approved" ? "ready" : status === "rejected" ? "blocked" : "partial"}`}>
+                      {status === "approved" ? "已批准" : status === "rejected" ? "已驳回" : "待审批"}
+                    </span>
+                  </div>
+                  <div className="control-center__copy">{item.summary}</div>
+                  <div className="control-center__quick-actions">
+                    <button
+                      type="button"
+                      className="btn-ghost"
+                      onClick={() => setBusinessApprovalDecision({ entityType: item.entityType, entityId: item.entityId, status: "approved" })}
+                    >
+                      批准
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-ghost"
+                      onClick={() => setBusinessApprovalDecision({ entityType: item.entityType, entityId: item.entityId, status: "rejected" })}
+                    >
+                      驳回
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-ghost"
+                      onClick={() => setBusinessApprovalDecision({ entityType: item.entityType, entityId: item.entityId, status: "pending" })}
+                    >
+                      重新打开
+                    </button>
+                    <button type="button" className="btn-ghost" onClick={() => setTab("settings")}>
+                      去业务实体面板
+                    </button>
+                  </div>
+                </article>
+              );
+            })
+          )}
+        </div>
+      </div>
+
+      <div className="control-center__panel">
+        <div className="control-center__panel-title">业务审计记录</div>
+        <div className="control-center__list">
+          <div>最近记录: <strong className="control-center__strong">{recentOperationLogs.length}</strong></div>
+          <div>人工动作会记录审批与派发，自动值守会记录自动派发。</div>
+        </div>
+
+        <div className="control-center__dispatch-list">
+          {recentOperationLogs.length === 0 ? (
+            <div className="control-center__copy">当前项目还没有业务审计记录。</div>
+          ) : (
+            recentOperationLogs.map(log => (
+              <article key={log.id} className="control-center__dispatch-card">
+                <div className="control-center__approval-head">
+                  <div>
+                    <div className="control-center__panel-title">{log.title}</div>
+                    <div className="control-center__copy">
+                      {log.eventType === "approval" ? "审批" : "派发"} · {log.trigger === "auto" ? "自动值守" : "人工操作"}
+                    </div>
+                  </div>
+                  <span className={`control-center__scenario-badge is-${log.status === "approved" || log.status === "sent" ? "ready" : log.status === "pending" ? "partial" : "blocked"}`}>
+                    {log.status === "approved"
+                      ? "已批准"
+                      : log.status === "rejected"
+                        ? "已驳回"
+                        : log.status === "sent"
+                          ? "已派发"
+                          : log.status === "pending"
+                            ? "待处理"
+                            : "已阻断"}
+                  </span>
+                </div>
+                <div className="control-center__dispatch-note">{log.detail}</div>
+              </article>
+            ))
+          )}
+        </div>
       </div>
 
       <div className="control-center__columns">

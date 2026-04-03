@@ -138,6 +138,7 @@ export function ExecutionCenter({ compact = false }: { compact?: boolean }) {
                 </div>
 
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 8 }}>
+                  <TraceStat label="Source" value={run.source} />
                   <TraceStat label="Session" value={run.sessionId.slice(0, 8)} />
                   <TraceStat label="Tasks" value={`${run.completedTasks}/${run.totalTasks || 0}`} />
                   <TraceStat label="Failed" value={String(run.failedTasks)} />

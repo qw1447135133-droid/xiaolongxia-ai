@@ -3,7 +3,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { useStore } from "@/store";
 import { filterByProjectScope, getSessionProjectLabel } from "@/lib/project-context";
-import { buildProjectMemoryScratchpad, buildProjectMemorySnippet, describeProjectMemory } from "@/lib/workspace-memory";
+import {
+  buildDeskNoteSnippet,
+  buildProjectMemoryScratchpad,
+  buildProjectMemorySnippet,
+  describeProjectMemory,
+} from "@/lib/workspace-memory";
 import type { WorkspaceDeskNote, WorkspaceEntry, WorkspacePreview, WorkspaceProjectMemory } from "@/types/desktop-workspace";
 
 type DeskSortMode = "name-asc" | "modified-desc" | "size-desc";
@@ -103,13 +108,6 @@ function buildPinnedBundleSnippet(previews: WorkspacePreview[], notes: string) {
     .join("\n");
   const notesSection = notes.trim() ? `\n\nDesk notes:\n${notes.trim()}` : "";
   return `Use the pinned workspace references as a shared context bundle.\n\nPinned references:\n${fileList}${notesSection}`;
-}
-
-function buildDeskNoteSnippet(note: WorkspaceDeskNote) {
-  const linkedSection = note.linkedPath
-    ? `\nLinked reference: ${note.linkedName ?? note.linkedPath}\nPath: ${note.linkedPath}`
-    : "";
-  return `Desk note: ${note.title}${linkedSection}\n\n${note.content.trim()}`;
 }
 
 function summarizeProjectMemoryNotes(memory: WorkspaceProjectMemory) {

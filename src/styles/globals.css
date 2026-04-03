@@ -3627,6 +3627,12 @@ body::after {
   gap: 12px;
 }
 
+.control-center__entity-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 12px;
+}
+
 .control-center__stat-card {
   padding: 16px;
   border-radius: 20px;
@@ -3649,6 +3655,93 @@ body::after {
   font-size: 14px;
   font-weight: 700;
   color: var(--text);
+}
+
+.control-center__entity-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.control-center__entity-card {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border-radius: 18px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  background: rgba(255,255,255,0.72);
+}
+
+.control-center__entity-head,
+.control-center__entity-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.control-center__entity-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 24px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: rgba(0, 122, 255, 0.08);
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.control-center__entity-meta {
+  flex-wrap: wrap;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.control-center__entity-note {
+  grid-column: 1 / -1;
+  font-size: 11px;
+  line-height: 1.7;
+  color: var(--text-muted);
+}
+
+.control-center__quant-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.control-center__quant-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 24px;
+  padding: 0 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  background: rgba(255,255,255,0.78);
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.control-center__quant-badge.is-auto {
+  border-color: rgba(34, 197, 94, 0.18);
+  color: #15803d;
+  background: rgba(34, 197, 94, 0.1);
+}
+
+.control-center__quant-badge.is-approval {
+  border-color: rgba(239, 68, 68, 0.18);
+  color: #dc2626;
+  background: rgba(239, 68, 68, 0.1);
+}
+
+.control-center__quant-badge.is-watch {
+  border-color: rgba(148, 163, 184, 0.18);
+  color: #64748b;
+  background: rgba(148, 163, 184, 0.12);
 }
 
 .control-center__scenario {
@@ -3800,6 +3893,57 @@ body::after {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
+}
+
+.control-center__approval-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.control-center__dispatch-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.control-center__dispatch-card {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border-radius: 18px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  background: rgba(255,255,255,0.72);
+}
+
+.control-center__dispatch-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.control-center__dispatch-note {
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--text-muted);
+}
+
+.control-center__approval-card {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border-radius: 18px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  background: rgba(255,255,255,0.72);
+}
+
+.control-center__approval-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
 }
 
 .control-center__theme-option {

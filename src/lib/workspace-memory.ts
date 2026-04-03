@@ -1,4 +1,11 @@
-import type { WorkspaceProjectMemory } from "@/types/desktop-workspace";
+import {
+  buildDeskNoteDocument,
+  buildKnowledgeDocumentDocument,
+  buildProjectMemoryDocument,
+  searchSemanticMemory,
+} from "@/lib/semantic-memory";
+import type { WorkspaceDeskNote, WorkspaceProjectMemory } from "@/types/desktop-workspace";
+import type { SemanticKnowledgeDocument } from "@/types/semantic-memory";
 
 export interface ProjectMemoryRecallContext {
   instruction?: string;
@@ -11,6 +18,24 @@ export interface ProjectMemoryRecallContext {
 
 export interface ProjectMemoryRecommendation {
   memory: WorkspaceProjectMemory;
+  score: number;
+  reasons: string[];
+}
+
+export interface DeskNoteRecommendation {
+  note: WorkspaceDeskNote;
+  score: number;
+  reasons: string[];
+}
+
+export interface WorkspaceRecallRecommendation {
+  memoryRecommendation: ProjectMemoryRecommendation | null;
+  deskNoteRecommendations: DeskNoteRecommendation[];
+  knowledgeRecommendations: KnowledgeDocumentRecommendation[];
+}
+
+export interface KnowledgeDocumentRecommendation {
+  document: SemanticKnowledgeDocument;
   score: number;
   reasons: string[];
 }
@@ -71,84 +96,21 @@ export function buildProjectMemoryScratchpad(memory: WorkspaceProjectMemory) {
   return sections.join("\n\n");
 }
 
-function normalizePath(path: string | null | undefined) {
-  return (path ?? "").replace(/\\/g, "/").toLowerCase();
+export function buildDeskNoteSnippet(note: WorkspaceDeskNote) {
+  const linkedSection = note.linkedPath
+    ? `\nLinked reference: ${note.linkedName ?? note.linkedPath}\nPath: ${note.linkedPath}`
+    : "";
+  return `Desk note: ${note.title}${linkedSection}\n\n${note.content.trim()}`;
 }
 
-function tokenize(value: string | null | undefined) {
-  return new Set(
-    (value ?? "")
-      .toLowerCase()
-      .split(/[^a-z0-9\u4e00-\u9fa5/_\-.]+/i)
-      .map(token => token.trim())
-      .filter(token => token.length >= 3),
-  );
+export function buildDeskNoteCollectionSnippet(notes: WorkspaceDeskNote[]) {
+  if (notes.length === 0) return "";
+  return `Relevant desk notes:\n${notes.map((note, index) => `${index + 1}. ${buildDeskNoteSnippet(note)}`).join("\n\n")}`;
 }
 
-function countIntersection(left: Set<string>, right: Set<string>) {
-  let count = 0;
-  for (const token of left) {
-    if (right.has(token)) count += 1;
-  }
-  return count;
-}
-
-function scoreProjectMemory(memory: WorkspaceProjectMemory, context: ProjectMemoryRecallContext) {
-  const reasons: string[] = [];
-  let score = 0;
-
-  const memoryRoot = normalizePath(memory.rootPath);
-  const workspaceRoot = normalizePath(context.workspaceRoot);
-  const workspaceCurrentPath = normalizePath(context.workspaceCurrentPath);
-  const activePreviewPath = normalizePath(context.activePreviewPath);
-  const pinnedPaths = (context.pinnedPaths ?? []).map(path => normalizePath(path));
-
-  if (memoryRoot && workspaceRoot && memoryRoot === workspaceRoot) {
-    score += 12;
-    reasons.push("same root");
-  } else if (memoryRoot && workspaceCurrentPath && workspaceCurrentPath.startsWith(memoryRoot)) {
-    score += 9;
-    reasons.push("current path under memory root");
-  }
-
-  const memoryFocus = normalizePath(memory.focusPath);
-  if (memoryFocus && activePreviewPath && memoryFocus === activePreviewPath) {
-    score += 8;
-    reasons.push("same focus file");
-  } else if (memoryFocus && activePreviewPath && activePreviewPath.startsWith(memoryFocus)) {
-    score += 5;
-    reasons.push("focus path overlap");
-  }
-
-  const memoryPreviewPaths = memory.previews.map(preview => normalizePath(preview.path));
-  const overlapCount = memoryPreviewPaths.filter(path => pinnedPaths.includes(path)).length;
-  if (overlapCount > 0) {
-    score += overlapCount * 4;
-    reasons.push(`${overlapCount} pinned refs overlap`);
-  }
-
-  const contextTokens = new Set([
-    ...tokenize(context.instruction),
-    ...tokenize(context.recentTranscript),
-    ...tokenize(context.workspaceCurrentPath),
-    ...tokenize(context.activePreviewPath),
-  ]);
-  const memoryTokens = new Set([
-    ...tokenize(memory.name),
-    ...tokenize(memory.rootPath),
-    ...tokenize(memory.focusPath),
-    ...memory.previews.flatMap(preview => Array.from(tokenize(`${preview.name} ${preview.path}`))),
-    ...memory.deskNotes.flatMap(note => Array.from(tokenize(`${note.title} ${note.content}`))),
-    ...Array.from(tokenize(memory.scratchpad)),
-  ]);
-
-  const tokenHits = countIntersection(contextTokens, memoryTokens);
-  if (tokenHits > 0) {
-    score += Math.min(tokenHits, 6) * 2;
-    reasons.push(`${tokenHits} shared keywords`);
-  }
-
-  return { score, reasons };
+export function describeDeskNote(note: WorkspaceDeskNote) {
+  const linked = note.linkedName ?? note.linkedPath ?? "no linked reference";
+  return `${note.pinned ? "pinned" : "floating"} · ${linked}`;
 }
 
 export function getRecommendedProjectMemories(
@@ -156,18 +118,26 @@ export function getRecommendedProjectMemories(
   context: ProjectMemoryRecallContext,
   limit = 3,
 ) {
-  return memories
-    .map(memory => {
-      const recommendation = scoreProjectMemory(memory, context);
-      return {
-        memory,
-        score: recommendation.score,
-        reasons: recommendation.reasons,
-      } satisfies ProjectMemoryRecommendation;
-    })
-    .filter(item => item.score > 0)
-    .sort((left, right) => right.score - left.score || right.memory.updatedAt - left.memory.updatedAt)
-    .slice(0, limit);
+  return searchSemanticMemory(
+    memories.map(memory => ({
+      ...buildProjectMemoryDocument(memory),
+      content: buildProjectMemoryScratchpad(memory),
+    })),
+    {
+      query: context.instruction,
+      workspaceRoot: context.workspaceRoot,
+      workspaceCurrentPath: context.workspaceCurrentPath,
+      activePreviewPath: context.activePreviewPath,
+      pinnedPaths: context.pinnedPaths,
+      recentTranscript: context.recentTranscript,
+    },
+    { limit },
+  )
+    .map(result => ({
+      memory: result.document.item,
+      score: result.score,
+      reasons: result.reasons,
+    } satisfies ProjectMemoryRecommendation));
 }
 
 export function getAutoRecalledProjectMemory(
@@ -178,4 +148,104 @@ export function getAutoRecalledProjectMemory(
   const top = getRecommendedProjectMemories(memories, context, 1)[0];
   if (!top || top.score < threshold) return null;
   return top;
+}
+
+export function getRecommendedDeskNotes(
+  notes: WorkspaceDeskNote[],
+  context: ProjectMemoryRecallContext,
+  limit = 3,
+) {
+  return searchSemanticMemory(
+    notes.map(buildDeskNoteDocument),
+    {
+      query: context.instruction,
+      workspaceRoot: context.workspaceRoot,
+      workspaceCurrentPath: context.workspaceCurrentPath,
+      activePreviewPath: context.activePreviewPath,
+      pinnedPaths: context.pinnedPaths,
+      recentTranscript: context.recentTranscript,
+    },
+    { limit },
+  )
+    .map(result => ({
+      note: result.document.item,
+      score: result.score,
+      reasons: result.reasons,
+    } satisfies DeskNoteRecommendation));
+}
+
+export function getAutoRecalledDeskNote(
+  notes: WorkspaceDeskNote[],
+  context: ProjectMemoryRecallContext,
+  threshold = 9,
+) {
+  const top = getRecommendedDeskNotes(notes, context, 1)[0];
+  if (!top || top.score < threshold) return null;
+  return top;
+}
+
+export function buildKnowledgeDocumentSnippet(document: SemanticKnowledgeDocument) {
+  const tags = document.tags.length > 0 ? `\nTags: ${document.tags.join("、")}` : "";
+  const source = document.sourceLabel ? `\nSource: ${document.sourceLabel}` : "";
+  return `Knowledge doc: ${document.title}${source}${tags}\n\n${document.content.trim()}`;
+}
+
+export function buildKnowledgeDocumentCollectionSnippet(documents: SemanticKnowledgeDocument[]) {
+  if (documents.length === 0) return "";
+  return `Relevant knowledge docs:\n${documents
+    .map((document, index) => `${index + 1}. ${buildKnowledgeDocumentSnippet(document)}`)
+    .join("\n\n")}`;
+}
+
+export function describeKnowledgeDocument(document: SemanticKnowledgeDocument) {
+  return `${document.sourceLabel} · ${document.tags.join("、") || "无标签"}`;
+}
+
+export function getRecommendedKnowledgeDocuments(
+  documents: SemanticKnowledgeDocument[],
+  context: ProjectMemoryRecallContext,
+  limit = 3,
+) {
+  return searchSemanticMemory(
+    documents.map(buildKnowledgeDocumentDocument),
+    {
+      query: context.instruction,
+      workspaceRoot: context.workspaceRoot,
+      workspaceCurrentPath: context.workspaceCurrentPath,
+      activePreviewPath: context.activePreviewPath,
+      pinnedPaths: context.pinnedPaths,
+      recentTranscript: context.recentTranscript,
+    },
+    { limit },
+  ).map(result => ({
+    document: result.document.item,
+    score: result.score,
+    reasons: result.reasons,
+  } satisfies KnowledgeDocumentRecommendation));
+}
+
+export function getAutoRecalledKnowledgeDocument(
+  documents: SemanticKnowledgeDocument[],
+  context: ProjectMemoryRecallContext,
+  threshold = 9,
+) {
+  const top = getRecommendedKnowledgeDocuments(documents, context, 1)[0];
+  if (!top || top.score < threshold) return null;
+  return top;
+}
+
+export function getAutoRecalledWorkspaceContext(
+  memories: WorkspaceProjectMemory[],
+  notes: WorkspaceDeskNote[],
+  documents: SemanticKnowledgeDocument[],
+  context: ProjectMemoryRecallContext,
+  memoryThreshold = 10,
+  noteThreshold = 9,
+  documentThreshold = 9,
+): WorkspaceRecallRecommendation {
+  return {
+    memoryRecommendation: getAutoRecalledProjectMemory(memories, context, memoryThreshold),
+    deskNoteRecommendations: getRecommendedDeskNotes(notes, context, 3).filter(item => item.score >= noteThreshold),
+    knowledgeRecommendations: getRecommendedKnowledgeDocuments(documents, context, 3).filter(item => item.score >= documentThreshold),
+  };
 }

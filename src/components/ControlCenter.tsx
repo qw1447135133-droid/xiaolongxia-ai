@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useStore } from "@/store";
 import { filterByProjectScope, getSessionProjectLabel } from "@/lib/project-context";
 import { ArtifactsCenter } from "./ArtifactsCenter";
+import { BusinessEntitiesCenter } from "./BusinessEntitiesCenter";
 import { ChannelsCenter } from "./ChannelsCenter";
 import { ExecutionCenter } from "./ExecutionCenter";
 import { PluginsCenter } from "./PluginsCenter";
@@ -12,13 +13,14 @@ import { SettingsPanel } from "./SettingsPanel";
 import { SkillsCenter } from "./SkillsCenter";
 import { WorkflowCenter } from "./WorkflowCenter";
 
-type SectionId = "overview" | "remote" | "execution" | "workspace" | "workflow" | "skills" | "plugins" | "artifacts" | "channels" | "settings" | "about";
+type SectionId = "overview" | "entities" | "remote" | "execution" | "workspace" | "workflow" | "skills" | "plugins" | "artifacts" | "channels" | "settings" | "about";
 
 export function ControlCenter() {
   const [section, setSection] = useState<SectionId>("overview");
 
   const sections: Array<{ id: SectionId; label: string; hint: string }> = [
     { id: "overview", label: "Overview", hint: "Workbench status and shell structure" },
+    { id: "entities", label: "Business Entities", hint: "Customers, leads, tickets, content, sessions" },
     { id: "remote", label: "Remote Ops", hint: "Digital workforce readiness and gaps" },
     { id: "execution", label: "Execution Center", hint: "Tracked runs, steps, and outcomes" },
     { id: "workspace", label: "Workspace", hint: "Theme, sidebars, and shortcuts" },
@@ -56,6 +58,7 @@ export function ControlCenter() {
 
       <div className="settings-shell__content">
         {section === "overview" && <ControlOverview />}
+        {section === "entities" && <BusinessEntitiesCenter />}
         {section === "remote" && <RemoteOpsCenter />}
         {section === "execution" && <ExecutionCenter />}
         {section === "workspace" && <WorkspacePreferences />}
@@ -80,12 +83,24 @@ function ControlOverview() {
   const workspaceDeskNotes = useStore(s => s.workspaceDeskNotes);
   const workspaceSavedBundles = useStore(s => s.workspaceSavedBundles);
   const workspaceProjectMemories = useStore(s => s.workspaceProjectMemories);
+  const semanticKnowledgeDocs = useStore(s => s.semanticKnowledgeDocs);
+  const businessCustomers = useStore(s => s.businessCustomers);
+  const businessLeads = useStore(s => s.businessLeads);
+  const businessTickets = useStore(s => s.businessTickets);
+  const businessContentTasks = useStore(s => s.businessContentTasks);
+  const businessChannelSessions = useStore(s => s.businessChannelSessions);
   const activeSessionId = useStore(s => s.activeSessionId);
 
   const activeSession = chatSessions.find(session => session.id === activeSessionId) ?? null;
   const scopedDeskNotes = filterByProjectScope(workspaceDeskNotes, activeSession ?? {});
   const scopedSavedBundles = filterByProjectScope(workspaceSavedBundles, activeSession ?? {});
   const scopedProjectMemories = filterByProjectScope(workspaceProjectMemories, activeSession ?? {});
+  const scopedKnowledgeDocs = filterByProjectScope(semanticKnowledgeDocs, activeSession ?? {});
+  const scopedCustomers = filterByProjectScope(businessCustomers, activeSession ?? {});
+  const scopedLeads = filterByProjectScope(businessLeads, activeSession ?? {});
+  const scopedTickets = filterByProjectScope(businessTickets, activeSession ?? {});
+  const scopedContentTasks = filterByProjectScope(businessContentTasks, activeSession ?? {});
+  const scopedChannelSessions = filterByProjectScope(businessChannelSessions, activeSession ?? {});
 
   const runningAgents = Object.values(agents).filter(agent => agent.status === "running").length;
   const enabledPlatforms = Object.values(platformConfigs).filter(platform => platform.enabled).length;
@@ -117,6 +132,12 @@ function ControlOverview() {
           { label: "Desk Notes", value: scopedDeskNotes.length, color: "#fbbf24" },
           { label: "Context Packs", value: scopedSavedBundles.length, color: "#c4b5fd" },
           { label: "Project Memory", value: scopedProjectMemories.length, color: "#93c5fd" },
+          { label: "Knowledge Docs", value: scopedKnowledgeDocs.length, color: "#38bdf8" },
+          { label: "Customers", value: scopedCustomers.length, color: "#60a5fa" },
+          { label: "Leads", value: scopedLeads.length, color: "#34d399" },
+          { label: "Tickets", value: scopedTickets.length, color: "#f59e0b" },
+          { label: "Content Tasks", value: scopedContentTasks.length, color: "#c084fc" },
+          { label: "Channel Sessions", value: scopedChannelSessions.length, color: "#22c55e" },
           { label: "Meeting Summary", value: latestMeetingRecord ? "Ready" : "None", color: "#a7f3d0" },
         ].map(item => (
           <div key={item.label} className="control-center__stat-card">

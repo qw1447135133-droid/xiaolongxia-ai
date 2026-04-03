@@ -3,7 +3,16 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useWebSocket, sendWs } from "@/hooks/useWebSocket";
 import { useStore } from "@/store";
-import { filterByProjectScope, getSessionProjectLabel } from "@/lib/project-context";
+import {
+  filterByProjectScope,
+  getRunProjectScopeKey,
+  getSessionProjectLabel,
+} from "@/lib/project-context";
+import {
+  buildBusinessAutomationQueue,
+  decorateBusinessDispatchQueue,
+  pickNextAutoDispatchItem,
+} from "@/lib/business-operations";
 import { checkAndExecuteTasks } from "@/lib/scheduled-tasks";
 import { ChatSessionsPanel } from "@/components/ChatSessionsPanel";
 import { TaskPipeline } from "@/components/TaskPipeline";
@@ -21,6 +30,11 @@ import { ExecutionCenter } from "@/components/ExecutionCenter";
 import { PluginContributionPanel } from "@/components/PluginContributionPanel";
 import { ProjectHubCard } from "@/components/ProjectHubCard";
 import { WorkspaceDesk } from "@/components/WorkspaceDesk";
+import {
+  createSemanticMemoryProvider,
+  registerSemanticMemoryProvider,
+  resetSemanticMemoryProvider,
+} from "@/lib/semantic-memory";
 import type { AppTab } from "@/store/types";
 import { sendExecutionDispatch } from "@/lib/execution-dispatch";
 
@@ -66,15 +80,111 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    const checkBusinessQueue = () => {
+      const store = useStore.getState();
+      const {
+        automationPaused,
+        autoDispatchScheduledTasks,
+        automationMode,
+        remoteSupervisorEnabled,
+        wsStatus,
+        activeSessionId,
+        chatSessions,
+        businessApprovals,
+        businessOperationLogs,
+        businessCustomers,
+        businessLeads,
+        businessTickets,
+        businessContentTasks,
+        businessChannelSessions,
+        executionRuns,
+        recordBusinessOperation,
+      } = store;
+
+      if (
+        automationPaused ||
+        !autoDispatchScheduledTasks ||
+        automationMode === "manual" ||
+        !remoteSupervisorEnabled ||
+        wsStatus !== "connected"
+      ) {
+        return;
+      }
+
+      const activeSession = chatSessions.find(session => session.id === activeSessionId) ?? null;
+      const currentProjectKey = activeSession
+        ? getRunProjectScopeKey(activeSession, chatSessions)
+        : "project:general";
+      const activeProjectRuns = executionRuns.filter(
+        run =>
+          getRunProjectScopeKey(run, chatSessions) === currentProjectKey &&
+          (run.status === "analyzing" || run.status === "running"),
+      );
+
+      if (activeProjectRuns.length > 0) return;
+
+      const businessQueue = buildBusinessAutomationQueue({
+        approvals: filterByProjectScope(businessApprovals, activeSession ?? {}),
+        customers: filterByProjectScope(businessCustomers, activeSession ?? {}),
+        leads: filterByProjectScope(businessLeads, activeSession ?? {}),
+        tickets: filterByProjectScope(businessTickets, activeSession ?? {}),
+        contentTasks: filterByProjectScope(businessContentTasks, activeSession ?? {}),
+        channelSessions: filterByProjectScope(businessChannelSessions, activeSession ?? {}),
+      });
+
+      const dispatchQueue = decorateBusinessDispatchQueue(businessQueue, {
+        wsStatus,
+        automationMode,
+        automationPaused,
+        remoteSupervisorEnabled,
+      });
+
+      const nextItem = pickNextAutoDispatchItem(
+        dispatchQueue,
+        filterByProjectScope(businessOperationLogs, activeSession ?? {}),
+      );
+
+      if (!nextItem) return;
+
+      const { ok, executionRunId } = sendExecutionDispatch({
+        instruction: nextItem.instruction,
+        source: "remote-ops",
+        includeUserMessage: true,
+        taskDescription: `${nextItem.taskDescription} [自动值守]`,
+        includeActiveProjectMemory: true,
+      });
+
+      recordBusinessOperation({
+        entityType: nextItem.entityType,
+        entityId: nextItem.entityId,
+        eventType: "dispatch",
+        trigger: "auto",
+        status: ok ? "sent" : "blocked",
+        title: nextItem.title,
+        detail: ok
+          ? "系统在值守模式下自动派发了该业务对象。"
+          : "系统尝试自动派发，但发送链路未成功建立。",
+        executionRunId: ok ? executionRunId : undefined,
+      });
+    };
+
     const checkInterval = window.setInterval(() => {
       const { automationPaused, autoDispatchScheduledTasks, automationMode } = useStore.getState();
       if (automationPaused || !autoDispatchScheduledTasks || automationMode === "manual") return;
       checkAndExecuteTasks(task => {
         dispatchInstruction(task.instruction);
       });
+      checkBusinessQueue();
     }, 60000);
 
-    return () => window.clearInterval(checkInterval);
+    const bootTimer = window.setTimeout(() => {
+      checkBusinessQueue();
+    }, 8000);
+
+    return () => {
+      window.clearInterval(checkInterval);
+      window.clearTimeout(bootTimer);
+    };
   }, []);
 
   const leftOpen = useStore(s => s.leftOpen);
@@ -90,6 +200,12 @@ export default function App() {
   const platformConfigs = useStore(s => s.platformConfigs);
   const automationPaused = useStore(s => s.automationPaused);
   const automationMode = useStore(s => s.automationMode);
+  const semanticMemoryConfig = useStore(s => s.semanticMemoryConfig);
+
+  useEffect(() => {
+    registerSemanticMemoryProvider(createSemanticMemoryProvider(semanticMemoryConfig));
+    return () => resetSemanticMemoryProvider();
+  }, [semanticMemoryConfig]);
 
   const runningCount = useMemo(
     () => Object.values(agents).filter(agent => agent.status === "running").length,

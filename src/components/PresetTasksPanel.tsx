@@ -1,4 +1,5 @@
 "use client";
+
 import { PRESET_TASKS, CATEGORY_LABELS } from "@/lib/preset-tasks";
 import type { PresetTask } from "@/lib/preset-tasks";
 
@@ -8,25 +9,13 @@ interface PresetTasksPanelProps {
 
 export function PresetTasksPanel({ onSelectTask }: PresetTasksPanelProps) {
   return (
-    <div style={{ marginBottom: 20 }}>
-      <div style={{
-        fontSize: 12,
-        fontWeight: 600,
-        color: "var(--text)",
-        marginBottom: 10,
-        display: "flex",
-        alignItems: "center",
-        gap: 6,
-      }}>
-        <span>⚡</span>
+    <div className="preset-tasks">
+      <div className="preset-tasks__header">
+        <span className="preset-tasks__emoji">⚡</span>
         <span>预设任务</span>
       </div>
 
-      <div style={{
-        display: "grid",
-        gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))",
-        gap: 10,
-      }}>
+      <div className="preset-tasks__grid">
         {PRESET_TASKS.map(task => (
           <PresetTaskCard
             key={task.id}
@@ -41,52 +30,15 @@ export function PresetTasksPanel({ onSelectTask }: PresetTasksPanelProps) {
 
 function PresetTaskCard({ task, onClick }: { task: PresetTask; onClick: () => void }) {
   return (
-    <button
-      className="card"
-      onClick={onClick}
-      style={{
-        padding: "10px 12px",
-        textAlign: "left",
-        cursor: "pointer",
-        border: "1px solid var(--border)",
-        background: "var(--bg-card)",
-        transition: "all 0.2s ease",
-      }}
-      onMouseEnter={e => {
-        e.currentTarget.style.borderColor = "var(--accent)";
-        e.currentTarget.style.background = "var(--accent-dim)";
-      }}
-      onMouseLeave={e => {
-        e.currentTarget.style.borderColor = "var(--border)";
-        e.currentTarget.style.background = "var(--bg-card)";
-      }}
-    >
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-        <span style={{ fontSize: 20 }}>{task.icon}</span>
-        <span style={{ fontSize: 12, fontWeight: 600 }}>{task.name}</span>
+    <button type="button" className="preset-tasks__card" onClick={onClick}>
+      <div className="preset-tasks__card-head">
+        <span className="preset-tasks__card-icon">{task.icon}</span>
+        <span className="preset-tasks__card-title">{task.name}</span>
       </div>
 
-      <div style={{
-        fontSize: 10,
-        color: "var(--text-muted)",
-        lineHeight: 1.4,
-        overflow: "hidden",
-        textOverflow: "ellipsis",
-        display: "-webkit-box",
-        WebkitLineClamp: 2,
-        WebkitBoxOrient: "vertical",
-      }}>
-        {task.description}
-      </div>
+      <div className="preset-tasks__card-desc">{task.description}</div>
 
-      <div style={{
-        fontSize: 9,
-        color: "var(--accent)",
-        marginTop: 6,
-        fontWeight: 500,
-      }}>
-        {CATEGORY_LABELS[task.category]}
-      </div>
+      <div className="preset-tasks__card-category">{CATEGORY_LABELS[task.category]}</div>
     </button>
   );
 }

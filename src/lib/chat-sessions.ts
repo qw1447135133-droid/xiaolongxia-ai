@@ -3,6 +3,10 @@ import type { Task } from "@/store/types";
 export interface ChatSession {
   id: string;
   title: string;
+  pinned?: boolean;
+  projectId?: string | null;
+  projectName?: string | null;
+  workspaceRoot?: string | null;
   updatedAt: number;
   tasks: Task[];
 }
@@ -23,9 +27,22 @@ export function newSessionId(): string {
   return `s_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
 }
 
-export function makeEmptySession(): ChatSession {
+export function makeEmptySession(project?: {
+  projectId?: string | null;
+  projectName?: string | null;
+  workspaceRoot?: string | null;
+}): ChatSession {
   const id = newSessionId();
-  return { id, title: DEFAULT_CHAT_TITLE, updatedAt: Date.now(), tasks: [] };
+  return {
+    id,
+    title: DEFAULT_CHAT_TITLE,
+    pinned: false,
+    projectId: project?.projectId ?? null,
+    projectName: project?.projectName ?? null,
+    workspaceRoot: project?.workspaceRoot ?? null,
+    updatedAt: Date.now(),
+    tasks: [],
+  };
 }
 
 /** 合并持久化状态时：补齐会话字段并同步 tasks */
@@ -46,9 +63,17 @@ export function ensureChatHydration<T extends {
     };
   }
 
+  chatSessions = chatSessions.map(session => ({
+    ...session,
+    pinned: session.pinned === true,
+    projectId: session.projectId ?? null,
+    projectName: session.projectName ?? null,
+    workspaceRoot: session.workspaceRoot ?? null,
+  }));
+
   let activeSessionId = state.activeSessionId ?? "";
   if (!chatSessions.some(s => s.id === activeSessionId)) {
-    const sorted = [...chatSessions].sort((a, b) => b.updatedAt - a.updatedAt);
+    const sorted = sortChatSessions(chatSessions);
     activeSessionId = sorted[0]!.id;
   }
 
@@ -67,7 +92,14 @@ export function capTaskList(tasks: Task[]): Task[] {
 
 export function capSessions(sessions: ChatSession[]): ChatSession[] {
   if (sessions.length <= MAX_CHAT_SESSIONS) return sessions;
-  return [...sessions]
-    .sort((a, b) => b.updatedAt - a.updatedAt)
-    .slice(0, MAX_CHAT_SESSIONS);
+  return sortChatSessions(sessions).slice(0, MAX_CHAT_SESSIONS);
+}
+
+export function sortChatSessions(sessions: ChatSession[]): ChatSession[] {
+  return [...sessions].sort((left, right) => {
+    if ((left.pinned ?? false) !== (right.pinned ?? false)) {
+      return left.pinned ? -1 : 1;
+    }
+    return right.updatedAt - left.updatedAt;
+  });
 }

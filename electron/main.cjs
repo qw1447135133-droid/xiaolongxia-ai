@@ -42,6 +42,7 @@ const previewWindows = new Map();
 const WORKSPACE_LIST_LIMIT = 500;
 const TEXT_PREVIEW_LIMIT = 512 * 1024;
 const IMAGE_PREVIEW_LIMIT = 6 * 1024 * 1024;
+const VERIFICATION_TIMEOUT_MS = 3 * 60 * 1000;
 const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg']);
 const TEXT_EXTENSIONS = new Set([
   '.txt', '.md', '.markdown', '.json', '.js', '.jsx', '.ts', '.tsx', '.css', '.scss', '.html', '.htm',
@@ -104,6 +105,181 @@ function assertWorkspacePathAllowed(targetPath) {
     throw new Error('Path is outside the selected workspace.');
   }
   return { canonicalPath, rootPath };
+}
+
+function safeExists(targetPath) {
+  try {
+    return fs.existsSync(targetPath);
+  } catch {
+    return false;
+  }
+}
+
+function getNpmCommand() {
+  return process.platform === 'win32' ? 'npm.cmd' : 'npm';
+}
+
+function getLocalBin(rootPath, name) {
+  return path.join(rootPath, 'node_modules', '.bin', process.platform === 'win32' ? `${name}.cmd` : name);
+}
+
+function readWorkspacePackageJson(rootPath) {
+  const packagePath = path.join(rootPath, 'package.json');
+  if (!safeExists(packagePath)) return null;
+
+  try {
+    return JSON.parse(fs.readFileSync(packagePath, 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+function resolveVerificationPlan(rootPath) {
+  const packageJson = readWorkspacePackageJson(rootPath);
+  const scripts = packageJson && packageJson.scripts && typeof packageJson.scripts === 'object'
+    ? packageJson.scripts
+    : {};
+  const plan = [];
+
+  if (typeof scripts.build === 'string' && scripts.build.trim()) {
+    plan.push({
+      id: 'build',
+      label: 'Build',
+      command: getNpmCommand(),
+      args: ['run', 'build'],
+      displayCommand: 'npm run build',
+    });
+  }
+
+  if (typeof scripts.typecheck === 'string' && scripts.typecheck.trim()) {
+    plan.push({
+      id: 'typecheck',
+      label: 'Typecheck',
+      command: getNpmCommand(),
+      args: ['run', 'typecheck'],
+      displayCommand: 'npm run typecheck',
+    });
+  } else {
+    const tscBin = getLocalBin(rootPath, 'tsc');
+    const tsconfigPath = path.join(rootPath, 'tsconfig.json');
+    if (safeExists(tscBin) && safeExists(tsconfigPath)) {
+      plan.push({
+        id: 'typecheck',
+        label: 'Typecheck',
+        command: tscBin,
+        args: ['--noEmit'],
+        displayCommand: process.platform === 'win32' ? '.\\node_modules\\.bin\\tsc.cmd --noEmit' : './node_modules/.bin/tsc --noEmit',
+      });
+    }
+  }
+
+  if (typeof scripts.lint === 'string' && scripts.lint.trim()) {
+    plan.push({
+      id: 'lint',
+      label: 'Lint',
+      command: getNpmCommand(),
+      args: ['run', 'lint'],
+      displayCommand: 'npm run lint',
+    });
+  }
+
+  return plan;
+}
+
+function runVerificationCommand(step, cwd) {
+  return new Promise((resolve) => {
+    const startedAt = Date.now();
+    let stdout = '';
+    let stderr = '';
+    let settled = false;
+
+    const child = spawn(step.command, step.args, {
+      cwd,
+      shell: false,
+      windowsHide: true,
+      env: {
+        ...process.env,
+        FORCE_COLOR: '0',
+        CI: '1',
+      },
+    });
+
+    const finalize = (status, extraOutput = '') => {
+      if (settled) return;
+      settled = true;
+      const completedAt = Date.now();
+      const mergedOutput = [stdout.trim(), stderr.trim(), extraOutput.trim()]
+        .filter(Boolean)
+        .join('\n\n')
+        .slice(0, 12000);
+
+      resolve({
+        id: step.id,
+        label: step.label,
+        status,
+        command: step.displayCommand,
+        output: mergedOutput,
+        startedAt,
+        completedAt,
+        durationMs: completedAt - startedAt,
+      });
+    };
+
+    const timeout = setTimeout(() => {
+      try {
+        child.kill();
+      } catch {}
+      finalize('failed', `Verification step timed out after ${VERIFICATION_TIMEOUT_MS}ms.`);
+    }, VERIFICATION_TIMEOUT_MS);
+
+    child.stdout.on('data', (chunk) => {
+      stdout += chunk.toString();
+      if (stdout.length > 12000) stdout = stdout.slice(-12000);
+    });
+
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk.toString();
+      if (stderr.length > 12000) stderr = stderr.slice(-12000);
+    });
+
+    child.on('error', (error) => {
+      clearTimeout(timeout);
+      finalize('failed', error.message || String(error));
+    });
+
+    child.on('close', (code) => {
+      clearTimeout(timeout);
+      finalize(code === 0 ? 'passed' : 'failed', code === 0 ? '' : `Process exited with code ${code}.`);
+    });
+  });
+}
+
+async function runWorkspaceVerification(targetPath) {
+  const { canonicalPath } = assertWorkspacePathAllowed(targetPath);
+  const plan = resolveVerificationPlan(canonicalPath);
+
+  if (plan.length === 0) {
+    return {
+      status: 'skipped',
+      rootPath: canonicalPath,
+      results: [],
+    };
+  }
+
+  const results = [];
+  for (const step of plan) {
+    const result = await runVerificationCommand(step, canonicalPath);
+    results.push(result);
+    if (result.status === 'failed') {
+      break;
+    }
+  }
+
+  return {
+    status: results.some(item => item.status === 'failed') ? 'failed' : 'passed',
+    rootPath: canonicalPath,
+    results,
+  };
 }
 
 function sortWorkspaceEntries(entries) {
@@ -611,6 +787,9 @@ app.whenReady().then(async () => {
   });
   ipcMain.handle('open-workspace-preview-window', async (_event, preview) => {
     openWorkspacePreviewWindow(preview);
+  });
+  ipcMain.handle('run-workspace-verification', async (_event, targetPath) => {
+    return runWorkspaceVerification(targetPath);
   });
 
   // 处理第二个实例尝试启动

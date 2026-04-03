@@ -1,4 +1,6 @@
 "use client";
+
+import type { CSSProperties } from "react";
 import { useStore } from "@/store";
 import { AGENT_META } from "@/store/types";
 import type { Activity } from "@/store/types";
@@ -30,26 +32,13 @@ export function ActivityPanel() {
     chatSessions.some(sess => sess.tasks.some(t => t.id === taskId));
 
   if (activities.length === 0) {
-    return (
-      <div style={{ color: "var(--text-muted)", fontSize: 12, textAlign: "center", padding: "24px 0" }}>
-        活动记录为空
-      </div>
-    );
+    return <div className="activity-panel__empty">活动记录为空</div>;
   }
 
   return (
-    <div
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        gap: 6,
-        maxHeight: CHAT_VIEWPORT_MAX,
-        overflowY: "auto",
-        paddingRight: 2,
-      }}
-    >
+    <div className="activity-panel" style={{ maxHeight: CHAT_VIEWPORT_MAX }}>
       {activities.slice(0, 80).map(activity => {
-        const canJump = Boolean(activity.taskId && findTaskInSessions(activity.taskId!));
+        const canJump = Boolean(activity.taskId && findTaskInSessions(activity.taskId));
         return (
           <ActivityCard
             key={activity.id}
@@ -93,47 +82,25 @@ function ActivityCard({
             }
           : undefined
       }
-      className="card animate-fade-in"
-      style={{
-        padding: "8px 10px",
-        cursor: onJump ? "pointer" : "default",
-        opacity: canJump || activity.type === "meeting" ? 1 : 0.95,
-        border: onJump ? "1px solid transparent" : undefined,
-      }}
+      className={`activity-panel__card animate-fade-in ${onJump ? "is-jumpable" : ""}`}
       title={onJump ? "点击跳转到对应对话" : activity.taskId ? "该任务不在当前历史会话中" : undefined}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        <span style={{ fontSize: 14 }}>{meta.emoji}</span>
-        <span style={{ fontSize: 12, fontWeight: 500 }}>{meta.name}</span>
+      <div className="activity-panel__head">
+        <span className="activity-panel__emoji">{meta.emoji}</span>
+        <span className="activity-panel__name">{meta.name}</span>
         <span
-          style={{
-            fontSize: 10,
-            fontWeight: 600,
-            padding: "1px 5px",
-            borderRadius: 4,
-            background: `${ACTIVITY_COLOR[activity.type]}22`,
-            color: ACTIVITY_COLOR[activity.type],
-          }}
+          className="activity-panel__badge"
+          style={{ "--activity-accent": ACTIVITY_COLOR[activity.type] } as CSSProperties}
         >
           {ACTIVITY_LABEL[activity.type]}
         </span>
         {activity.durationMs && (
-          <span style={{ fontSize: 10, color: "var(--text-muted)", marginLeft: "auto" }}>
-            {formatDuration(activity.durationMs)}
-          </span>
+          <span className="activity-panel__duration">{formatDuration(activity.durationMs)}</span>
         )}
-        <span style={{ fontSize: 10, color: "var(--text-muted)", flexShrink: 0 }}>
-          {timeAgo(activity.timestamp)}
-        </span>
-        {onJump && (
-          <span style={{ fontSize: 10, color: "var(--accent)", flexShrink: 0 }}>
-            定位
-          </span>
-        )}
+        <span className="activity-panel__time">{timeAgo(activity.timestamp)}</span>
+        {onJump && <span className="activity-panel__jump">定位</span>}
       </div>
-      <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4, paddingLeft: 22 }}>
-        {activity.summary}
-      </div>
+      <div className="activity-panel__summary">{activity.summary}</div>
     </div>
   );
 }

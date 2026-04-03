@@ -3,17 +3,32 @@
 import { useEffect } from "react";
 import { useStore } from "@/store";
 import { randomId } from "@/lib/utils";
-import type { AgentId, AgentStatus, Task, Activity } from "@/store/types";
+import type { AgentId, AgentStatus, Task, Activity, ExecutionEvent, ExecutionRunSource, ExecutionRunStatus } from "@/store/types";
 
 type WsMessage =
   | { type: "connected" }
   | { type: "settings_ack" }
   | { type: "pong" }
-  | { type: "agent_status"; agentId: AgentId; status: AgentStatus; currentTask?: string }
-  | { type: "task_add"; task: Task }
-  | { type: "task_update"; taskId: string; updates: Partial<Task> }
-  | { type: "activity"; activity: Omit<Activity, "id"> }
+  | { type: "agent_status"; agentId: AgentId; status: AgentStatus; currentTask?: string; executionRunId?: string }
+  | { type: "task_add"; task: Task; executionRunId?: string }
+  | { type: "task_update"; taskId: string; updates: Partial<Task>; executionRunId?: string }
+  | { type: "activity"; activity: Omit<Activity, "id">; executionRunId?: string }
   | { type: "cost"; agentId: AgentId; tokens: number }
+  | {
+      type: "execution_update";
+      executionRunId: string;
+      sessionId?: string;
+      instruction?: string;
+      source?: ExecutionRunSource;
+      status?: ExecutionRunStatus;
+      currentAgentId?: AgentId;
+      totalTasks?: number;
+      completedTasks?: number;
+      failedTasks?: number;
+      completedAt?: number;
+      timestamp?: number;
+      event?: ExecutionEvent;
+    }
   | { type: "meeting_result"; topic?: string; result?: string; error?: string }
   | { type: "meeting_speech"; agentId: string; role: string; text: string; timestamp: number; meetingId?: string };
 
@@ -59,6 +74,7 @@ function handleMessage(msg: WsMessage) {
     setMeetingActive,
     finalizeMeeting,
     meetingTopic,
+    updateExecutionRun,
   } = getStore();
 
   switch (msg.type) {
@@ -73,6 +89,22 @@ function handleMessage(msg: WsMessage) {
       break;
     case "activity":
       addActivity({ ...msg.activity, id: randomId() });
+      break;
+    case "execution_update":
+      updateExecutionRun({
+        id: msg.executionRunId,
+        sessionId: msg.sessionId,
+        instruction: msg.instruction,
+        source: msg.source,
+        status: msg.status,
+        currentAgentId: msg.currentAgentId,
+        totalTasks: msg.totalTasks,
+        completedTasks: msg.completedTasks,
+        failedTasks: msg.failedTasks,
+        completedAt: msg.completedAt,
+        timestamp: msg.timestamp,
+        event: msg.event,
+      });
       break;
     case "cost":
       addCost(msg.agentId, msg.tokens);

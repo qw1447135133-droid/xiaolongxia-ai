@@ -2,6 +2,8 @@
 
 import { useMemo, useState } from "react";
 import { useStore } from "@/store";
+import { filterByProjectScope, getSessionProjectLabel } from "@/lib/project-context";
+import { buildProjectMemorySnippet, describeProjectMemory } from "@/lib/workspace-memory";
 import { AGENT_META } from "@/store/types";
 import type { AgentId, Task } from "@/store/types";
 
@@ -92,10 +94,33 @@ export function ArtifactsCenter() {
   const latestMeetingRecord = useStore(s => s.latestMeetingRecord);
   const workspaceDeskNotes = useStore(s => s.workspaceDeskNotes);
   const workspaceSavedBundles = useStore(s => s.workspaceSavedBundles);
+  const workspaceProjectMemories = useStore(s => s.workspaceProjectMemories);
+  const chatSessions = useStore(s => s.chatSessions);
+  const activeSessionId = useStore(s => s.activeSessionId);
   const navigateToTask = useStore(s => s.navigateToTask);
   const appendCommandDraft = useStore(s => s.appendCommandDraft);
   const setTab = useStore(s => s.setTab);
   const [filter, setFilter] = useState<ArtifactFilter>("all");
+
+  const activeSession = useMemo(
+    () => chatSessions.find(session => session.id === activeSessionId) ?? null,
+    [activeSessionId, chatSessions],
+  );
+
+  const scopedDeskNotes = useMemo(
+    () => filterByProjectScope(workspaceDeskNotes, activeSession ?? {}),
+    [activeSession, workspaceDeskNotes],
+  );
+
+  const scopedSavedBundles = useMemo(
+    () => filterByProjectScope(workspaceSavedBundles, activeSession ?? {}),
+    [activeSession, workspaceSavedBundles],
+  );
+
+  const scopedProjectMemories = useMemo(
+    () => filterByProjectScope(workspaceProjectMemories, activeSession ?? {}),
+    [activeSession, workspaceProjectMemories],
+  );
 
   const taskArtifacts = useMemo(
     () => buildTaskArtifacts(tasks, navigateToTask),
@@ -121,7 +146,7 @@ export function ArtifactsCenter() {
 
   const deskArtifacts = useMemo<ArtifactItem[]>(
     () => [
-      ...workspaceDeskNotes.map(note => ({
+      ...scopedDeskNotes.map(note => ({
         id: `artifact-note-${note.id}`,
         kind: "desk" as const,
         title: note.title,
@@ -131,7 +156,7 @@ export function ArtifactsCenter() {
         actionLabel: "Use in prompt",
         action: () => appendCommandDraft(`Desk note: ${note.title}\n\n${note.content}`),
       })),
-      ...workspaceSavedBundles.map(bundle => ({
+      ...scopedSavedBundles.map(bundle => ({
         id: `artifact-bundle-${bundle.id}`,
         kind: "desk" as const,
         title: bundle.name,
@@ -141,8 +166,18 @@ export function ArtifactsCenter() {
         actionLabel: "Use in prompt",
         action: () => appendCommandDraft(`Context pack: ${bundle.name}\n${bundle.notes}`),
       })),
+      ...scopedProjectMemories.map(memory => ({
+        id: `artifact-memory-${memory.id}`,
+        kind: "desk" as const,
+        title: memory.name,
+        meta: `Project memory · ${timeLabel(memory.updatedAt)}`,
+        body: `${describeProjectMemory(memory)}\n${memory.scratchpad || "No scratchpad snapshot"}`,
+        createdAt: memory.updatedAt,
+        actionLabel: "Use in prompt",
+        action: () => appendCommandDraft(buildProjectMemorySnippet(memory)),
+      })),
     ],
-    [appendCommandDraft, workspaceDeskNotes, workspaceSavedBundles],
+    [appendCommandDraft, scopedDeskNotes, scopedProjectMemories, scopedSavedBundles],
   );
 
   const artifacts = useMemo(
@@ -192,8 +227,11 @@ export function ArtifactsCenter() {
           <div>
             <div style={{ fontSize: 14, fontWeight: 700 }}>Artifact Shelf</div>
             <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 4 }}>
-              Filter recent outputs and jump back into the right workflow surface.
+              Filter recent outputs inside the current project scope and jump back into the right workflow surface.
             </div>
+          </div>
+          <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
+            Project: {activeSession ? getSessionProjectLabel(activeSession) : "General"}
           </div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             {([

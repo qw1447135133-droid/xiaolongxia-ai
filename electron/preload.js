@@ -8,5 +8,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   readWorkspacePreview: (targetPath) => ipcRenderer.invoke('read-workspace-preview', targetPath),
   openWorkspacePath: (targetPath) => ipcRenderer.invoke('open-workspace-path', targetPath),
   openWorkspacePreviewWindow: (preview) => ipcRenderer.invoke('open-workspace-preview-window', preview),
+  runWorkspaceVerification: (targetPath) => ipcRenderer.invoke('run-workspace-verification', targetPath),
   isElectron: true,
 });

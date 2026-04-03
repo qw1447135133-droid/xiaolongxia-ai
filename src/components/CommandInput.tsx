@@ -1,9 +1,11 @@
 "use client";
 
-import { useRef, useState, type ChangeEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
+import { buildProjectMemorySnippet, describeProjectMemory, getRecommendedProjectMemories } from "@/lib/workspace-memory";
+import { filterByProjectScope } from "@/lib/project-context";
 import { useStore } from "@/store";
-import { sendWs } from "@/hooks/useWebSocket";
 import { randomId } from "@/lib/utils";
+import { sendExecutionDispatch } from "@/lib/execution-dispatch";
 
 type AttachmentKind = "image" | "document" | "audio" | "video" | "other";
 
@@ -72,20 +74,83 @@ function getAttachmentBadge(kind: AttachmentKind) {
   }
 }
 
-export function CommandInput() {
+export function CommandInput({
+  variant = "dock",
+  title,
+  hint,
+}: {
+  variant?: "dock" | "panel";
+  title?: string;
+  hint?: string;
+}) {
   const [error, setError] = useState("");
   const [attachments, setAttachments] = useState<AttachmentItem[]>([]);
+  const [includeProjectMemory, setIncludeProjectMemory] = useState(true);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const {
     isDispatching,
     wsStatus,
     commandDraft,
+    tasks,
+    workspaceRoot,
+    workspaceCurrentPath,
+    workspaceActivePreviewPath,
+    workspacePinnedPreviews,
+    workspaceProjectMemories,
+    activeWorkspaceProjectMemoryId,
+    chatSessions,
+    activeSessionId,
+    appendCommandDraft,
     setCommandDraft,
     clearCommandDraft,
     setDispatching,
     setLastInstruction,
-    addTask,
+    setActiveWorkspaceProjectMemory,
   } = useStore();
+
+  const activeSession = useMemo(
+    () => chatSessions.find(session => session.id === activeSessionId) ?? null,
+    [activeSessionId, chatSessions],
+  );
+
+  const scopedProjectMemories = useMemo(
+    () => filterByProjectScope(workspaceProjectMemories, activeSession ?? {}),
+    [activeSession, workspaceProjectMemories],
+  );
+
+  const activeProjectMemory = useMemo(
+    () =>
+      activeWorkspaceProjectMemoryId
+        ? scopedProjectMemories.find(memory => memory.id === activeWorkspaceProjectMemoryId) ?? null
+        : null,
+    [activeWorkspaceProjectMemoryId, scopedProjectMemories],
+  );
+
+  const recommendedProjectMemories = useMemo(
+    () =>
+      getRecommendedProjectMemories(scopedProjectMemories, {
+        instruction: commandDraft,
+        workspaceRoot,
+        workspaceCurrentPath,
+        activePreviewPath: workspaceActivePreviewPath,
+        pinnedPaths: workspacePinnedPreviews.map(preview => preview.path),
+        recentTranscript: tasks.slice(-8).map(task => task.result ?? task.description).join("\n\n"),
+      }).filter(item => item.memory.id !== activeProjectMemory?.id),
+    [
+      activeProjectMemory?.id,
+      commandDraft,
+      tasks,
+      workspaceActivePreviewPath,
+      workspaceCurrentPath,
+      workspacePinnedPreviews,
+      scopedProjectMemories,
+      workspaceRoot,
+    ],
+  );
+
+  useEffect(() => {
+    setIncludeProjectMemory(Boolean(activeProjectMemory));
+  }, [activeProjectMemory?.id]);
 
   const openFilePicker = () => {
     if (isDispatching) return;
@@ -151,20 +216,14 @@ export function CommandInput() {
     clearCommandDraft();
     setAttachments([]);
 
-    addTask({
-      id: randomId(),
-      description: taskDescription,
-      assignedTo: "orchestrator",
-      complexity: "low",
-      status: "done",
-      createdAt: Date.now(),
-      completedAt: Date.now(),
-      isUserMessage: true,
+    const { ok } = sendExecutionDispatch({
+      instruction,
+      source: "chat",
+      attachments: attachmentMetas,
+      includeUserMessage: true,
+      taskDescription,
+      includeActiveProjectMemory: includeProjectMemory,
     });
-
-    const { providers, agentConfigs } = useStore.getState();
-    sendWs({ type: "settings_sync", providers, agentConfigs });
-    const ok = sendWs({ type: "dispatch", instruction, attachments: attachmentMetas });
 
     if (!ok) {
       setError("Failed to send. The WebSocket connection was lost.");
@@ -174,13 +233,7 @@ export function CommandInput() {
   };
 
   return (
-    <div
-      style={{
-        padding: "10px 14px",
-        borderTop: "1px solid var(--border)",
-        background: "var(--bg-sidebar)",
-      }}
-    >
+    <div className={`command-input command-input--${variant}`}>
       {error && (
         <div
           style={{
@@ -197,9 +250,87 @@ export function CommandInput() {
         </div>
       )}
 
-      <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 5 }}>
-        Dispatch a new task to the orchestrator
+      <div className="command-input__header">
+        <div className="command-input__title">{title ?? "给小龙虾团队发送消息"}</div>
+        <div className="command-input__hint">
+          {hint ?? "像 ChatGPT 一样直接发问题、任务或文件上下文，系统会自动派发给合适的角色。"}
+        </div>
       </div>
+
+      {activeProjectMemory && (
+        <div className="command-input__memory">
+          <div className="command-input__memory-copy">
+            <span className="command-input__memory-label">Active Memory</span>
+            <strong>{activeProjectMemory.name}</strong>
+            <span>{describeProjectMemory(activeProjectMemory)}</span>
+          </div>
+          <div className="command-input__memory-actions">
+            <button
+              type="button"
+              className={`btn-ghost command-input__memory-toggle ${includeProjectMemory ? "is-active" : ""}`}
+              onClick={() => setIncludeProjectMemory(value => !value)}
+            >
+              {includeProjectMemory ? "发送时附带" : "暂不附带"}
+            </button>
+            <button
+              type="button"
+              className="btn-ghost"
+              onClick={() => appendCommandDraft(buildProjectMemorySnippet(activeProjectMemory))}
+            >
+              展开到输入框
+            </button>
+            <button
+              type="button"
+              className="btn-ghost"
+              onClick={() => setActiveWorkspaceProjectMemory(null)}
+            >
+              清除激活
+            </button>
+          </div>
+        </div>
+      )}
+
+      {!activeProjectMemory && recommendedProjectMemories.length > 0 && (
+        <div className="command-input__memory command-input__memory--suggested">
+          <div className="command-input__memory-copy">
+            <span className="command-input__memory-label">Suggested Memory</span>
+            <strong>{recommendedProjectMemories[0]!.memory.name}</strong>
+            <span>{recommendedProjectMemories[0]!.reasons.join(" · ") || describeProjectMemory(recommendedProjectMemories[0]!.memory)}</span>
+          </div>
+          <div className="command-input__memory-actions">
+            <button
+              type="button"
+              className="btn-ghost command-input__memory-toggle is-active"
+              onClick={() => setActiveWorkspaceProjectMemory(recommendedProjectMemories[0]!.memory.id)}
+            >
+              激活推荐
+            </button>
+            <button
+              type="button"
+              className="btn-ghost"
+              onClick={() => appendCommandDraft(buildProjectMemorySnippet(recommendedProjectMemories[0]!.memory))}
+            >
+              展开到输入框
+            </button>
+          </div>
+        </div>
+      )}
+
+      {recommendedProjectMemories.length > 1 && (
+        <div className="command-input__memory-rail">
+          {recommendedProjectMemories.slice(0, 3).map(item => (
+            <button
+              key={item.memory.id}
+              type="button"
+              className="command-input__memory-chip"
+              onClick={() => setActiveWorkspaceProjectMemory(item.memory.id)}
+            >
+              <strong>{item.memory.name}</strong>
+              <span>{item.reasons.join(" · ") || describeProjectMemory(item.memory)}</span>
+            </button>
+          ))}
+        </div>
+      )}
 
       {attachments.length > 0 && (
         <div className="attachment-list">
@@ -224,7 +355,7 @@ export function CommandInput() {
         </div>
       )}
 
-      <div style={{ display: "flex", gap: 8, alignItems: "stretch" }}>
+      <div className="command-input__row">
         <input
           ref={fileInputRef}
           type="file"
@@ -236,31 +367,18 @@ export function CommandInput() {
 
         <button
           type="button"
-          className="btn-ghost"
           onClick={openFilePicker}
           disabled={isDispatching}
           title="Upload files"
           aria-label="Upload attachments"
-          style={{
-            width: 44,
-            minWidth: 44,
-            padding: 0,
-            fontSize: 24,
-            lineHeight: 1,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            color: attachments.length > 0 ? "var(--accent)" : "var(--text-muted)",
-            borderColor: attachments.length > 0 ? "rgba(var(--accent-rgb),0.35)" : "var(--border)",
-            background: attachments.length > 0 ? "var(--accent-dim)" : "transparent",
-          }}
+          className={`btn-ghost command-input__upload ${attachments.length > 0 ? "is-active" : ""}`}
         >
           +
         </button>
 
         <textarea
           className="input command-input__field"
-          placeholder="Example: analyze this market, write a campaign plan, or use the file context from Desk to continue the task..."
+          placeholder="例如：帮我分析这个需求、写一版开发计划，或结合 Desk 里的文件上下文继续当前任务..."
           value={commandDraft}
           onChange={(event) => setCommandDraft(event.target.value)}
           onKeyDown={(event) => {
@@ -274,8 +392,7 @@ export function CommandInput() {
         />
 
         <button
-          className="btn-primary"
-          style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 6, minWidth: 84 }}
+          className="btn-primary command-input__send"
           onClick={() => void dispatch()}
           disabled={isDispatching || !commandDraft.trim()}
         >
@@ -290,10 +407,14 @@ export function CommandInput() {
         </button>
       </div>
 
-      <div style={{ marginTop: 6, fontSize: 11, color: "var(--text-muted)" }}>
+      <div className="command-input__footer">
         {attachments.length > 0
-          ? `${attachments.length} attachment(s) ready. You can also inject file context directly from Desk preview tabs.`
-          : "Use the + button for attachments, or send file path/context from Desk with one click."}
+          ? `${attachments.length} attachment(s) ready.${activeProjectMemory && includeProjectMemory ? ` Active memory: ${activeProjectMemory.name}.` : ""} You can also inject file context directly from Desk preview tabs.`
+          : activeProjectMemory && includeProjectMemory
+            ? `当前发送会自动附带项目记忆「${activeProjectMemory.name}」，也可以在上方随时关闭。`
+            : recommendedProjectMemories.length > 0
+              ? `未手动激活项目记忆时，系统会优先参考推荐结果，并在命中足够高时自动召回。`
+            : "Use the + button for attachments, or send file path/context from Desk with one click."}
       </div>
     </div>
   );

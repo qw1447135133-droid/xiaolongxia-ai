@@ -118,6 +118,25 @@ function broadcast(msg) {
   }
 }
 
+function makeExecutionEvent({ type, title, detail, agentId, taskId, timestamp = Date.now() }) {
+  return {
+    id: randomUUID(),
+    type,
+    title,
+    detail,
+    agentId,
+    taskId,
+    timestamp,
+  };
+}
+
+function broadcastExecutionUpdate(payload) {
+  broadcast({
+    type: "execution_update",
+    ...payload,
+  });
+}
+
 function idleAllExcept(keepId) {
   for (const id of AGENT_IDS) {
     if (id !== keepId) {
@@ -253,9 +272,26 @@ async function callAgent(agentId, task, complexity, maxTokensOverride, sessionId
   });
 }
 
-async function dispatch(instruction, sessionId = "default") {
+async function dispatch(instruction, sessionId = "default", executionRunId = randomUUID(), source = "chat") {
+  const runId = executionRunId || randomUUID();
+  const createdAt = Date.now();
+  broadcastExecutionUpdate({
+    executionRunId: runId,
+    sessionId,
+    instruction,
+    source,
+    status: "analyzing",
+    timestamp: createdAt,
+    event: makeExecutionEvent({
+      type: "dispatch",
+      title: "开始分析需求",
+      detail: instruction,
+      timestamp: createdAt,
+    }),
+  });
+
   idleAllExcept("orchestrator");
-  broadcast({ type: "agent_status", agentId: "orchestrator", status: "running", currentTask: "理解指令中..." });
+  broadcast({ type: "agent_status", agentId: "orchestrator", status: "running", currentTask: "理解指令中...", executionRunId: runId });
 
   if (shouldReplyDirectlyByOrchestrator(instruction)) {
     try {
@@ -286,6 +322,7 @@ async function dispatch(instruction, sessionId = "default") {
       const ts = nextTaskTimestamp();
       broadcast({
         type: "task_add",
+        executionRunId: runId,
         task: {
           id: randomUUID(),
           description: instruction,
@@ -300,10 +337,26 @@ async function dispatch(instruction, sessionId = "default") {
       if (tokens > 0) {
         broadcast({ type: "cost", agentId: "orchestrator", tokens });
       }
+      broadcastExecutionUpdate({
+        executionRunId: runId,
+        sessionId,
+        status: "completed",
+        totalTasks: 1,
+        completedTasks: 1,
+        currentAgentId: "orchestrator",
+        completedAt: Date.now(),
+        event: makeExecutionEvent({
+          type: "result",
+          title: "虾总管直接完成回复",
+          detail: String(text || "").slice(0, 200),
+          agentId: "orchestrator",
+        }),
+      });
     } catch (err) {
       const ts = nextTaskTimestamp();
       broadcast({
         type: "task_add",
+        executionRunId: runId,
         task: {
           id: randomUUID(),
           description: instruction,
@@ -316,14 +369,29 @@ async function dispatch(instruction, sessionId = "default") {
         },
       });
       console.error("[dispatch] direct orchestrator reply failed:", err?.message || err);
+      broadcastExecutionUpdate({
+        executionRunId: runId,
+        sessionId,
+        status: "failed",
+        totalTasks: 1,
+        failedTasks: 1,
+        currentAgentId: "orchestrator",
+        completedAt: Date.now(),
+        event: makeExecutionEvent({
+          type: "error",
+          title: "虾总管回复时发生异常",
+          detail: String(err?.message || err),
+          agentId: "orchestrator",
+        }),
+      });
     }
 
-    broadcast({ type: "agent_status", agentId: "orchestrator", status: "idle" });
+    broadcast({ type: "agent_status", agentId: "orchestrator", status: "idle", executionRunId: runId });
     return;
   }
 
   const reportTaskId = randomUUID();
-  broadcast({ type: "activity", activity: { agentId: "orchestrator", type: "dispatch", summary: instruction, timestamp: Date.now(), taskId: reportTaskId } });
+  broadcast({ type: "activity", executionRunId: runId, activity: { agentId: "orchestrator", type: "dispatch", summary: instruction, timestamp: Date.now(), taskId: reportTaskId } });
 
   let tasks = [];
 
@@ -358,6 +426,7 @@ async function dispatch(instruction, sessionId = "default") {
   const reportTs = nextTaskTimestamp();
   broadcast({
     type: "task_add",
+    executionRunId: runId,
     task: {
       id: reportTaskId,
       description: "虾总管汇报",
@@ -369,27 +438,63 @@ async function dispatch(instruction, sessionId = "default") {
       completedAt: reportTs,
     },
   });
-  broadcast({ type: "agent_status", agentId: "orchestrator", status: "idle" });
+  broadcastExecutionUpdate({
+    executionRunId: runId,
+    sessionId,
+    status: "running",
+    totalTasks: tasks.length,
+    completedTasks: 0,
+    failedTasks: 0,
+    currentAgentId: "orchestrator",
+    event: makeExecutionEvent({
+      type: "dispatch",
+      title: `任务已拆解为 ${tasks.length} 个步骤`,
+      detail: tasks.map((task, index) => `${index + 1}. ${task.description} -> ${AGENT_DISPLAY[task.assignedTo]}`).join("\n"),
+      agentId: "orchestrator",
+      taskId: reportTaskId,
+    }),
+  });
+  broadcast({ type: "agent_status", agentId: "orchestrator", status: "idle", executionRunId: runId });
 
+  let completedTasks = 0;
+  let failedTasks = 0;
   for (const task of tasks) {
     const start = Date.now();
     const createdAt = nextTaskTimestamp();
     idleAllExcept(task.assignedTo);
     broadcast({
       type: "task_add",
+      executionRunId: runId,
       task: {
         ...task,
         status: "running",
         createdAt,
       },
     });
-    broadcast({ type: "agent_status", agentId: task.assignedTo, status: "running", currentTask: task.description });
-    broadcast({ type: "activity", activity: { agentId: task.assignedTo, type: "task_start", summary: task.description, timestamp: Date.now(), taskId: task.id } });
+    broadcast({ type: "agent_status", agentId: task.assignedTo, status: "running", currentTask: task.description, executionRunId: runId });
+    broadcast({ type: "activity", executionRunId: runId, activity: { agentId: task.assignedTo, type: "task_start", summary: task.description, timestamp: Date.now(), taskId: task.id } });
+    broadcastExecutionUpdate({
+      executionRunId: runId,
+      sessionId,
+      status: "running",
+      totalTasks: tasks.length,
+      completedTasks,
+      failedTasks,
+      currentAgentId: task.assignedTo,
+      event: makeExecutionEvent({
+        type: "agent",
+        title: `${AGENT_DISPLAY[task.assignedTo]} 开始执行`,
+        detail: task.description,
+        agentId: task.assignedTo,
+        taskId: task.id,
+      }),
+    });
 
     try {
       const { text, tokens } = await callAgent(task.assignedTo, task.description, task.complexity, undefined, sessionId);
       broadcast({
         type: "task_update",
+        executionRunId: runId,
         taskId: task.id,
         updates: {
           status: "done",
@@ -397,15 +502,65 @@ async function dispatch(instruction, sessionId = "default") {
           completedAt: Date.now(),
         },
       });
-      broadcast({ type: "agent_status", agentId: task.assignedTo, status: "idle" });
-      broadcast({ type: "activity", activity: { agentId: task.assignedTo, type: "task_done", summary: task.description, timestamp: Date.now(), durationMs: Date.now() - start, taskId: task.id } });
+      completedTasks += 1;
+      broadcast({ type: "agent_status", agentId: task.assignedTo, status: "idle", executionRunId: runId });
+      broadcast({ type: "activity", executionRunId: runId, activity: { agentId: task.assignedTo, type: "task_done", summary: task.description, timestamp: Date.now(), durationMs: Date.now() - start, taskId: task.id } });
+      broadcastExecutionUpdate({
+        executionRunId: runId,
+        sessionId,
+        status: "running",
+        totalTasks: tasks.length,
+        completedTasks,
+        failedTasks,
+        currentAgentId: task.assignedTo,
+        event: makeExecutionEvent({
+          type: "result",
+          title: `${AGENT_DISPLAY[task.assignedTo]} 已完成`,
+          detail: String(text || "").slice(0, 200),
+          agentId: task.assignedTo,
+          taskId: task.id,
+        }),
+      });
       if (tokens > 0) broadcast({ type: "cost", agentId: task.assignedTo, tokens });
     } catch (err) {
-      broadcast({ type: "task_update", taskId: task.id, updates: { status: "failed" } });
-      broadcast({ type: "agent_status", agentId: task.assignedTo, status: "error" });
-      broadcast({ type: "activity", activity: { agentId: task.assignedTo, type: "task_fail", summary: String(err?.message || err), timestamp: Date.now(), taskId: task.id } });
+      failedTasks += 1;
+      broadcast({ type: "task_update", executionRunId: runId, taskId: task.id, updates: { status: "failed" } });
+      broadcast({ type: "agent_status", agentId: task.assignedTo, status: "error", executionRunId: runId });
+      broadcast({ type: "activity", executionRunId: runId, activity: { agentId: task.assignedTo, type: "task_fail", summary: String(err?.message || err), timestamp: Date.now(), taskId: task.id } });
+      broadcastExecutionUpdate({
+        executionRunId: runId,
+        sessionId,
+        status: "running",
+        totalTasks: tasks.length,
+        completedTasks,
+        failedTasks,
+        currentAgentId: task.assignedTo,
+        event: makeExecutionEvent({
+          type: "error",
+          title: `${AGENT_DISPLAY[task.assignedTo]} 执行失败`,
+          detail: String(err?.message || err),
+          agentId: task.assignedTo,
+          taskId: task.id,
+        }),
+      });
     }
   }
+
+  const finalStatus = failedTasks > 0 ? "failed" : "completed";
+  broadcastExecutionUpdate({
+    executionRunId: runId,
+    sessionId,
+    status: finalStatus,
+    totalTasks: tasks.length,
+    completedTasks,
+    failedTasks,
+    completedAt: Date.now(),
+    event: makeExecutionEvent({
+      type: finalStatus === "completed" ? "system" : "error",
+      title: finalStatus === "completed" ? "本轮执行完成" : "本轮执行结束，包含失败步骤",
+      detail: `完成 ${completedTasks} / ${tasks.length}，失败 ${failedTasks}`,
+    }),
+  });
 }
 
 async function meeting(topic, participants = ["explorer", "writer", "performer", "greeter"]) {
@@ -759,7 +914,7 @@ wss.on("connection", (ws) => {
       case "dispatch":
         if (msg.instruction?.trim()) {
           const sessionId = msg.sessionId || "default";
-          dispatch(msg.instruction, sessionId).catch((err) => console.error("[dispatch] error:", err?.message || err));
+          dispatch(msg.instruction, sessionId, msg.executionRunId, msg.source || "chat").catch((err) => console.error("[dispatch] error:", err?.message || err));
         }
         break;
       case "new_session":

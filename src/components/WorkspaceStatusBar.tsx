@@ -3,6 +3,7 @@
 import { useMemo } from "react";
 import { useStore } from "@/store";
 import { DEFAULT_CHAT_TITLE } from "@/lib/chat-sessions";
+import { filterByProjectScope, getSessionProjectLabel } from "@/lib/project-context";
 import { reconnectWebSocket } from "@/hooks/useWebSocket";
 
 const WS_LABEL = {
@@ -15,18 +16,24 @@ export function WorkspaceStatusBar() {
   const wsStatus = useStore(s => s.wsStatus);
   const chatSessions = useStore(s => s.chatSessions);
   const activeSessionId = useStore(s => s.activeSessionId);
-  const providers = useStore(s => s.providers);
-  const platformConfigs = useStore(s => s.platformConfigs);
   const latestMeetingRecord = useStore(s => s.latestMeetingRecord);
+  const workspaceProjectMemories = useStore(s => s.workspaceProjectMemories);
+  const activeWorkspaceProjectMemoryId = useStore(s => s.activeWorkspaceProjectMemoryId);
+  const automationMode = useStore(s => s.automationMode);
+  const automationPaused = useStore(s => s.automationPaused);
+  const remoteSupervisorEnabled = useStore(s => s.remoteSupervisorEnabled);
 
   const activeSession = useMemo(
     () => chatSessions.find(session => session.id === activeSessionId),
     [activeSessionId, chatSessions],
   );
 
-  const enabledPlatforms = useMemo(
-    () => Object.values(platformConfigs).filter(config => config.enabled).length,
-    [platformConfigs],
+  const activeProjectMemory = useMemo(
+    () =>
+      activeWorkspaceProjectMemoryId
+        ? filterByProjectScope(workspaceProjectMemories, activeSession ?? {}).find(memory => memory.id === activeWorkspaceProjectMemoryId) ?? null
+        : null,
+    [activeSession, activeWorkspaceProjectMemoryId, workspaceProjectMemories],
   );
 
   return (
@@ -38,13 +45,23 @@ export function WorkspaceStatusBar() {
 
       <div className="workspace-statusbar__meta">
         <span>会话 {chatSessions.length}</span>
-        <span>Provider {providers.length}</span>
-        <span>平台 {enabledPlatforms}</span>
         <span>
           当前: {activeSession?.title || DEFAULT_CHAT_TITLE}
         </span>
         <span>
+          项目: {activeSession ? getSessionProjectLabel(activeSession) : "General"}
+        </span>
+        <span>
           会议: {latestMeetingRecord ? latestMeetingRecord.topic : "暂无"}
+        </span>
+        <span>
+          记忆: {activeProjectMemory?.name ?? "未激活"}
+        </span>
+        <span>
+          模式: {automationPaused ? "已暂停" : automationMode === "manual" ? "人工" : automationMode === "supervised" ? "监督" : "自治"}
+        </span>
+        <span>
+          值守: {remoteSupervisorEnabled ? "开启" : "关闭"}
         </span>
       </div>
 

@@ -2,7 +2,9 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useStore } from "@/store";
-import type { WorkspaceDeskNote, WorkspaceEntry, WorkspacePreview } from "@/types/desktop-workspace";
+import { filterByProjectScope, getSessionProjectLabel } from "@/lib/project-context";
+import { buildProjectMemoryScratchpad, buildProjectMemorySnippet, describeProjectMemory } from "@/lib/workspace-memory";
+import type { WorkspaceDeskNote, WorkspaceEntry, WorkspacePreview, WorkspaceProjectMemory } from "@/types/desktop-workspace";
 
 type DeskSortMode = "name-asc" | "modified-desc" | "size-desc";
 const DESK_NOTE_TONES: WorkspaceDeskNote["tone"][] = ["amber", "mint", "sky", "rose"];
@@ -110,6 +112,11 @@ function buildDeskNoteSnippet(note: WorkspaceDeskNote) {
   return `Desk note: ${note.title}${linkedSection}\n\n${note.content.trim()}`;
 }
 
+function summarizeProjectMemoryNotes(memory: WorkspaceProjectMemory) {
+  if (memory.deskNotes.length === 0) return "No note snapshots";
+  return memory.deskNotes.map(note => note.title).join(" · ");
+}
+
 function sortEntries(entries: WorkspaceEntry[], mode: DeskSortMode) {
   return [...entries].sort((left, right) => {
     if (left.kind !== right.kind) {
@@ -188,6 +195,8 @@ export function WorkspaceDesk() {
     workspaceRecentPreviews,
     workspacePinnedPreviews,
     workspaceSavedBundles,
+    workspaceProjectMemories,
+    activeWorkspaceProjectMemoryId,
     workspaceDeskNotes,
     workspaceScratchpad,
     setWorkspaceRoot,
@@ -209,15 +218,22 @@ export function WorkspaceDesk() {
     saveWorkspaceBundle,
     applyWorkspaceBundle,
     deleteWorkspaceBundle,
+    saveWorkspaceProjectMemory,
+    applyWorkspaceProjectMemory,
+    deleteWorkspaceProjectMemory,
+    setActiveWorkspaceProjectMemory,
     createWorkspaceDeskNote,
     toggleWorkspaceDeskNotePin,
     deleteWorkspaceDeskNote,
     appendCommandDraft,
     resetWorkspace,
   } = useStore();
+  const chatSessions = useStore(s => s.chatSessions);
+  const activeSessionId = useStore(s => s.activeSessionId);
 
   const [copied, setCopied] = useState<string | null>(null);
   const [noteTitle, setNoteTitle] = useState("");
+  const [projectMemoryTitle, setProjectMemoryTitle] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [sortMode, setSortMode] = useState<DeskSortMode>("name-asc");
   const [studioOpen, setStudioOpen] = useState(false);
@@ -304,6 +320,51 @@ export function WorkspaceDesk() {
         return right.updatedAt - left.updatedAt;
       }),
     [workspaceDeskNotes],
+  );
+
+  const activeSession = useMemo(
+    () => chatSessions.find(session => session.id === activeSessionId) ?? null,
+    [activeSessionId, chatSessions],
+  );
+
+  const scopedWorkspaceSavedBundles = useMemo(
+    () =>
+      filterByProjectScope(workspaceSavedBundles, {
+        projectId: activeSession?.projectId,
+        workspaceRoot: activeSession?.workspaceRoot,
+      }),
+    [activeSession?.projectId, activeSession?.workspaceRoot, workspaceSavedBundles],
+  );
+
+  const scopedWorkspaceProjectMemories = useMemo(
+    () =>
+      filterByProjectScope(workspaceProjectMemories, {
+        projectId: activeSession?.projectId,
+        workspaceRoot: activeSession?.workspaceRoot,
+      }),
+    [activeSession?.projectId, activeSession?.workspaceRoot, workspaceProjectMemories],
+  );
+
+  const scopedDeskNotes = useMemo(
+    () =>
+      filterByProjectScope(sortedDeskNotes, {
+        projectId: activeSession?.projectId,
+        workspaceRoot: activeSession?.workspaceRoot,
+      }),
+    [activeSession?.projectId, activeSession?.workspaceRoot, sortedDeskNotes],
+  );
+
+  const latestProjectMemory = scopedWorkspaceProjectMemories[0] ?? null;
+
+  const canSaveProjectMemory = useMemo(
+    () =>
+      Boolean(
+        workspaceRoot ||
+        workspacePinnedPreviews.length ||
+        workspaceScratchpad.trim() ||
+        scopedDeskNotes.length,
+      ),
+    [scopedDeskNotes.length, workspacePinnedPreviews.length, workspaceRoot, workspaceScratchpad],
   );
 
   const fileActions = useMemo(() => {
@@ -450,6 +511,15 @@ export function WorkspaceDesk() {
     saveWorkspaceBundle(bundleLabel);
   };
 
+  const handleSaveProjectMemory = () => {
+    if (!canSaveProjectMemory) return;
+    const memoryLabel =
+      projectMemoryTitle.trim() ||
+      `${activeFolderLabel === "No folder selected" ? "Workspace" : activeFolderLabel} Memory ${formatTimestamp(Date.now())}`;
+    saveWorkspaceProjectMemory(memoryLabel);
+    setProjectMemoryTitle("");
+  };
+
   const handleSaveDeskNote = () => {
     if (!workspaceScratchpad.trim()) return;
     const normalizedTitle = noteTitle.trim() || activePreview?.name || `Desk Note ${formatTimestamp(Date.now())}`;
@@ -517,6 +587,7 @@ export function WorkspaceDesk() {
             <div className="workspace-desk__hero-value">{workspaceRoot ?? "No local folder selected yet"}</div>
           </div>
           <div className="workspace-desk__hero-meta">
+            <span>{activeSession ? getSessionProjectLabel(activeSession) : "General"}</span>
             <span>{workspaceEntries.length} items</span>
             <span>{workspacePreviewOpen ? "preview live" : "preview idle"}</span>
             <span>{workspacePreviewTabs.length} tabs</span>
@@ -629,7 +700,7 @@ export function WorkspaceDesk() {
           </section>
         )}
 
-        {workspaceSavedBundles.length > 0 && (
+        {scopedWorkspaceSavedBundles.length > 0 && (
           <section className="workspace-desk__references">
             <div className="workspace-desk__references-head">
               <div>
@@ -638,7 +709,7 @@ export function WorkspaceDesk() {
               </div>
             </div>
             <div className="workspace-desk__references-grid">
-              {workspaceSavedBundles.map(bundle => (
+              {scopedWorkspaceSavedBundles.map(bundle => (
                 <article key={bundle.id} className="workspace-desk__reference-card">
                   <div className="workspace-desk__reference-main">
                     <span className="workspace-desk__reference-title">{bundle.name}</span>
@@ -666,6 +737,148 @@ export function WorkspaceDesk() {
             </div>
           </section>
         )}
+
+        <section className="workspace-desk__references workspace-desk__memories">
+          <div className="workspace-desk__references-head">
+            <div>
+              <div className="workspace-card__eyebrow">Project Memory</div>
+              <div className="workspace-card__title">Freeze the current workspace state into a reusable memory card</div>
+            </div>
+            <div className="workspace-desk__actions">
+              <button
+                type="button"
+                className="btn-ghost"
+                onClick={() => latestProjectMemory && setWorkspaceScratchpad(buildProjectMemoryScratchpad(latestProjectMemory))}
+                disabled={!latestProjectMemory}
+              >
+                Load Latest
+              </button>
+              <button
+                type="button"
+                className="btn-primary"
+                onClick={handleSaveProjectMemory}
+                disabled={!canSaveProjectMemory}
+              >
+                Save Memory
+              </button>
+            </div>
+          </div>
+
+          <div className="workspace-desk__memory-compose">
+            <input
+              className="input workspace-desk__memory-input"
+              value={projectMemoryTitle}
+              onChange={(event) => setProjectMemoryTitle(event.target.value)}
+              placeholder="Optional memory name. Leave blank to auto-name from the current folder."
+            />
+            <div className="workspace-desk__memory-metrics">
+              <span>{workspacePinnedPreviews.length} refs</span>
+              <span>{sortedDeskNotes.length} notes</span>
+              <span>{workspaceScratchpad.trim() ? "scratchpad ready" : "no scratchpad"}</span>
+              <span>{workspaceRoot ?? "no root"}</span>
+            </div>
+          </div>
+
+          {scopedWorkspaceProjectMemories.length === 0 ? (
+            <div className="workspace-desk__empty workspace-desk__empty--memory">
+              Save the current desk state once you have pinned references, rough notes, or a useful workspace root. This becomes your reusable codebase memory layer.
+            </div>
+          ) : (
+            <div className="workspace-desk__memory-grid">
+              {scopedWorkspaceProjectMemories.map(memory => (
+                <article
+                  key={memory.id}
+                  className={`workspace-desk__memory-card ${activeWorkspaceProjectMemoryId === memory.id ? "is-active" : ""}`}
+                >
+                  <div className="workspace-desk__memory-head">
+                    <div>
+                      <div className="workspace-desk__memory-title">{memory.name}</div>
+                      <div className="workspace-desk__reference-copy">
+                        {formatTimestamp(memory.updatedAt)} · {describeProjectMemory(memory)}
+                      </div>
+                    </div>
+                    <div className="workspace-desk__preview-badges">
+                      {activeWorkspaceProjectMemoryId === memory.id && <span>active</span>}
+                      {memory.focusPath && <span>focus ready</span>}
+                      {memory.previews.length > 0 && <span>{memory.previews.length} refs</span>}
+                    </div>
+                  </div>
+
+                  <div className="workspace-desk__memory-body">
+                    <div className="workspace-desk__memory-line">
+                      <span>Root</span>
+                      <strong>{memory.rootPath ?? "No root captured"}</strong>
+                    </div>
+                    <div className="workspace-desk__memory-line">
+                      <span>Focus</span>
+                      <strong>{memory.focusPath ?? "No focus file captured"}</strong>
+                    </div>
+                    <div className="workspace-desk__memory-line">
+                      <span>Notes</span>
+                      <strong>{summarizeProjectMemoryNotes(memory)}</strong>
+                    </div>
+                    <p className="workspace-desk__memory-copy">
+                      {memory.scratchpad.trim()
+                        ? memory.scratchpad
+                        : "No scratchpad snapshot was captured for this memory."}
+                    </p>
+                  </div>
+
+                  {memory.deskNotes.length > 0 && (
+                    <div className="workspace-desk__memory-note-list">
+                      {memory.deskNotes.map(note => (
+                        <span
+                          key={`${memory.id}-${note.id}`}
+                          className={`workspace-desk__memory-note workspace-desk__memory-note--${note.tone}`}
+                        >
+                          {note.title}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+
+                  <div className="workspace-desk__reference-actions">
+                    <button
+                      type="button"
+                      className="btn-ghost"
+                      onClick={() => setActiveWorkspaceProjectMemory(memory.id)}
+                    >
+                      {activeWorkspaceProjectMemoryId === memory.id ? "Active" : "Activate"}
+                    </button>
+                    <button type="button" className="btn-ghost" onClick={() => applyWorkspaceProjectMemory(memory.id)}>
+                      Restore
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-ghost"
+                      onClick={() => appendCommandDraft(buildProjectMemorySnippet(memory))}
+                    >
+                      Use
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-ghost"
+                      onClick={() => setWorkspaceScratchpad(buildProjectMemoryScratchpad(memory))}
+                    >
+                      Load Notes
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-ghost"
+                      onClick={() => void handleOpenSystemPath(memory.rootPath)}
+                      disabled={!memory.rootPath || !electronApi?.openWorkspacePath}
+                    >
+                      Reveal
+                    </button>
+                    <button type="button" className="btn-ghost" onClick={() => deleteWorkspaceProjectMemory(memory.id)}>
+                      Remove
+                    </button>
+                  </div>
+                </article>
+              ))}
+            </div>
+          )}
+        </section>
 
         {(fileActions.length > 0 || folderActions.length > 0) && (
           <div className="workspace-desk__skills">
@@ -913,7 +1126,7 @@ export function WorkspaceDesk() {
           />
         </section>
 
-        {sortedDeskNotes.length > 0 && (
+        {scopedDeskNotes.length > 0 && (
           <section className="workspace-desk__notes">
             <div className="workspace-desk__notes-head">
               <div>
@@ -921,12 +1134,12 @@ export function WorkspaceDesk() {
                 <div className="workspace-card__title">Reusable async collaboration cards</div>
               </div>
               <div className="workspace-desk__preview-badges">
-                <span>{sortedDeskNotes.length} saved</span>
-                <span>{sortedDeskNotes.filter(note => note.pinned).length} pinned</span>
+                <span>{scopedDeskNotes.length} saved</span>
+                <span>{scopedDeskNotes.filter(note => note.pinned).length} pinned</span>
               </div>
             </div>
             <div className="workspace-desk__notes-grid">
-              {sortedDeskNotes.map(note => (
+              {scopedDeskNotes.map(note => (
                 <article
                   key={note.id}
                   className={`workspace-desk__note-card workspace-desk__note-card--${note.tone} ${note.pinned ? "is-pinned" : ""}`}

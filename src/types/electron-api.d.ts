@@ -1,4 +1,5 @@
 import type { WorkspaceListResult, WorkspacePreview } from "@/types/desktop-workspace";
+import type { VerificationStepResult, VerificationStatus } from "@/store/types";
 
 declare global {
   interface Window {
@@ -10,6 +11,11 @@ declare global {
       readWorkspacePreview?: (targetPath: string) => Promise<WorkspacePreview>;
       openWorkspacePath?: (targetPath: string) => Promise<void>;
       openWorkspacePreviewWindow?: (preview: WorkspacePreview) => Promise<void>;
+      runWorkspaceVerification?: (targetPath: string) => Promise<{
+        status: VerificationStatus;
+        rootPath: string;
+        results: VerificationStepResult[];
+      }>;
     };
   }
 }

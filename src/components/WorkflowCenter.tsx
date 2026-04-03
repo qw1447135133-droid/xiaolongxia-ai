@@ -3,6 +3,7 @@
 import { useMemo, type CSSProperties } from "react";
 import { getAvailableWorkflowTemplates } from "@/lib/workflow-runtime";
 import { useStore } from "@/store";
+import { filterByProjectScope, getSessionProjectLabel } from "@/lib/project-context";
 import type { WorkflowRun } from "@/types/workflows";
 
 function formatTimestamp(timestamp: number) {
@@ -52,16 +53,33 @@ export function WorkflowCenter() {
   const workspacePinnedPreviews = useStore(s => s.workspacePinnedPreviews);
   const workspaceDeskNotes = useStore(s => s.workspaceDeskNotes);
   const workspaceSavedBundles = useStore(s => s.workspaceSavedBundles);
+  const chatSessions = useStore(s => s.chatSessions);
+  const activeSessionId = useStore(s => s.activeSessionId);
   const enabledPluginIds = useStore(s => s.enabledPluginIds);
+
+  const activeSession = useMemo(
+    () => chatSessions.find(session => session.id === activeSessionId) ?? null,
+    [activeSessionId, chatSessions],
+  );
+
+  const scopedDeskNotes = useMemo(
+    () => filterByProjectScope(workspaceDeskNotes, activeSession ?? {}),
+    [activeSession, workspaceDeskNotes],
+  );
+
+  const scopedSavedBundles = useMemo(
+    () => filterByProjectScope(workspaceSavedBundles, activeSession ?? {}),
+    [activeSession, workspaceSavedBundles],
+  );
 
   const workflowContext = useMemo(
     () => ({
       deskRefs: workspacePinnedPreviews.length,
-      deskNotes: workspaceDeskNotes.length,
-      contextPacks: workspaceSavedBundles.length,
+      deskNotes: scopedDeskNotes.length,
+      contextPacks: scopedSavedBundles.length,
       plugins: enabledPluginIds.length,
     }),
-    [enabledPluginIds.length, workspaceDeskNotes.length, workspacePinnedPreviews.length, workspaceSavedBundles.length],
+    [enabledPluginIds.length, scopedDeskNotes.length, scopedSavedBundles.length, workspacePinnedPreviews.length],
   );
 
   const workflowTemplates = useMemo(
@@ -250,7 +268,7 @@ export function WorkflowCenter() {
               </div>
             </div>
             <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
-              Desk refs {workflowContext.deskRefs} · notes {workflowContext.deskNotes} · packs {workflowContext.contextPacks} · plugins {workflowContext.plugins}
+              Project {activeSession ? getSessionProjectLabel(activeSession) : "General"} · refs {workflowContext.deskRefs} · notes {workflowContext.deskNotes} · packs {workflowContext.contextPacks} · plugins {workflowContext.plugins}
             </div>
           </div>
 

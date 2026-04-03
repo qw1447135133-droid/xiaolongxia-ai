@@ -7,7 +7,14 @@ import type {
   AgentStatus,
   Activity,
   AppTab,
+  AutomationMode,
   CostSummary,
+  ExecutionEvent,
+  ExecutionRun,
+  ExecutionRunSource,
+  ExecutionRunStatus,
+  VerificationStatus,
+  VerificationStepResult,
   ModelProvider,
   PlatformConfig,
   Task,
@@ -21,11 +28,14 @@ import {
   capSessions,
   makeEmptySession,
   newSessionId,
+  sortChatSessions,
 } from "@/lib/chat-sessions";
+import { buildProjectContext, getProjectScopeKey, matchProjectScope } from "@/lib/project-context";
 import { PLUGIN_PACKS } from "@/lib/plugin-runtime";
 import type {
   WorkspaceDeskNote,
   WorkspaceEntry,
+  WorkspaceProjectMemory,
   WorkspacePreview,
   WorkspaceReferenceBundle,
 } from "@/types/desktop-workspace";
@@ -47,9 +57,12 @@ interface TaskSlice {
 interface ChatSlice {
   chatSessions: ChatSession[];
   activeSessionId: string;
-  createChatSession: () => void;
+  createChatSession: (projectRoot?: string | null) => void;
   setActiveChatSession: (id: string) => void;
   deleteChatSession: (id: string) => void;
+  renameChatSession: (id: string, title: string) => void;
+  toggleChatSessionPin: (id: string) => void;
+  bindActiveSessionProject: (rootPath: string | null) => void;
 }
 
 interface ActivitySlice {
@@ -130,6 +143,17 @@ interface ConnectionSlice {
   setWsStatus: (s: ConnectionSlice["wsStatus"]) => void;
 }
 
+interface AutomationSlice {
+  automationMode: AutomationMode;
+  automationPaused: boolean;
+  remoteSupervisorEnabled: boolean;
+  autoDispatchScheduledTasks: boolean;
+  setAutomationMode: (mode: AutomationMode) => void;
+  setAutomationPaused: (value: boolean) => void;
+  setRemoteSupervisorEnabled: (value: boolean) => void;
+  setAutoDispatchScheduledTasks: (value: boolean) => void;
+}
+
 interface DispatchSlice {
   isDispatching: boolean;
   lastInstruction: string;
@@ -151,6 +175,36 @@ interface WorkflowSlice {
   removeWorkflowRun: (workflowRunId: string) => void;
 }
 
+interface ExecutionSlice {
+  executionRuns: ExecutionRun[];
+  activeExecutionRunId: string | null;
+  createExecutionRun: (payload: {
+    id?: string;
+    sessionId: string;
+    instruction: string;
+    source?: ExecutionRunSource;
+  }) => string;
+  updateExecutionRun: (payload: {
+    id: string;
+    sessionId?: string;
+    instruction?: string;
+    status?: ExecutionRunStatus;
+    source?: ExecutionRunSource;
+    currentAgentId?: AgentId;
+    totalTasks?: number;
+    completedTasks?: number;
+    failedTasks?: number;
+    verificationStatus?: VerificationStatus;
+    verificationResults?: VerificationStepResult[];
+    verificationUpdatedAt?: number;
+    timestamp?: number;
+    completedAt?: number;
+    event?: ExecutionEvent;
+  }) => void;
+  failExecutionRun: (runId: string, detail: string) => void;
+  setActiveExecutionRun: (runId: string | null) => void;
+}
+
 interface WorkspaceSlice {
   workspaceRoot: string | null;
   workspaceCurrentPath: string | null;
@@ -167,6 +221,9 @@ interface WorkspaceSlice {
   workspaceRecentPreviews: WorkspacePreview[];
   workspacePinnedPreviews: WorkspacePreview[];
   workspaceSavedBundles: WorkspaceReferenceBundle[];
+  workspaceProjectMemories: WorkspaceProjectMemory[];
+  workspaceProjectViews: Record<string, WorkspaceProjectViewState>;
+  activeWorkspaceProjectMemoryId: string | null;
   workspaceDeskNotes: WorkspaceDeskNote[];
   workspaceScratchpad: string;
   setWorkspaceRoot: (path: string | null) => void;
@@ -187,6 +244,10 @@ interface WorkspaceSlice {
   saveWorkspaceBundle: (name: string) => void;
   applyWorkspaceBundle: (id: string) => void;
   deleteWorkspaceBundle: (id: string) => void;
+  saveWorkspaceProjectMemory: (name?: string) => void;
+  applyWorkspaceProjectMemory: (id: string) => void;
+  deleteWorkspaceProjectMemory: (id: string) => void;
+  setActiveWorkspaceProjectMemory: (id: string | null) => void;
   createWorkspaceDeskNote: (payload: {
     title: string;
     content: string;
@@ -199,6 +260,18 @@ interface WorkspaceSlice {
   resetWorkspace: () => void;
 }
 
+interface WorkspaceProjectViewState {
+  scratchpad: string;
+  pinnedPreviews: WorkspacePreview[];
+  previewTabs: WorkspacePreview[];
+  recentPreviews: WorkspacePreview[];
+  activePreviewPath: string | null;
+  selectedPath: string | null;
+  previewOpen: boolean;
+  currentPath: string | null;
+  parentPath: string | null;
+}
+
 type Store =
   & AgentSlice
   & TaskSlice
@@ -209,8 +282,10 @@ type Store =
   & SettingsSlice
   & UISlice
   & ConnectionSlice
+  & AutomationSlice
   & DispatchSlice
   & WorkflowSlice
+  & ExecutionSlice
   & MeetingSlice
   & WorkspaceSlice
   & WorkflowSlice;
@@ -285,6 +360,156 @@ function syncAgentsWithConfigs(
 }
 
 const seedSession = makeEmptySession();
+const MAX_EXECUTION_RUNS = 24;
+const MAX_EXECUTION_EVENTS = 40;
+const MAX_WORKSPACE_PROJECT_MEMORIES = 16;
+
+function makeEmptyWorkspaceProjectView(rootPath: string | null = null): WorkspaceProjectViewState {
+  return {
+    scratchpad: "",
+    pinnedPreviews: [],
+    previewTabs: [],
+    recentPreviews: [],
+    activePreviewPath: null,
+    selectedPath: null,
+    previewOpen: false,
+    currentPath: rootPath,
+    parentPath: null,
+  };
+}
+
+function capExecutionEvents(events: ExecutionEvent[]): ExecutionEvent[] {
+  return events
+    .sort((left, right) => left.timestamp - right.timestamp)
+    .slice(-MAX_EXECUTION_EVENTS);
+}
+
+function capExecutionRuns(runs: ExecutionRun[]): ExecutionRun[] {
+  return [...runs]
+    .sort((left, right) => right.updatedAt - left.updatedAt)
+    .slice(0, MAX_EXECUTION_RUNS);
+}
+
+function capWorkspaceProjectMemories(memories: WorkspaceProjectMemory[]): WorkspaceProjectMemory[] {
+  return [...memories]
+    .sort((left, right) => right.updatedAt - left.updatedAt)
+    .slice(0, MAX_WORKSPACE_PROJECT_MEMORIES);
+}
+
+function resolveActiveProjectScope(state: Pick<Store, "chatSessions" | "activeSessionId" | "workspaceRoot">) {
+  const activeSession = state.chatSessions.find(session => session.id === state.activeSessionId) ?? null;
+  if (activeSession) {
+    return {
+      projectId: activeSession.projectId ?? null,
+      workspaceRoot: activeSession.workspaceRoot ?? null,
+    };
+  }
+  return {
+    projectId: null,
+    workspaceRoot: state.workspaceRoot,
+  };
+}
+
+function resolveProjectViewKey(state: Pick<Store, "chatSessions" | "activeSessionId" | "workspaceRoot">) {
+  return getProjectScopeKey(resolveActiveProjectScope(state));
+}
+
+function deriveWorkspacePreviewFromView(view: WorkspaceProjectViewState) {
+  return view.previewTabs.find(item => item.path === view.activePreviewPath) ?? null;
+}
+
+function applyProjectViewState(
+  state: Store,
+  key: string,
+  updater: (current: WorkspaceProjectViewState) => WorkspaceProjectViewState,
+) {
+  const current = state.workspaceProjectViews[key] ?? makeEmptyWorkspaceProjectView(state.workspaceRoot);
+  const next = updater(current);
+  return {
+    workspaceProjectViews: {
+      ...state.workspaceProjectViews,
+      [key]: next,
+    },
+    workspaceScratchpad: next.scratchpad,
+    workspacePinnedPreviews: next.pinnedPreviews,
+    workspacePreviewTabs: next.previewTabs,
+    workspaceRecentPreviews: next.recentPreviews,
+    workspaceActivePreviewPath: next.activePreviewPath,
+    workspaceSelectedPath: next.selectedPath,
+    workspacePreviewOpen: next.previewOpen,
+    workspaceCurrentPath: next.currentPath,
+    workspaceParentPath: next.parentPath,
+    workspacePreview: deriveWorkspacePreviewFromView(next),
+  };
+}
+
+function selectProjectMemoryNotes(
+  rootPath: string | null,
+  previews: WorkspacePreview[],
+  notes: WorkspaceDeskNote[],
+) {
+  const pinnedPaths = new Set(previews.map(preview => preview.path));
+
+  return notes
+    .filter(note => {
+      if (rootPath && note.rootPath === rootPath) return true;
+      if (note.linkedPath && pinnedPaths.has(note.linkedPath)) return true;
+      return !rootPath && !note.rootPath;
+    })
+    .sort((left, right) => {
+      if (left.pinned !== right.pinned) return left.pinned ? -1 : 1;
+      return right.updatedAt - left.updatedAt;
+    })
+    .slice(0, 4)
+    .map(note => ({
+      id: note.id,
+      title: note.title,
+      content: note.content,
+      tone: note.tone,
+      linkedPath: note.linkedPath,
+      linkedName: note.linkedName,
+      linkedKind: note.linkedKind,
+    }));
+}
+
+function buildSessionActivationState(
+  state: Store,
+  session: ChatSession,
+  overrides?: Partial<Pick<Store, "chatSessions" | "activeSessionId">>,
+) {
+  const scope = {
+    projectId: session.projectId,
+    workspaceRoot: session.workspaceRoot,
+  };
+  const nextKey = getProjectScopeKey(scope);
+  const nextView = state.workspaceProjectViews[nextKey] ?? makeEmptyWorkspaceProjectView(session.workspaceRoot ?? null);
+  const workspaceRoot = session.workspaceRoot ?? null;
+  const scopedActiveMemory = state.activeWorkspaceProjectMemoryId
+    ? state.workspaceProjectMemories.find(memory => memory.id === state.activeWorkspaceProjectMemoryId) ?? null
+    : null;
+
+  return {
+    ...overrides,
+    activeSessionId: session.id,
+    tasks: session.tasks,
+    workspaceRoot,
+    workspaceCurrentPath: nextView.currentPath ?? workspaceRoot,
+    workspaceParentPath: nextView.parentPath,
+    workspaceEntries: workspaceRoot !== state.workspaceRoot ? [] : state.workspaceEntries,
+    workspaceSelectedPath: nextView.selectedPath,
+    workspacePreview: deriveWorkspacePreviewFromView(nextView),
+    workspacePreviewOpen: nextView.previewOpen,
+    workspacePreviewTabs: nextView.previewTabs,
+    workspaceRecentPreviews: nextView.recentPreviews,
+    workspacePinnedPreviews: nextView.pinnedPreviews,
+    workspaceScratchpad: nextView.scratchpad,
+    workspaceActivePreviewPath: nextView.activePreviewPath,
+    activeWorkspaceProjectMemoryId:
+      scopedActiveMemory && matchProjectScope(scopedActiveMemory, session)
+        ? scopedActiveMemory.id
+        : null,
+  };
+}
 
 export const useStore = create<Store>()(
   persist(
@@ -320,17 +545,16 @@ export const useStore = create<Store>()(
               }
               return { ...sess, tasks: nextTasks, updatedAt: Date.now(), title };
             })
-            .sort((a, b) => b.updatedAt - a.updatedAt);
-          return { tasks: nextTasks, chatSessions: sessions };
+          ;
+          return { tasks: nextTasks, chatSessions: sortChatSessions(sessions) };
         }),
       updateTask: (id, updates) =>
         set(s => {
           const nextTasks = s.tasks.map(t => (t.id === id ? { ...t, ...updates } : t));
           const sid = s.activeSessionId;
           const sessions = s.chatSessions
-            .map(sess => (sess.id === sid ? { ...sess, tasks: nextTasks, updatedAt: Date.now() } : sess))
-            .sort((a, b) => b.updatedAt - a.updatedAt);
-          return { tasks: nextTasks, chatSessions: sessions };
+            .map(sess => (sess.id === sid ? { ...sess, tasks: nextTasks, updatedAt: Date.now() } : sess));
+          return { tasks: nextTasks, chatSessions: sortChatSessions(sessions) };
         }),
       clearTasks: () =>
         set(s => ({
@@ -344,37 +568,91 @@ export const useStore = create<Store>()(
 
       chatSessions: [seedSession],
       activeSessionId: seedSession.id,
-      createChatSession: () =>
+      createChatSession: (projectRoot) =>
         set(s => {
+          const fallbackRoot = projectRoot ?? s.workspaceRoot;
+          const project = buildProjectContext(fallbackRoot);
           const newSess: ChatSession = {
+            ...makeEmptySession(project),
             id: newSessionId(),
-            title: DEFAULT_CHAT_TITLE,
-            updatedAt: Date.now(),
-            tasks: [],
           };
           const sessions = capSessions([newSess, ...s.chatSessions]);
-          return { chatSessions: sessions, activeSessionId: newSess.id, tasks: [] };
+          return buildSessionActivationState(s, newSess, {
+            chatSessions: sessions,
+            activeSessionId: newSess.id,
+          });
         }),
       setActiveChatSession: (id) =>
         set(s => {
           const session = s.chatSessions.find(x => x.id === id);
           if (!session) return {};
-          return { activeSessionId: id, tasks: session.tasks };
+          return buildSessionActivationState(s, session, {
+            activeSessionId: id,
+          });
         }),
       deleteChatSession: (id) =>
         set(s => {
           const sessions = s.chatSessions.filter(sess => sess.id !== id);
           if (sessions.length === 0) {
             const empty = makeEmptySession();
-            return { chatSessions: [empty], activeSessionId: empty.id, tasks: [] };
+            return buildSessionActivationState(s, empty, {
+              chatSessions: [empty],
+              activeSessionId: empty.id,
+            });
           }
 
           const nextActive =
             id === s.activeSessionId
-              ? [...sessions].sort((a, b) => b.updatedAt - a.updatedAt)[0]!.id
+              ? sortChatSessions(sessions)[0]!.id
               : s.activeSessionId;
           const active = sessions.find(x => x.id === nextActive)!;
-          return { chatSessions: sessions, activeSessionId: nextActive, tasks: active.tasks };
+          return buildSessionActivationState(s, active, {
+            chatSessions: sessions,
+            activeSessionId: nextActive,
+          });
+        }),
+      renameChatSession: (id, title) =>
+        set(s => ({
+          chatSessions: sortChatSessions(
+            s.chatSessions.map(session =>
+              session.id === id
+                ? {
+                    ...session,
+                    title: title.trim() || DEFAULT_CHAT_TITLE,
+                    updatedAt: Date.now(),
+                  }
+                : session,
+            ),
+          ),
+        })),
+      toggleChatSessionPin: (id) =>
+        set(s => ({
+          chatSessions: sortChatSessions(
+            s.chatSessions.map(session =>
+              session.id === id
+                ? { ...session, pinned: !session.pinned }
+                : session,
+            ),
+          ),
+        })),
+      bindActiveSessionProject: (rootPath) =>
+        set(s => {
+          const activeSession = s.chatSessions.find(session => session.id === s.activeSessionId);
+          if (!activeSession) return {};
+          const project = buildProjectContext(rootPath);
+          return {
+            chatSessions: s.chatSessions.map(session =>
+              session.id === s.activeSessionId
+                ? {
+                    ...session,
+                    projectId: project.projectId,
+                    projectName: project.projectName,
+                    workspaceRoot: project.workspaceRoot,
+                    updatedAt: Date.now(),
+                  }
+                : session,
+            ),
+          };
         }),
 
       activities: [],
@@ -397,7 +675,7 @@ export const useStore = create<Store>()(
           if (!session) return {};
           const needSwitch = session.id !== s.activeSessionId;
           return {
-            ...(needSwitch ? { activeSessionId: session.id, tasks: session.tasks } : {}),
+            ...(needSwitch ? buildSessionActivationState(s, session, { activeSessionId: session.id }) : {}),
             pendingScrollTaskId: taskId,
             highlightTaskId: taskId,
             activeTab: "tasks",
@@ -502,6 +780,19 @@ export const useStore = create<Store>()(
       wsStatus: "disconnected",
       setWsStatus: (wsStatus) => set({ wsStatus }),
 
+      automationMode: "supervised",
+      automationPaused: false,
+      remoteSupervisorEnabled: true,
+      autoDispatchScheduledTasks: true,
+      setAutomationMode: (automationMode) =>
+        set(s => ({
+          automationMode,
+          autoDispatchScheduledTasks: automationMode === "manual" ? false : s.autoDispatchScheduledTasks,
+        })),
+      setAutomationPaused: (automationPaused) => set({ automationPaused }),
+      setRemoteSupervisorEnabled: (remoteSupervisorEnabled) => set({ remoteSupervisorEnabled }),
+      setAutoDispatchScheduledTasks: (autoDispatchScheduledTasks) => set({ autoDispatchScheduledTasks }),
+
       isDispatching: false,
       lastInstruction: "",
       commandDraft: "",
@@ -592,6 +883,151 @@ export const useStore = create<Store>()(
           workflowRuns: s.workflowRuns.filter(run => run.id !== workflowRunId),
         })),
 
+      executionRuns: [],
+      activeExecutionRunId: null,
+      createExecutionRun: ({ id, sessionId, instruction, source = "chat" }) => {
+        const timestamp = Date.now();
+        const runId = id ?? `run-${timestamp}-${Math.random().toString(36).slice(2, 8)}`;
+        const activeSession = useStore.getState().chatSessions.find(session => session.id === sessionId) ?? null;
+        const nextRun: ExecutionRun = {
+          id: runId,
+          sessionId,
+          projectId: activeSession?.projectId ?? null,
+          instruction,
+          source,
+          status: "queued",
+          createdAt: timestamp,
+          updatedAt: timestamp,
+          totalTasks: 0,
+          completedTasks: 0,
+          failedTasks: 0,
+          events: capExecutionEvents([
+            {
+              id: `evt-${timestamp}`,
+              type: "user",
+              title: "任务已创建",
+              detail: instruction,
+              timestamp,
+            },
+          ]),
+        };
+
+        set(s => ({
+          executionRuns: capExecutionRuns([
+            nextRun,
+            ...s.executionRuns.filter(run => run.id !== runId),
+          ]),
+          activeExecutionRunId: runId,
+        }));
+
+        return runId;
+      },
+      updateExecutionRun: ({
+        id,
+        sessionId,
+        instruction,
+        status,
+        source,
+        currentAgentId,
+        totalTasks,
+        completedTasks,
+        failedTasks,
+        verificationStatus,
+        verificationResults,
+        verificationUpdatedAt,
+        timestamp,
+        completedAt,
+        event,
+      }) =>
+        set(s => {
+          const updateTime = timestamp ?? completedAt ?? Date.now();
+          const existing = s.executionRuns.find(run => run.id === id);
+          const baseRun: ExecutionRun =
+            existing ??
+            {
+              id,
+              sessionId: sessionId ?? s.activeSessionId,
+              projectId: s.chatSessions.find(session => session.id === (sessionId ?? s.activeSessionId))?.projectId ?? null,
+              instruction: instruction ?? "待补充指令",
+              source: source ?? "chat",
+              status: "queued",
+              createdAt: updateTime,
+              updatedAt: updateTime,
+              totalTasks: 0,
+              completedTasks: 0,
+              failedTasks: 0,
+              events: [],
+            };
+
+          const nextEvents = event
+            ? capExecutionEvents([
+                ...baseRun.events.filter(item => item.id !== event.id),
+                event,
+              ])
+            : baseRun.events;
+
+          const resolvedStatus = status ?? baseRun.status;
+          const nextRun: ExecutionRun = {
+            ...baseRun,
+            ...(sessionId ? { sessionId } : {}),
+            ...(instruction ? { instruction } : {}),
+            ...(source ? { source } : {}),
+            ...(status ? { status } : {}),
+            ...(currentAgentId === undefined ? {} : { currentAgentId }),
+            ...(typeof totalTasks === "number" ? { totalTasks } : {}),
+            ...(typeof completedTasks === "number" ? { completedTasks } : {}),
+            ...(typeof failedTasks === "number" ? { failedTasks } : {}),
+            ...(verificationStatus !== undefined ? { verificationStatus } : {}),
+            ...(verificationResults !== undefined ? { verificationResults } : {}),
+            ...(typeof verificationUpdatedAt === "number" ? { verificationUpdatedAt } : {}),
+            ...(completedAt
+              ? { completedAt }
+              : resolvedStatus === "completed" || resolvedStatus === "failed"
+                ? { completedAt: baseRun.completedAt ?? updateTime }
+                : {}),
+            updatedAt: updateTime,
+            events: nextEvents,
+          };
+
+          return {
+            executionRuns: capExecutionRuns([
+              nextRun,
+              ...s.executionRuns.filter(run => run.id !== id),
+            ]),
+            activeExecutionRunId: id,
+          };
+        }),
+      failExecutionRun: (runId, detail) =>
+        set(s => {
+          const now = Date.now();
+          return {
+            executionRuns: capExecutionRuns(
+              s.executionRuns.map(run =>
+                run.id === runId
+                  ? {
+                      ...run,
+                      status: "failed",
+                      updatedAt: now,
+                      completedAt: now,
+                      events: capExecutionEvents([
+                        ...run.events,
+                        {
+                          id: `evt-fail-${now}`,
+                          type: "error",
+                          title: "发送失败",
+                          detail,
+                          timestamp: now,
+                        },
+                      ]),
+                    }
+                  : run,
+              ),
+            ),
+            activeExecutionRunId: runId,
+          };
+        }),
+      setActiveExecutionRun: (activeExecutionRunId) => set({ activeExecutionRunId }),
+
       workspaceRoot: null,
       workspaceCurrentPath: null,
       workspaceParentPath: null,
@@ -607,29 +1043,109 @@ export const useStore = create<Store>()(
       workspaceRecentPreviews: [],
       workspacePinnedPreviews: [],
       workspaceSavedBundles: [],
+      workspaceProjectMemories: [],
+      workspaceProjectViews: {},
+      activeWorkspaceProjectMemoryId: null,
       workspaceDeskNotes: [],
       workspaceScratchpad: "",
-      setWorkspaceRoot: (workspaceRoot) => set({ workspaceRoot }),
-      setWorkspaceCurrentPath: (workspaceCurrentPath) => set({ workspaceCurrentPath }),
-      setWorkspaceParentPath: (workspaceParentPath) => set({ workspaceParentPath }),
+      setWorkspaceRoot: (workspaceRoot) =>
+        set(s => {
+          const project = buildProjectContext(workspaceRoot);
+          const nextChatSessions = s.chatSessions.map(session =>
+            session.id === s.activeSessionId
+              ? {
+                  ...session,
+                  ...project,
+                  updatedAt: Date.now(),
+                }
+              : session,
+          );
+          const nextKey = getProjectScopeKey(project);
+          const nextView = s.workspaceProjectViews[nextKey] ?? makeEmptyWorkspaceProjectView(workspaceRoot);
+          return {
+            workspaceRoot,
+            chatSessions: nextChatSessions,
+            workspaceProjectViews: {
+              ...s.workspaceProjectViews,
+              [nextKey]: {
+                ...nextView,
+                currentPath: nextView.currentPath ?? workspaceRoot,
+                parentPath: nextView.currentPath ? nextView.parentPath : null,
+              },
+            },
+            workspaceCurrentPath: nextView.currentPath ?? workspaceRoot,
+            workspaceParentPath: nextView.currentPath ? nextView.parentPath : null,
+            workspaceSelectedPath: nextView.selectedPath,
+            workspacePreview: deriveWorkspacePreviewFromView(nextView),
+            workspacePreviewOpen: nextView.previewOpen,
+            workspacePreviewTabs: nextView.previewTabs,
+            workspaceActivePreviewPath: nextView.activePreviewPath,
+            workspaceRecentPreviews: nextView.recentPreviews,
+            workspacePinnedPreviews: nextView.pinnedPreviews,
+            workspaceScratchpad: nextView.scratchpad,
+            workspaceEntries: workspaceRoot !== s.workspaceRoot ? [] : s.workspaceEntries,
+          };
+        }),
+      setWorkspaceCurrentPath: (workspaceCurrentPath) =>
+        set(s => ({
+          ...applyProjectViewState(s, resolveProjectViewKey(s), current => ({
+            ...current,
+            currentPath: workspaceCurrentPath,
+          })),
+        })),
+      setWorkspaceParentPath: (workspaceParentPath) =>
+        set(s => ({
+          ...applyProjectViewState(s, resolveProjectViewKey(s), current => ({
+            ...current,
+            parentPath: workspaceParentPath,
+          })),
+        })),
       setWorkspaceEntries: (workspaceEntries) => set({ workspaceEntries }),
-      setWorkspaceSelectedPath: (workspaceSelectedPath) => set({ workspaceSelectedPath }),
+      setWorkspaceSelectedPath: (workspaceSelectedPath) =>
+        set(s => ({
+          workspaceSelectedPath,
+          workspaceProjectViews: {
+            ...s.workspaceProjectViews,
+            [resolveProjectViewKey(s)]: {
+              ...(s.workspaceProjectViews[resolveProjectViewKey(s)] ?? makeEmptyWorkspaceProjectView(s.workspaceRoot)),
+              selectedPath: workspaceSelectedPath,
+            },
+          },
+        })),
       setWorkspacePreview: (workspacePreview) => set({ workspacePreview }),
       setWorkspaceLoading: (workspaceLoading) => set({ workspaceLoading }),
       setWorkspacePreviewLoading: (workspacePreviewLoading) => set({ workspacePreviewLoading }),
-      setWorkspacePreviewOpen: (workspacePreviewOpen) => set({ workspacePreviewOpen }),
+      setWorkspacePreviewOpen: (workspacePreviewOpen) =>
+        set(s => ({
+          ...applyProjectViewState(s, resolveProjectViewKey(s), current => ({
+            ...current,
+            previewOpen: workspacePreviewOpen,
+          })),
+        })),
       setWorkspaceError: (workspaceError) => set({ workspaceError }),
-      setWorkspaceScratchpad: (workspaceScratchpad) => set({ workspaceScratchpad }),
+      setWorkspaceScratchpad: (workspaceScratchpad) =>
+        set(s => ({
+          ...applyProjectViewState(s, resolveProjectViewKey(s), current => ({
+            ...current,
+            scratchpad: workspaceScratchpad,
+          })),
+        })),
       pinWorkspacePreview: (preview) =>
         set(s => ({
-          workspacePinnedPreviews: [
-            preview,
-            ...s.workspacePinnedPreviews.filter(item => item.path !== preview.path),
-          ].slice(0, 6),
+          ...applyProjectViewState(s, resolveProjectViewKey(s), current => ({
+            ...current,
+            pinnedPreviews: [
+              preview,
+              ...current.pinnedPreviews.filter(item => item.path !== preview.path),
+            ].slice(0, 6),
+          })),
         })),
       unpinWorkspacePreview: (targetPath) =>
         set(s => ({
-          workspacePinnedPreviews: s.workspacePinnedPreviews.filter(item => item.path !== targetPath),
+          ...applyProjectViewState(s, resolveProjectViewKey(s), current => ({
+            ...current,
+            pinnedPreviews: current.pinnedPreviews.filter(item => item.path !== targetPath),
+          })),
         })),
       saveWorkspaceBundle: (name) =>
         set(s => {
@@ -638,6 +1154,7 @@ export const useStore = create<Store>()(
             id: `bundle-${Date.now()}`,
             name: trimmedName,
             createdAt: Date.now(),
+            projectId: s.chatSessions.find(session => session.id === s.activeSessionId)?.projectId ?? null,
             rootPath: s.workspaceRoot,
             previews: s.workspacePinnedPreviews.slice(0, 6),
             notes: s.workspaceScratchpad,
@@ -670,12 +1187,127 @@ export const useStore = create<Store>()(
             workspacePreviewOpen: Boolean(firstPreview),
             workspaceActivePreviewPath: firstPreview?.path ?? null,
             workspaceSelectedPath: firstPreview?.path ?? null,
+            workspaceProjectViews: {
+              ...s.workspaceProjectViews,
+              [resolveProjectViewKey(s)]: {
+                ...(s.workspaceProjectViews[resolveProjectViewKey(s)] ?? makeEmptyWorkspaceProjectView(s.workspaceRoot)),
+                pinnedPreviews: bundle.previews,
+                scratchpad: bundle.notes,
+                previewTabs: bundle.previews,
+                recentPreviews: [
+                  ...bundle.previews,
+                  ...s.workspaceRecentPreviews.filter(
+                    preview => !bundle.previews.some(saved => saved.path === preview.path),
+                  ),
+                ].slice(0, 8),
+                activePreviewPath: firstPreview?.path ?? null,
+                selectedPath: firstPreview?.path ?? null,
+                previewOpen: Boolean(firstPreview),
+              },
+            },
           };
         }),
       deleteWorkspaceBundle: (id) =>
         set(s => ({
           workspaceSavedBundles: s.workspaceSavedBundles.filter(bundle => bundle.id !== id),
         })),
+      saveWorkspaceProjectMemory: (name) =>
+        set(s => {
+          const now = Date.now();
+          const trimmedName = name?.trim() || `Project Memory ${s.workspaceProjectMemories.length + 1}`;
+          const notesSnapshot = selectProjectMemoryNotes(
+            s.workspaceRoot,
+            s.workspacePinnedPreviews,
+            s.workspaceDeskNotes,
+          );
+          const nextMemory: WorkspaceProjectMemory = {
+            id: `memory-${now}`,
+            name: trimmedName,
+            createdAt: now,
+            updatedAt: now,
+            projectId: s.chatSessions.find(session => session.id === s.activeSessionId)?.projectId ?? null,
+            rootPath: s.workspaceRoot,
+            focusPath: s.workspaceActivePreviewPath ?? s.workspaceSelectedPath,
+            previews: s.workspacePinnedPreviews.slice(0, 6),
+            scratchpad: s.workspaceScratchpad,
+            deskNotes: notesSnapshot,
+          };
+
+          return {
+            workspaceProjectMemories: capWorkspaceProjectMemories([
+              nextMemory,
+              ...s.workspaceProjectMemories.filter(memory => memory.name !== trimmedName),
+            ]),
+            activeWorkspaceProjectMemoryId: nextMemory.id,
+          };
+        }),
+      applyWorkspaceProjectMemory: (id) =>
+        set(s => {
+          const memory = s.workspaceProjectMemories.find(item => item.id === id);
+          if (!memory) return {};
+
+          const focusPreview =
+            memory.previews.find(preview => preview.path === memory.focusPath) ??
+            memory.previews[0] ??
+            null;
+          const rootChanged = memory.rootPath && memory.rootPath !== s.workspaceRoot;
+
+          return {
+            workspaceRoot: memory.rootPath ?? s.workspaceRoot,
+            workspaceCurrentPath: memory.rootPath ?? s.workspaceCurrentPath,
+            workspaceParentPath: memory.rootPath ? null : s.workspaceParentPath,
+            workspaceEntries: rootChanged ? [] : s.workspaceEntries,
+            workspacePinnedPreviews: memory.previews,
+            workspaceScratchpad: memory.scratchpad,
+            workspacePreviewTabs: memory.previews,
+            workspaceRecentPreviews: [
+              ...memory.previews,
+              ...s.workspaceRecentPreviews.filter(
+                preview => !memory.previews.some(saved => saved.path === preview.path),
+              ),
+            ].slice(0, 8),
+            workspacePreview: focusPreview,
+            workspacePreviewOpen: Boolean(focusPreview),
+            workspaceActivePreviewPath: focusPreview?.path ?? null,
+            workspaceSelectedPath: focusPreview?.path ?? null,
+            workspaceProjectViews: {
+              ...s.workspaceProjectViews,
+              [getProjectScopeKey({
+                projectId: memory.projectId,
+                workspaceRoot: memory.rootPath ?? s.workspaceRoot,
+              })]: {
+                ...(s.workspaceProjectViews[
+                  getProjectScopeKey({
+                    projectId: memory.projectId,
+                    workspaceRoot: memory.rootPath ?? s.workspaceRoot,
+                  })
+                ] ?? makeEmptyWorkspaceProjectView(memory.rootPath ?? s.workspaceRoot)),
+                currentPath: memory.rootPath ?? s.workspaceCurrentPath,
+                parentPath: memory.rootPath ? null : s.workspaceParentPath,
+                pinnedPreviews: memory.previews,
+                scratchpad: memory.scratchpad,
+                previewTabs: memory.previews,
+                recentPreviews: [
+                  ...memory.previews,
+                  ...s.workspaceRecentPreviews.filter(
+                    preview => !memory.previews.some(saved => saved.path === preview.path),
+                  ),
+                ].slice(0, 8),
+                activePreviewPath: focusPreview?.path ?? null,
+                selectedPath: focusPreview?.path ?? null,
+                previewOpen: Boolean(focusPreview),
+              },
+            },
+            activeWorkspaceProjectMemoryId: id,
+          };
+        }),
+      deleteWorkspaceProjectMemory: (id) =>
+        set(s => ({
+          workspaceProjectMemories: s.workspaceProjectMemories.filter(memory => memory.id !== id),
+          activeWorkspaceProjectMemoryId:
+            s.activeWorkspaceProjectMemoryId === id ? null : s.activeWorkspaceProjectMemoryId,
+        })),
+      setActiveWorkspaceProjectMemory: (activeWorkspaceProjectMemoryId) => set({ activeWorkspaceProjectMemoryId }),
       createWorkspaceDeskNote: ({ title, content, tone, linkedPreview }) =>
         set(s => {
           const now = Date.now();
@@ -687,6 +1319,7 @@ export const useStore = create<Store>()(
             updatedAt: now,
             pinned: false,
             tone,
+            projectId: s.chatSessions.find(session => session.id === s.activeSessionId)?.projectId ?? null,
             rootPath: s.workspaceRoot,
             linkedPath: linkedPreview?.path ?? null,
             linkedName: linkedPreview?.name ?? null,
@@ -726,15 +1359,27 @@ export const useStore = create<Store>()(
             workspaceActivePreviewPath: preview.path,
             workspacePreviewTabs,
             workspaceRecentPreviews,
+            workspaceProjectViews: {
+              ...s.workspaceProjectViews,
+              [resolveProjectViewKey(s)]: {
+                ...(s.workspaceProjectViews[resolveProjectViewKey(s)] ?? makeEmptyWorkspaceProjectView(s.workspaceRoot)),
+                previewTabs: workspacePreviewTabs,
+                recentPreviews: workspaceRecentPreviews,
+                activePreviewPath: preview.path,
+                selectedPath: preview.path,
+                previewOpen: true,
+              },
+            },
           };
         }),
       setWorkspaceActivePreviewPath: (workspaceActivePreviewPath) =>
         set(s => ({
-          workspaceActivePreviewPath,
-          workspacePreview:
-            s.workspacePreviewTabs.find(item => item.path === workspaceActivePreviewPath) ?? null,
-          workspacePreviewOpen: Boolean(workspaceActivePreviewPath),
-          workspaceSelectedPath: workspaceActivePreviewPath,
+          ...applyProjectViewState(s, resolveProjectViewKey(s), current => ({
+            ...current,
+            activePreviewPath: workspaceActivePreviewPath,
+            selectedPath: workspaceActivePreviewPath,
+            previewOpen: Boolean(workspaceActivePreviewPath),
+          })),
         })),
       closeWorkspacePreviewTab: (targetPath) =>
         set(s => {
@@ -757,10 +1402,20 @@ export const useStore = create<Store>()(
             workspacePreview: fallbackPreview,
             workspacePreviewOpen: Boolean(fallbackPreview),
             workspaceSelectedPath: fallbackPreview?.path ?? null,
+            workspaceProjectViews: {
+              ...s.workspaceProjectViews,
+              [resolveProjectViewKey(s)]: {
+                ...(s.workspaceProjectViews[resolveProjectViewKey(s)] ?? makeEmptyWorkspaceProjectView(s.workspaceRoot)),
+                previewTabs: workspacePreviewTabs,
+                activePreviewPath: fallbackPreview?.path ?? null,
+                selectedPath: fallbackPreview?.path ?? null,
+                previewOpen: Boolean(fallbackPreview),
+              },
+            },
           };
         }),
       resetWorkspace: () =>
-        set({
+        set(s => ({
           workspaceRoot: null,
           workspaceCurrentPath: null,
           workspaceParentPath: null,
@@ -776,7 +1431,11 @@ export const useStore = create<Store>()(
           workspaceRecentPreviews: [],
           workspacePinnedPreviews: [],
           workspaceScratchpad: "",
-        }),
+          workspaceProjectViews: {
+            ...s.workspaceProjectViews,
+            [resolveProjectViewKey(s)]: makeEmptyWorkspaceProjectView(),
+          },
+        })),
 
       meetingSpeeches: [],
       meetingActive: false,
@@ -809,12 +1468,21 @@ export const useStore = create<Store>()(
         leftOpen: s.leftOpen,
         rightOpen: s.rightOpen,
         activeTab: s.activeTab,
+        automationMode: s.automationMode,
+        automationPaused: s.automationPaused,
+        remoteSupervisorEnabled: s.remoteSupervisorEnabled,
+        autoDispatchScheduledTasks: s.autoDispatchScheduledTasks,
         chatSessions: s.chatSessions,
         activeSessionId: s.activeSessionId,
+        executionRuns: s.executionRuns,
+        activeExecutionRunId: s.activeExecutionRunId,
         workflowRuns: s.workflowRuns,
         latestMeetingRecord: s.latestMeetingRecord,
         workspacePinnedPreviews: s.workspacePinnedPreviews,
         workspaceSavedBundles: s.workspaceSavedBundles,
+        workspaceProjectMemories: s.workspaceProjectMemories,
+        workspaceProjectViews: s.workspaceProjectViews,
+        activeWorkspaceProjectMemoryId: s.activeWorkspaceProjectMemoryId,
         workspaceDeskNotes: s.workspaceDeskNotes,
         workspaceScratchpad: s.workspaceScratchpad,
       }),

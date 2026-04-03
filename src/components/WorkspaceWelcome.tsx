@@ -2,8 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { useStore } from "@/store";
-import { sendWs } from "@/hooks/useWebSocket";
-import { randomId } from "@/lib/utils";
+import { sendExecutionDispatch } from "@/lib/execution-dispatch";
 
 const QUICK_PROMPTS = [
   "分析今天最值得推进的一项电商任务，并拆成团队分工。",
@@ -26,21 +25,15 @@ export function WorkspaceWelcome() {
     if (wsStatus !== "connected") return;
     setBusyPrompt(prompt);
 
-    const { providers, agentConfigs, addTask, setLastInstruction, setDispatching } = useStore.getState();
+    const { setLastInstruction, setDispatching } = useStore.getState();
     setDispatching(true);
     setLastInstruction(prompt);
-    addTask({
-      id: randomId(),
-      description: prompt,
-      assignedTo: "orchestrator",
-      complexity: "low",
-      status: "done",
-      createdAt: Date.now(),
-      completedAt: Date.now(),
-      isUserMessage: true,
+    sendExecutionDispatch({
+      instruction: prompt,
+      source: "quick-start",
+      includeUserMessage: true,
+      includeActiveProjectMemory: true,
     });
-    sendWs({ type: "settings_sync", providers, agentConfigs });
-    sendWs({ type: "dispatch", instruction: prompt });
     setDispatching(false);
     setBusyPrompt(null);
     setTab("tasks");

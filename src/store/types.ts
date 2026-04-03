@@ -3,6 +3,7 @@ export type AgentStatus = "idle" | "running" | "error";
 export type TaskComplexity = "high" | "medium" | "low";
 export type TaskStatus = "pending" | "running" | "done" | "failed";
 export type AppTab = "dashboard" | "tasks" | "workspace" | "meeting" | "settings";
+export type AutomationMode = "manual" | "supervised" | "autonomous";
 
 export interface AgentState {
   id: AgentId;
@@ -37,6 +38,52 @@ export interface Activity {
   durationMs?: number;
   taskId?: string;
   sessionId?: string;
+}
+
+export type ExecutionRunStatus = "queued" | "analyzing" | "running" | "completed" | "failed";
+export type ExecutionRunSource = "chat" | "workspace" | "workflow" | "quick-start";
+export type ExecutionEventType = "user" | "dispatch" | "agent" | "result" | "error" | "system";
+export type VerificationStatus = "idle" | "running" | "passed" | "failed" | "skipped";
+
+export interface VerificationStepResult {
+  id: "build" | "typecheck" | "lint";
+  label: string;
+  status: "passed" | "failed" | "skipped";
+  command: string;
+  output: string;
+  startedAt: number;
+  completedAt: number;
+  durationMs: number;
+}
+
+export interface ExecutionEvent {
+  id: string;
+  type: ExecutionEventType;
+  title: string;
+  timestamp: number;
+  detail?: string;
+  agentId?: AgentId;
+  taskId?: string;
+}
+
+export interface ExecutionRun {
+  id: string;
+  sessionId: string;
+  projectId?: string | null;
+  instruction: string;
+  source: ExecutionRunSource;
+  status: ExecutionRunStatus;
+  createdAt: number;
+  updatedAt: number;
+  completedAt?: number;
+  currentAgentId?: AgentId;
+  totalTasks: number;
+  completedTasks: number;
+  failedTasks: number;
+  events: ExecutionEvent[];
+  verificationStatus?: VerificationStatus;
+  verificationResults?: VerificationStepResult[];
+  verificationUpdatedAt?: number;
 }
 
 export interface CostSummary {

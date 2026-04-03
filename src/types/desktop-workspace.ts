@@ -37,9 +37,33 @@ export interface WorkspaceReferenceBundle {
   id: string;
   name: string;
   createdAt: number;
+  projectId: string | null;
   rootPath: string | null;
   previews: WorkspacePreview[];
   notes: string;
+}
+
+export interface WorkspaceProjectMemoryNote {
+  id: string;
+  title: string;
+  content: string;
+  tone: WorkspaceDeskNoteTone;
+  linkedPath: string | null;
+  linkedName: string | null;
+  linkedKind: WorkspacePreviewKind | null;
+}
+
+export interface WorkspaceProjectMemory {
+  id: string;
+  name: string;
+  createdAt: number;
+  updatedAt: number;
+  projectId: string | null;
+  rootPath: string | null;
+  focusPath: string | null;
+  previews: WorkspacePreview[];
+  scratchpad: string;
+  deskNotes: WorkspaceProjectMemoryNote[];
 }
 
 export type WorkspaceDeskNoteTone = "amber" | "mint" | "sky" | "rose";
@@ -52,6 +76,7 @@ export interface WorkspaceDeskNote {
   updatedAt: number;
   pinned: boolean;
   tone: WorkspaceDeskNoteTone;
+  projectId: string | null;
   rootPath: string | null;
   linkedPath: string | null;
   linkedName: string | null;

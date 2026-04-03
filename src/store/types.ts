@@ -2,6 +2,7 @@ export type AgentId = "orchestrator" | "explorer" | "writer" | "designer" | "per
 export type AgentStatus = "idle" | "running" | "error";
 export type TaskComplexity = "high" | "medium" | "low";
 export type TaskStatus = "pending" | "running" | "done" | "failed";
+export type AppTab = "dashboard" | "tasks" | "workspace" | "meeting" | "settings";
 
 export interface AgentState {
   id: AgentId;

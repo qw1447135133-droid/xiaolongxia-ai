@@ -7,7 +7,7 @@ const path = require("path");
 const electronBinary = require("electron");
 
 const projectRoot = path.resolve(__dirname, "..");
-const nextPort = 3000;
+const preferredNextPort = Number(process.env.XLX_NEXT_PORT || 3000);
 const wsPort = 3001;
 const children = [];
 let shuttingDown = false;
@@ -113,6 +113,11 @@ function spawnManaged(name, command, args, envOverrides = {}) {
   return child;
 }
 
+function isRepoOwnedCommandLine(commandLine) {
+  if (!commandLine) return false;
+  return String(commandLine).toLowerCase().includes(projectRoot.toLowerCase());
+}
+
 function execForText(command, args) {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
@@ -144,6 +149,37 @@ function execForText(command, args) {
   });
 }
 
+async function getPortOwnerCommandLine(port) {
+  if (process.platform !== "win32") return null;
+
+  const command = [
+    `$connection = Get-NetTCPConnection -LocalPort ${port} -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1`,
+    `if (-not $connection) { return }`,
+    `$process = Get-CimInstance Win32_Process -Filter ("ProcessId = " + $connection.OwningProcess)`,
+    `if ($process -and $process.CommandLine) { Write-Output $process.CommandLine }`,
+  ].join("\n");
+
+  try {
+    const output = await execForText("powershell", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command]);
+    const trimmed = output.trim();
+    return trimmed || null;
+  } catch {
+    return null;
+  }
+}
+
+async function findAvailablePort(startPort, maxAttempts = 12) {
+  for (let offset = 0; offset < maxAttempts; offset += 1) {
+    const candidate = startPort + offset;
+    // If TCP connect fails, we can safely try this port.
+    if (!(await isTcpPortOpen(candidate))) {
+      return candidate;
+    }
+  }
+
+  throw new Error(`No available port found starting from ${startPort}.`);
+}
+
 async function cleanRepoProcesses() {
   if (process.platform !== "win32") {
     log("clean", "clean mode is currently implemented for Windows only; skipping process cleanup");
@@ -151,13 +187,18 @@ async function cleanRepoProcesses() {
   }
 
   const escapedRoot = projectRoot.replace(/'/g, "''");
+  const escapedElectronBinary = path.join(projectRoot, "node_modules", "electron", "dist", "electron.exe").replace(/'/g, "''");
   const command = [
     `$repoRoot = '${escapedRoot}'`,
+    `$electronBinary = '${escapedElectronBinary}'`,
     `$currentPid = ${process.pid}`,
     `$portPids = @(Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Where-Object { $_.LocalPort -in 3000,3001 } | Select-Object -ExpandProperty OwningProcess -Unique)`,
     `$targets = Get-CimInstance Win32_Process | Where-Object {`,
     `  $_.ProcessId -ne $currentPid -and (`,
-    `    ($_.Name -eq 'electron.exe' -and $_.CommandLine -like "*$repoRoot*") -or`,
+    `    ($_.Name -eq 'electron.exe' -and (`,
+    `      $_.CommandLine -like "*$repoRoot*" -or`,
+    `      $_.ExecutablePath -eq $electronBinary`,
+    `    )) -or`,
     `    ($_.Name -eq 'node.exe' -and (`,
     `      $_.CommandLine -like "*$repoRoot*" -or`,
     `      $_.CommandLine -like "*server\\ws-server.js*" -or`,
@@ -190,16 +231,41 @@ async function cleanRepoProcesses() {
   await new Promise(resolve => setTimeout(resolve, 1200));
 }
 
+function cleanNextArtifacts() {
+  const nextDir = path.join(projectRoot, ".next");
+
+  try {
+    if (require("fs").existsSync(nextDir)) {
+      require("fs").rmSync(nextDir, { recursive: true, force: true });
+      log("clean", "removed stale .next artifacts");
+    }
+  } catch (error) {
+    logError("clean", `failed to remove .next artifacts: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
 async function ensureNextDev() {
-  if (await isHttpReady(nextPort)) {
-    log("Next", `reusing existing dev server on http://localhost:${nextPort}`);
-    return { reused: true };
+  let nextPort = preferredNextPort;
+  const portOpen = await isTcpPortOpen(nextPort);
+
+  if (portOpen) {
+    const ownerCommandLine = await getPortOwnerCommandLine(nextPort);
+    const ownedByRepo = isRepoOwnedCommandLine(ownerCommandLine);
+
+    if (ownedByRepo) {
+      await waitFor(() => isHttpReady(nextPort), "Next dev server");
+      log("Next", `reusing existing repo dev server on http://localhost:${nextPort}`);
+      return { reused: true, port: nextPort };
+    }
+
+    nextPort = await findAvailablePort(Math.max(preferredNextPort + 2, wsPort + 1));
+    log("Next", `port ${preferredNextPort} is occupied by another project, switching to http://localhost:${nextPort}`);
   }
 
   const child = spawnManaged("Next", getNextBin(), ["dev", "-p", String(nextPort)]);
   await waitFor(() => isHttpReady(nextPort), "Next dev server");
   log("Next", `ready on http://localhost:${nextPort}`);
-  return { reused: false, child };
+  return { reused: false, child, port: nextPort };
 }
 
 async function ensureWsServer() {
@@ -229,14 +295,16 @@ function killStartedChildren() {
 async function main() {
   if (cleanMode) {
     await cleanRepoProcesses();
+    cleanNextArtifacts();
   }
 
   await ensureWsServer();
-  await ensureNextDev();
+  const next = await ensureNextDev();
 
-  log("Electron", "launching desktop shell");
+  log("Electron", `launching desktop shell against http://localhost:${next.port}`);
   const electronChild = spawnManaged("Electron", electronBinary, ["."], {
     NODE_ENV: "development",
+    NEXT_DEV_URL: `http://localhost:${next.port}`,
   });
 
   electronChild.once("exit", code => {

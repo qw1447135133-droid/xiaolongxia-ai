@@ -4,11 +4,14 @@ import { useEffect } from "react";
 import { useStore } from "@/store";
 import { randomId } from "@/lib/utils";
 import type { AgentId, AgentStatus, Task, Activity, ExecutionEvent, ExecutionRunSource, ExecutionRunStatus } from "@/store/types";
+import type { NativeAppLaunchPayload, NativeAppLaunchResult, NativeInstalledApplication } from "@/types/electron-api";
 
 type WsMessage =
   | { type: "connected" }
   | { type: "settings_ack" }
   | { type: "pong" }
+  | { type: "desktop_launch_request"; requestId: string; payload: NativeAppLaunchPayload }
+  | { type: "desktop_installed_apps_request"; requestId: string; payload?: { forceRefresh?: boolean } }
   | { type: "agent_status"; agentId: AgentId; status: AgentStatus; currentTask?: string; executionRunId?: string }
   | { type: "task_add"; task: Task; executionRunId?: string }
   | { type: "task_update"; taskId: string; updates: Partial<Task>; executionRunId?: string }
@@ -47,8 +50,19 @@ function getStore() {
 
 function syncSettingsToSocket() {
   if (_ws?.readyState !== WebSocket.OPEN) return;
-  const { providers, agentConfigs, platformConfigs } = getStore();
-  _ws.send(JSON.stringify({ type: "settings_sync", providers, agentConfigs }));
+  const { providers, agentConfigs, platformConfigs, userNickname, desktopProgramSettings } = getStore();
+  _ws.send(JSON.stringify({
+    type: "settings_sync",
+    providers,
+    agentConfigs,
+    userNickname,
+    desktopProgramSettings,
+    runtime: {
+      isElectron: Boolean(window.electronAPI?.isElectron),
+      canLaunchNativeApplications: Boolean(window.electronAPI?.launchNativeApplication),
+      canListInstalledApplications: Boolean(window.electronAPI?.listInstalledApplications),
+    },
+  }));
 
   for (const [platformId, config] of Object.entries(platformConfigs)) {
     if (config.enabled && Object.keys(config.fields).length > 0) {
@@ -59,6 +73,65 @@ function syncSettingsToSocket() {
         fields: config.fields,
       }));
     }
+  }
+}
+
+async function handleDesktopLaunchRequest(msg: Extract<WsMessage, { type: "desktop_launch_request" }>) {
+  const { desktopProgramSettings } = getStore();
+  const sendResult = (payload: { ok: boolean; result?: NativeAppLaunchResult; error?: string }) => {
+    if (_ws?.readyState !== WebSocket.OPEN) return;
+    _ws.send(JSON.stringify({
+      type: "desktop_launch_result",
+      requestId: msg.requestId,
+      ...payload,
+    }));
+  };
+
+  if (!window.electronAPI?.launchNativeApplication) {
+    sendResult({ ok: false, error: "当前客户端不是 Electron 桌面运行态，无法启动本机程序。" });
+    return;
+  }
+
+  try {
+    const result = await window.electronAPI.launchNativeApplication({
+      ...msg.payload,
+      policy: {
+        enabled: desktopProgramSettings.enabled,
+        whitelistMode: desktopProgramSettings.whitelistMode,
+        whitelist: desktopProgramSettings.whitelist.map(item => ({
+          label: item.label,
+          target: item.target,
+        })),
+      },
+    });
+    sendResult({ ok: true, result });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    sendResult({ ok: false, error: message });
+  }
+}
+
+async function handleDesktopInstalledAppsRequest(msg: Extract<WsMessage, { type: "desktop_installed_apps_request" }>) {
+  const sendResult = (payload: { ok: boolean; result?: NativeInstalledApplication[]; error?: string }) => {
+    if (_ws?.readyState !== WebSocket.OPEN) return;
+    _ws.send(JSON.stringify({
+      type: "desktop_installed_apps_result",
+      requestId: msg.requestId,
+      ...payload,
+    }));
+  };
+
+  if (!window.electronAPI?.listInstalledApplications) {
+    sendResult({ ok: false, error: "当前客户端不是 Electron 桌面运行态，无法读取本机程序列表。" });
+    return;
+  }
+
+  try {
+    const result = await window.electronAPI.listInstalledApplications(Boolean(msg.payload?.forceRefresh));
+    sendResult({ ok: true, result });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    sendResult({ ok: false, error: message });
   }
 }
 
@@ -198,7 +271,16 @@ export function connectWebSocket(force = false) {
 
     _ws.onmessage = (e) => {
       try {
-        handleMessage(JSON.parse(e.data as string) as WsMessage);
+        const message = JSON.parse(e.data as string) as WsMessage;
+        if (message.type === "desktop_launch_request") {
+          void handleDesktopLaunchRequest(message);
+          return;
+        }
+        if (message.type === "desktop_installed_apps_request") {
+          void handleDesktopInstalledAppsRequest(message);
+          return;
+        }
+        handleMessage(message);
       } catch (err) {
         console.error("[WS] parse error:", err);
       }

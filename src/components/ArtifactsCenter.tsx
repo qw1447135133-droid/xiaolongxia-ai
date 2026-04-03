@@ -5,7 +5,7 @@ import { useStore } from "@/store";
 import { filterByProjectScope, getSessionProjectLabel } from "@/lib/project-context";
 import { buildProjectMemorySnippet, describeProjectMemory } from "@/lib/workspace-memory";
 import { AGENT_META } from "@/store/types";
-import type { AgentId, Task } from "@/store/types";
+import type { AgentId, ControlCenterSectionId, Task } from "@/store/types";
 
 type ArtifactFilter = "all" | "task" | "image" | "meeting" | "desk";
 
@@ -99,8 +99,14 @@ export function ArtifactsCenter() {
   const activeSessionId = useStore(s => s.activeSessionId);
   const navigateToTask = useStore(s => s.navigateToTask);
   const appendCommandDraft = useStore(s => s.appendCommandDraft);
+  const setActiveControlCenterSection = useStore(s => s.setActiveControlCenterSection);
   const setTab = useStore(s => s.setTab);
   const [filter, setFilter] = useState<ArtifactFilter>("all");
+
+  const openControlSection = (section: ControlCenterSectionId) => {
+    setActiveControlCenterSection(section);
+    setTab("settings");
+  };
 
   const activeSession = useMemo(
     () => chatSessions.find(session => session.id === activeSessionId) ?? null,
@@ -212,6 +218,14 @@ export function ArtifactsCenter() {
         </div>
         <div style={{ fontSize: 13, color: "var(--text-muted)", lineHeight: 1.8, marginTop: 8 }}>
           This is the lightweight bridge toward openhanako-style artifact workflows: a single place to revisit what the team has already produced and push it back into the main flow.
+        </div>
+        <div style={{ marginTop: 14, display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <button type="button" className="btn-ghost" onClick={() => openControlSection("execution")}>
+            查看执行面板
+          </button>
+          <button type="button" className="btn-ghost" onClick={() => openControlSection("workspace")}>
+            打开工作区面板
+          </button>
         </div>
       </div>
 

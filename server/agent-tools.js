@@ -6,6 +6,7 @@
  */
 
 import { getBrowser, getPage } from "./browser-manager.js";
+import { requestDesktopInstalledApplications, requestDesktopLaunch } from "./desktop-bridge.js";
 
 // ---------------------------------------------------------------------------
 // ToolBase - 对应 Python ToolBase 基类
@@ -67,6 +68,34 @@ export class ToolBase {
       content: truncated,
     };
   }
+}
+
+function buildDesktopSearchAliases(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (!normalized) return [];
+
+  const aliases = new Set([normalized]);
+  const synonymGroups = [
+    ["wechat", "weixin", "微信"],
+    ["feishu", "lark", "飞书"],
+    ["dingtalk", "dingtalk", "钉钉"],
+    ["qq", "tencent qq"],
+    ["wecom", "企业微信", "wxwork"],
+    ["vscode", "vs code", "visual studio code", "code.exe"],
+    ["chrome", "google chrome", "chrome.exe"],
+    ["edge", "microsoft edge", "msedge.exe"],
+    ["notepad", "notepad.exe", "记事本"],
+  ];
+
+  for (const group of synonymGroups) {
+    if (group.some(item => item.toLowerCase() === normalized)) {
+      for (const alias of group) {
+        aliases.add(alias.toLowerCase());
+      }
+    }
+  }
+
+  return [...aliases];
 }
 
 // ---------------------------------------------------------------------------
@@ -270,6 +299,129 @@ class BrowserGetTextTool extends ToolBase {
   }
 }
 
+class DesktopLaunchNativeApplicationTool extends ToolBase {
+  name = "desktop_launch_native_application";
+  searchHint = "在 Electron 桌面运行态启动本机程序。适用于打开微信、飞书、Chrome、VS Code、资源管理器或指定 exe/快捷方式。仅负责启动程序，不支持鼠标键盘模拟。";
+
+  inputSchema() {
+    return {
+      type: "object",
+      properties: {
+        target: { type: "string", description: "程序名、可执行文件路径、快捷方式或系统命令，例如 WeChat.exe、Feishu.exe、chrome.exe" },
+        args: {
+          type: "array",
+          items: { type: "string" },
+          description: "启动参数列表，可选。",
+        },
+        cwd: { type: "string", description: "工作目录，可选。" },
+        reason: { type: "string", description: "启动这个程序的原因，便于记录和自我约束，可选。" },
+      },
+      required: ["target"],
+    };
+  }
+
+  async call({ target, args = [], cwd, reason }, context = {}) {
+    const result = await requestDesktopLaunch({
+      target,
+      args,
+      ...(cwd ? { cwd } : {}),
+      ...(reason ? { reason } : {}),
+    }, {
+      preferredWs: context.desktopClientWs,
+    });
+
+    return {
+      data: JSON.stringify({
+        success: true,
+        ...result,
+      }),
+    };
+  }
+}
+
+class DesktopListInstalledApplicationsTool extends ToolBase {
+  name = "desktop_list_installed_applications";
+  searchHint = "读取当前 Electron 桌面客户端已安装/可启动的本机程序列表。适合先查找微信、飞书、Chrome、VS Code 等程序名，再把返回的 target 交给 desktop_launch_native_application。";
+  maxResultSizeChars = 20_000;
+
+  inputSchema() {
+    return {
+      type: "object",
+      properties: {
+        query: {
+          type: "string",
+          description: "按程序名、目标路径或安装位置过滤，可选。",
+        },
+        source: {
+          type: "string",
+          enum: ["all", "registry", "start-menu"],
+          description: "扫描来源过滤，默认 all。",
+        },
+        limit: {
+          type: "number",
+          description: "最多返回多少项，默认 20，最大 50。",
+        },
+        forceRefresh: {
+          type: "boolean",
+          description: "是否强制重新扫描本机程序，而不是使用最近缓存。",
+        },
+      },
+      required: [],
+    };
+  }
+
+  isReadOnly() {
+    return true;
+  }
+
+  async call({ query = "", source = "all", limit = 20, forceRefresh = false }, context = {}) {
+    const installedApps = await requestDesktopInstalledApplications({ forceRefresh }, {
+      preferredWs: context.desktopClientWs,
+    });
+    const normalizedQuery = String(query || "").trim().toLowerCase();
+    const queryAliases = buildDesktopSearchAliases(query);
+    const normalizedSource = source === "registry" || source === "start-menu" ? source : "all";
+    const normalizedLimit = Math.max(1, Math.min(50, Number(limit) || 20));
+
+    const filtered = installedApps.filter((item) => {
+      if (normalizedSource !== "all" && item.source !== normalizedSource) {
+        return false;
+      }
+
+      if (!normalizedQuery) {
+        return true;
+      }
+
+      const haystack = [
+        item.name,
+        item.target,
+        item.location,
+      ]
+        .filter(Boolean)
+        .map(value => String(value).toLowerCase());
+
+      return queryAliases.some(alias => haystack.some(value => value.includes(alias)));
+    });
+
+    return {
+      data: JSON.stringify({
+        success: true,
+        query: normalizedQuery || null,
+        source: normalizedSource,
+        totalScanned: installedApps.length,
+        totalMatched: filtered.length,
+        items: filtered.slice(0, normalizedLimit).map(item => ({
+          id: item.id,
+          name: item.name,
+          target: item.target,
+          source: item.source,
+          ...(item.location ? { location: item.location } : {}),
+        })),
+      }),
+    };
+  }
+}
+
 // ---------------------------------------------------------------------------
 // ---------------------------------------------------------------------------
 
@@ -287,6 +439,11 @@ const BROWSER_TOOLS = [
   new BrowserActMultiTool(),
 ];
 
+const DESKTOP_TOOLS = [
+  new DesktopListInstalledApplicationsTool(),
+  new DesktopLaunchNativeApplicationTool(),
+];
+
 /**
  * 获取指定 Agent 可用的工具列表
  * orchestrator 额外获得浏览器控制工具
@@ -297,7 +454,11 @@ const BROWSER_TOOLS = [
 export function getAgentTools(agentId) {
   const base = BUILT_IN_TOOLS.filter((tool) => tool.isEnabled());
   if (agentId === "orchestrator") {
-    return [...base, ...BROWSER_TOOLS.filter((t) => t.isEnabled())];
+    return [
+      ...base,
+      ...BROWSER_TOOLS.filter((t) => t.isEnabled()),
+      ...DESKTOP_TOOLS.filter((t) => t.isEnabled()),
+    ];
   }
   return base;
 }

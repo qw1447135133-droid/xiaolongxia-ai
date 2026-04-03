@@ -63,11 +63,19 @@ function appendToSession(agentId, sessionId, ...messages) {
  * @param {Array} tools         - 可用工具列表（ToolBase 实例）
  * @returns {Promise<Array>}    - Anthropic tool_result 内容块数组
  */
-async function executeTools(toolUseBlocks, tools) {
+async function executeTools(toolUseBlocks, tools, context = {}) {
   const results = [];
   for (const block of toolUseBlocks) {
     const tool = tools.find((t) => t.name === block.name);
     if (!tool) {
+      if (typeof context.onToolEvent === "function") {
+        await context.onToolEvent({
+          phase: "missing",
+          toolName: block.name,
+          input: block.input,
+          toolUseId: block.id,
+        });
+      }
       results.push({
         type: "tool_result",
         tool_use_id: block.id,
@@ -78,8 +86,17 @@ async function executeTools(toolUseBlocks, tools) {
     }
 
     // 权限检查
-    const permission = await tool.checkPermissions(block.input, {});
+    const permission = await tool.checkPermissions(block.input, context);
     if (permission.behavior === "deny") {
+      if (typeof context.onToolEvent === "function") {
+        await context.onToolEvent({
+          phase: "denied",
+          toolName: block.name,
+          input: block.input,
+          toolUseId: block.id,
+          error: permission.reason || "not allowed",
+        });
+      }
       results.push({
         type: "tool_result",
         tool_use_id: block.id,
@@ -91,10 +108,36 @@ async function executeTools(toolUseBlocks, tools) {
 
     // 执行工具
     try {
-      const result = await tool.call(block.input, {});
+      if (typeof context.onToolEvent === "function") {
+        await context.onToolEvent({
+          phase: "start",
+          toolName: block.name,
+          input: block.input,
+          toolUseId: block.id,
+        });
+      }
+      const result = await tool.call(block.input, context);
+      if (typeof context.onToolEvent === "function") {
+        await context.onToolEvent({
+          phase: "success",
+          toolName: block.name,
+          input: block.input,
+          toolUseId: block.id,
+          result: result.data,
+        });
+      }
       const resultBlock = tool.makeToolResultBlock(block.id, result.data);
       results.push(resultBlock);
     } catch (err) {
+      if (typeof context.onToolEvent === "function") {
+        await context.onToolEvent({
+          phase: "error",
+          toolName: block.name,
+          input: block.input,
+          toolUseId: block.id,
+          error: err?.message || String(err),
+        });
+      }
       results.push({
         type: "tool_result",
         tool_use_id: block.id,
@@ -135,6 +178,8 @@ export async function queryAgent({
   maxTokens,
   model,
   client,
+  onToolEvent,
+  toolContext,
 }) {
   // 1. 追加用户消息到会话历史
   appendToSession(agentId, sessionId, { role: "user", content: task });
@@ -207,7 +252,12 @@ export async function queryAgent({
         }
         return { text: "(任务完成，无额外输出)", tokens: inputTokensTotal + outputTokensTotal };
       }
-      const toolResults = await executeTools(toolUseBlocks, tools);
+      const toolResults = await executeTools(toolUseBlocks, tools, {
+        agentId,
+        sessionId,
+        onToolEvent,
+        ...(toolContext ?? {}),
+      });
 
       // 将工具结果作为用户消息追加，继续循环
       appendToSession(agentId, sessionId, {

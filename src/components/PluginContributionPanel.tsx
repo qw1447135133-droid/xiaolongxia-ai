@@ -7,6 +7,7 @@ import { PLUGIN_CATALOG } from "@/lib/plugin-runtime";
 export function PluginContributionPanel() {
   const enabledPluginIds = useStore(s => s.enabledPluginIds);
   const setTab = useStore(s => s.setTab);
+  const setActiveControlCenterSection = useStore(s => s.setActiveControlCenterSection);
 
   const enabledPlugins = useMemo(
     () => PLUGIN_CATALOG.filter(plugin => enabledPluginIds.includes(plugin.id)),
@@ -99,7 +100,12 @@ export function PluginContributionPanel() {
               type="button"
               className="btn-ghost"
               style={{ marginTop: "auto" }}
-              onClick={() => setTab(plugin.actionTarget)}
+              onClick={() => {
+                if (plugin.actionTarget === "settings" && plugin.controlCenterSectionId) {
+                  setActiveControlCenterSection(plugin.controlCenterSectionId);
+                }
+                setTab(plugin.actionTarget);
+              }}
             >
               {plugin.actionLabel}
             </button>

@@ -1,37 +1,58 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo } from "react";
 import { useStore } from "@/store";
 import { filterByProjectScope, getSessionProjectLabel } from "@/lib/project-context";
+import { getTeamOperatingTemplate, TEAM_OPERATING_SURFACES } from "@/store/types";
+import type { ControlCenterSectionId, TeamOperatingTemplateId } from "@/store/types";
 import { ArtifactsCenter } from "./ArtifactsCenter";
 import { BusinessEntitiesCenter } from "./BusinessEntitiesCenter";
 import { ChannelsCenter } from "./ChannelsCenter";
 import { ExecutionCenter } from "./ExecutionCenter";
+import { NativeAppsCenter } from "./NativeAppsCenter";
 import { PluginsCenter } from "./PluginsCenter";
 import { RemoteOpsCenter } from "./RemoteOpsCenter";
 import { SettingsPanel } from "./SettingsPanel";
 import { SkillsCenter } from "./SkillsCenter";
 import { WorkflowCenter } from "./WorkflowCenter";
 
-type SectionId = "overview" | "entities" | "remote" | "execution" | "workspace" | "workflow" | "skills" | "plugins" | "artifacts" | "channels" | "settings" | "about";
-
 export function ControlCenter() {
-  const [section, setSection] = useState<SectionId>("overview");
+  const activeTeamOperatingTemplateId = useStore(s => s.activeTeamOperatingTemplateId);
+  const section = useStore(s => s.activeControlCenterSectionId);
+  const setActiveControlCenterSection = useStore(s => s.setActiveControlCenterSection);
+  const activeTemplate = activeTeamOperatingTemplateId
+    ? getTeamOperatingTemplate(activeTeamOperatingTemplateId)
+    : null;
+  const activeSurface = activeTeamOperatingTemplateId
+    ? TEAM_OPERATING_SURFACES[activeTeamOperatingTemplateId]
+    : null;
 
-  const sections: Array<{ id: SectionId; label: string; hint: string }> = [
-    { id: "overview", label: "Overview", hint: "Workbench status and shell structure" },
-    { id: "entities", label: "Business Entities", hint: "Customers, leads, tickets, content, sessions" },
-    { id: "remote", label: "Remote Ops", hint: "Digital workforce readiness and gaps" },
-    { id: "execution", label: "Execution Center", hint: "Tracked runs, steps, and outcomes" },
-    { id: "workspace", label: "Workspace", hint: "Theme, sidebars, and shortcuts" },
-    { id: "workflow", label: "Workflow Center", hint: "Prebuilt flow templates and staged briefs" },
-    { id: "skills", label: "Skills Center", hint: "Cross-agent capability board" },
-    { id: "plugins", label: "Plugins Center", hint: "Extension board and local plugin toggles" },
-    { id: "artifacts", label: "Artifacts Center", hint: "Unified output shelf and result board" },
-    { id: "channels", label: "Channels Center", hint: "Bridge-style platform overview" },
-    { id: "settings", label: "Detailed Settings", hint: "Agents, models, and platforms" },
-    { id: "about", label: "About", hint: "Borrowed ideas and remaining gaps" },
-  ];
+  const sections = useMemo<Array<{ id: ControlCenterSectionId; label: string; hint: string }>>(() => {
+    const baseSections: Array<{ id: ControlCenterSectionId; label: string; hint: string }> = [
+      { id: "overview", label: "Overview", hint: "Workbench status and shell structure" },
+      { id: "entities", label: "Business Entities", hint: "Customers, leads, tickets, content, sessions" },
+      { id: "remote", label: "Remote Ops", hint: "Digital workforce readiness and gaps" },
+      { id: "execution", label: "Execution Center", hint: "Tracked runs, steps, and outcomes" },
+      { id: "desktop", label: "Desktop Apps", hint: "Launch local programs and native tools" },
+      { id: "workspace", label: "Workspace", hint: "Theme, sidebars, and shortcuts" },
+      { id: "workflow", label: "Workflow Center", hint: "Prebuilt flow templates and staged briefs" },
+      { id: "skills", label: "Skills Center", hint: "Cross-agent capability board" },
+      { id: "plugins", label: "Plugins Center", hint: "Extension board and local plugin toggles" },
+      { id: "artifacts", label: "Artifacts Center", hint: "Unified output shelf and result board" },
+      { id: "channels", label: "Channels Center", hint: "Bridge-style platform overview" },
+      { id: "settings", label: "Detailed Settings", hint: "Agents, models, and platforms" },
+      { id: "about", label: "About", hint: "Borrowed ideas and remaining gaps" },
+    ];
+
+    if (!activeSurface) return baseSections;
+
+    const priority = new Set<ControlCenterSectionId>(["overview", ...activeSurface.recommendedSectionIds]);
+    return [
+      ...baseSections.filter(item => priority.has(item.id)),
+      ...baseSections.filter(item => !priority.has(item.id)),
+    ];
+  }, [activeSurface]);
+  const activeSectionMeta = sections.find(item => item.id === section) ?? sections[0];
 
   return (
     <div className="settings-shell">
@@ -39,6 +60,28 @@ export function ControlCenter() {
         <div className="settings-shell__nav-head">
           <div className="settings-shell__eyebrow">Control Center</div>
           <div className="settings-shell__title">OpenHanako-inspired desktop control surface</div>
+          {activeTemplate && activeSurface ? (
+            <div style={{ marginTop: 10, display: "grid", gap: 6 }}>
+              <div
+                style={{
+                  display: "inline-flex",
+                  width: "fit-content",
+                  padding: "4px 10px",
+                  borderRadius: 999,
+                  border: "1px solid rgba(var(--accent-rgb), 0.24)",
+                  background: "rgba(var(--accent-rgb), 0.08)",
+                  color: "var(--accent)",
+                  fontSize: 11,
+                  fontWeight: 700,
+                }}
+              >
+                当前模式 · {activeTemplate.label}
+              </div>
+              <div style={{ fontSize: 11, color: "var(--text-muted)", lineHeight: 1.7 }}>
+                {activeSurface.statusCopy}
+              </div>
+            </div>
+          ) : null}
         </div>
 
         <div className="settings-shell__nav-list">
@@ -47,7 +90,7 @@ export function ControlCenter() {
               key={item.id}
               type="button"
               className={`settings-shell__nav-item ${section === item.id ? "is-active" : ""}`}
-              onClick={() => setSection(item.id)}
+              onClick={() => setActiveControlCenterSection(item.id)}
             >
               <span>{item.label}</span>
               <small>{item.hint}</small>
@@ -57,10 +100,50 @@ export function ControlCenter() {
       </aside>
 
       <div className="settings-shell__content">
-        {section === "overview" && <ControlOverview />}
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 12,
+            flexWrap: "wrap",
+            marginBottom: 12,
+          }}
+        >
+          <div style={{ display: "grid", gap: 4 }}>
+            <div style={{ fontSize: 11, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.08em" }}>
+              Control Path
+            </div>
+            <div style={{ fontSize: 13, fontWeight: 700 }}>
+              {activeSectionMeta?.label ?? "Overview"}
+            </div>
+            <div style={{ fontSize: 11, color: "var(--text-muted)" }}>
+              {activeSectionMeta?.hint ?? "Workbench status and shell structure"}
+            </div>
+          </div>
+
+          {section !== "overview" ? (
+            <button
+              type="button"
+              className="btn-ghost"
+              style={{ fontSize: 12, padding: "8px 14px" }}
+              onClick={() => setActiveControlCenterSection("overview")}
+            >
+              返回总览
+            </button>
+          ) : null}
+        </div>
+
+        {section === "overview" && (
+          <ControlOverview
+            activeTemplateId={activeTeamOperatingTemplateId}
+            onSelectSection={setActiveControlCenterSection}
+          />
+        )}
         {section === "entities" && <BusinessEntitiesCenter />}
         {section === "remote" && <RemoteOpsCenter />}
         {section === "execution" && <ExecutionCenter />}
+        {section === "desktop" && <NativeAppsCenter />}
         {section === "workspace" && <WorkspacePreferences />}
         {section === "workflow" && <WorkflowCenter />}
         {section === "skills" && <SkillsCenter />}
@@ -74,7 +157,13 @@ export function ControlCenter() {
   );
 }
 
-function ControlOverview() {
+function ControlOverview({
+  activeTemplateId,
+  onSelectSection,
+}: {
+  activeTemplateId: TeamOperatingTemplateId | null;
+  onSelectSection: (section: ControlCenterSectionId) => void;
+}) {
   const agents = useStore(s => s.agents);
   const providers = useStore(s => s.providers);
   const platformConfigs = useStore(s => s.platformConfigs);
@@ -101,6 +190,8 @@ function ControlOverview() {
   const scopedTickets = filterByProjectScope(businessTickets, activeSession ?? {});
   const scopedContentTasks = filterByProjectScope(businessContentTasks, activeSession ?? {});
   const scopedChannelSessions = filterByProjectScope(businessChannelSessions, activeSession ?? {});
+  const activeTemplate = activeTemplateId ? getTeamOperatingTemplate(activeTemplateId) : null;
+  const activeSurface = activeTemplateId ? TEAM_OPERATING_SURFACES[activeTemplateId] : null;
 
   const runningAgents = Object.values(agents).filter(agent => agent.status === "running").length;
   const enabledPlatforms = Object.values(platformConfigs).filter(platform => platform.enabled).length;
@@ -121,6 +212,84 @@ function ControlOverview() {
           Current project scope: {activeSession ? getSessionProjectLabel(activeSession) : "General"}
         </div>
       </div>
+
+      {activeTemplate && activeSurface ? (
+        <div
+          className="control-center__panel"
+          style={{
+            background: "linear-gradient(135deg, rgba(var(--accent-rgb), 0.12), rgba(255,255,255,0.02))",
+            borderColor: "rgba(var(--accent-rgb), 0.24)",
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "flex-start",
+              gap: 16,
+              flexWrap: "wrap",
+            }}
+          >
+            <div style={{ display: "grid", gap: 6 }}>
+              <div className="control-center__panel-title">
+                当前团队模式 · {activeTemplate.label}
+              </div>
+              <div className="control-center__copy">{activeTemplate.description}</div>
+              <div className="control-center__copy">{activeSurface.statusCopy}</div>
+            </div>
+            <div
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                padding: "6px 12px",
+                borderRadius: 999,
+                border: "1px solid rgba(var(--accent-rgb), 0.24)",
+                background: "rgba(var(--accent-rgb), 0.08)",
+                color: "var(--accent)",
+                fontSize: 12,
+                fontWeight: 700,
+              }}
+            >
+              推荐工作面 · {activeSurface.statusLabel}
+            </div>
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10, marginTop: 14 }}>
+            {activeSurface.recommendedSectionIds.map(sectionId => {
+              const labelMap: Record<ControlCenterSectionId, string> = {
+                overview: "Overview",
+                entities: "Business Entities",
+                remote: "Remote Ops",
+                execution: "Execution Center",
+                desktop: "Desktop Apps",
+                workspace: "Workspace",
+                workflow: "Workflow Center",
+                skills: "Skills Center",
+                plugins: "Plugins Center",
+                artifacts: "Artifacts Center",
+                channels: "Channels Center",
+                settings: "Detailed Settings",
+                about: "About",
+              };
+
+              return (
+                <button
+                  key={sectionId}
+                  type="button"
+                  className="btn-ghost"
+                  style={{ padding: "12px 14px", textAlign: "left" }}
+                  onClick={() => onSelectSection(sectionId)}
+                >
+                  <div style={{ fontSize: 12, fontWeight: 700 }}>{labelMap[sectionId]}</div>
+                  <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>
+                    打开这个面板，优先处理当前模式最该盯的工作区块。
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
 
       <div className="control-center__stats">
         {[

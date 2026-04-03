@@ -16,6 +16,8 @@ import {
   scoreTicket,
   type QuantDecision,
 } from "@/lib/business-quantification";
+import type { BusinessEntityType, BusinessOperationRecord } from "@/types/business-entities";
+import type { ControlCenterSectionId } from "@/store/types";
 
 export function BusinessEntitiesCenter() {
   const [creatorType, setCreatorType] = useState<"customer" | "lead" | "ticket" | "content" | "session">("customer");
@@ -32,6 +34,7 @@ export function BusinessEntitiesCenter() {
   const businessTickets = useStore(s => s.businessTickets);
   const businessContentTasks = useStore(s => s.businessContentTasks);
   const businessChannelSessions = useStore(s => s.businessChannelSessions);
+  const businessOperationLogs = useStore(s => s.businessOperationLogs);
   const createBusinessCustomer = useStore(s => s.createBusinessCustomer);
   const createBusinessLead = useStore(s => s.createBusinessLead);
   const createBusinessTicket = useStore(s => s.createBusinessTicket);
@@ -43,6 +46,21 @@ export function BusinessEntitiesCenter() {
   const advanceBusinessChannelSessionStatus = useStore(s => s.advanceBusinessChannelSessionStatus);
   const seedBusinessEntitiesForProject = useStore(s => s.seedBusinessEntitiesForProject);
   const clearBusinessEntitiesForProject = useStore(s => s.clearBusinessEntitiesForProject);
+  const setActiveExecutionRun = useStore(s => s.setActiveExecutionRun);
+  const setActiveControlCenterSection = useStore(s => s.setActiveControlCenterSection);
+  const setTab = useStore(s => s.setTab);
+
+  const openControlCenterSection = (section: ControlCenterSectionId) => {
+    setActiveControlCenterSection(section);
+    setTab("settings");
+  };
+
+  const focusExecutionRun = (runId?: string | null) => {
+    if (runId) {
+      setActiveExecutionRun(runId);
+    }
+    openControlCenterSection("execution");
+  };
 
   const activeSession = useMemo(
     () => chatSessions.find(session => session.id === activeSessionId) ?? null,
@@ -69,6 +87,10 @@ export function BusinessEntitiesCenter() {
     () => filterByProjectScope(businessChannelSessions, activeSession ?? {}),
     [activeSession, businessChannelSessions],
   );
+  const scopedOperationLogs = useMemo(
+    () => filterByProjectScope(businessOperationLogs, activeSession ?? {}),
+    [activeSession, businessOperationLogs],
+  );
 
   const customerNameMap = useMemo(
     () => Object.fromEntries(scopedCustomers.map(item => [item.id, item.name])),
@@ -86,6 +108,16 @@ export function BusinessEntitiesCenter() {
     () => Object.fromEntries(scopedChannelSessions.map(item => [item.id, item])),
     [scopedChannelSessions],
   );
+  const latestOperationByEntity = useMemo(() => {
+    const nextMap: Record<string, BusinessOperationRecord> = {};
+    for (const record of scopedOperationLogs) {
+      const key = `${record.entityType}:${record.entityId}`;
+      if (!nextMap[key] || record.updatedAt > nextMap[key].updatedAt) {
+        nextMap[key] = record;
+      }
+    }
+    return nextMap;
+  }, [scopedOperationLogs]);
 
   const quantSummary = useMemo(() => {
     const decisions: QuantDecision[] = [
@@ -335,6 +367,7 @@ export function BusinessEntitiesCenter() {
           empty="当前项目还没有客户实体。"
           items={scopedCustomers.map(customer => {
             const decision = scoreCustomerHealth(customer);
+            const latestOperation = latestOperationByEntity[`customer:${customer.id}`];
             return (
               <article key={customer.id} className="control-center__entity-card">
                 <div className="control-center__entity-head">
@@ -347,6 +380,11 @@ export function BusinessEntitiesCenter() {
                   <span>渠道 {customer.primaryChannel}</span>
                   <span>{customer.company ?? "独立客户"}</span>
                 </div>
+                <EntityAuditSummary
+                  operation={latestOperation}
+                  onOpenRemoteOps={() => openControlCenterSection("remote")}
+                  onOpenExecution={latestOperation?.executionRunId ? () => focusExecutionRun(latestOperation.executionRunId) : undefined}
+                />
               </article>
             );
           })}
@@ -357,6 +395,7 @@ export function BusinessEntitiesCenter() {
           empty="当前项目还没有线索实体。"
           items={scopedLeads.map(lead => {
             const decision = scoreLead(lead, lead.customerId ? customerMap[lead.customerId] ?? null : null);
+            const latestOperation = latestOperationByEntity[`lead:${lead.id}`];
             return (
               <article key={lead.id} className="control-center__entity-card">
                 <div className="control-center__entity-head">
@@ -376,6 +415,11 @@ export function BusinessEntitiesCenter() {
                     推进阶段
                   </button>
                 </div>
+                <EntityAuditSummary
+                  operation={latestOperation}
+                  onOpenRemoteOps={() => openControlCenterSection("remote")}
+                  onOpenExecution={latestOperation?.executionRunId ? () => focusExecutionRun(latestOperation.executionRunId) : undefined}
+                />
               </article>
             );
           })}
@@ -390,6 +434,7 @@ export function BusinessEntitiesCenter() {
               ticket.customerId ? customerMap[ticket.customerId] ?? null : null,
               ticket.channelSessionId ? channelSessionMap[ticket.channelSessionId] ?? null : null,
             );
+            const latestOperation = latestOperationByEntity[`ticket:${ticket.id}`];
             return (
               <article key={ticket.id} className="control-center__entity-card">
                 <div className="control-center__entity-head">
@@ -409,6 +454,11 @@ export function BusinessEntitiesCenter() {
                     推进状态
                   </button>
                 </div>
+                <EntityAuditSummary
+                  operation={latestOperation}
+                  onOpenRemoteOps={() => openControlCenterSection("remote")}
+                  onOpenExecution={latestOperation?.executionRunId ? () => focusExecutionRun(latestOperation.executionRunId) : undefined}
+                />
               </article>
             );
           })}
@@ -423,6 +473,7 @@ export function BusinessEntitiesCenter() {
               task.customerId ? customerMap[task.customerId] ?? null : null,
               task.leadId ? leadMap[task.leadId] ?? null : null,
             );
+            const latestOperation = latestOperationByEntity[`contentTask:${task.id}`];
             return (
               <article key={task.id} className="control-center__entity-card">
                 <div className="control-center__entity-head">
@@ -442,6 +493,11 @@ export function BusinessEntitiesCenter() {
                     推进状态
                   </button>
                 </div>
+                <EntityAuditSummary
+                  operation={latestOperation}
+                  onOpenRemoteOps={() => openControlCenterSection("remote")}
+                  onOpenExecution={latestOperation?.executionRunId ? () => focusExecutionRun(latestOperation.executionRunId) : undefined}
+                />
               </article>
             );
           })}
@@ -455,6 +511,7 @@ export function BusinessEntitiesCenter() {
               session,
               session.customerId ? customerMap[session.customerId] ?? null : null,
             );
+            const latestOperation = latestOperationByEntity[`channelSession:${session.id}`];
             return (
               <article key={session.id} className="control-center__entity-card">
                 <div className="control-center__entity-head">
@@ -472,6 +529,11 @@ export function BusinessEntitiesCenter() {
                     推进状态
                   </button>
                 </div>
+                <EntityAuditSummary
+                  operation={latestOperation}
+                  onOpenRemoteOps={() => openControlCenterSection("remote")}
+                  onOpenExecution={latestOperation?.executionRunId ? () => focusExecutionRun(latestOperation.executionRunId) : undefined}
+                />
               </article>
             );
           })}
@@ -523,4 +585,78 @@ function EntitySection({
       </div>
     </section>
   );
+}
+
+function EntityAuditSummary({
+  operation,
+  onOpenRemoteOps,
+  onOpenExecution,
+}: {
+  operation?: BusinessOperationRecord;
+  onOpenRemoteOps: () => void;
+  onOpenExecution?: () => void;
+}) {
+  return (
+    <div
+      style={{
+        marginTop: 12,
+        display: "grid",
+        gap: 10,
+        padding: 12,
+        borderRadius: 14,
+        border: "1px solid var(--border)",
+        background: "rgba(255,255,255,0.03)",
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+        <div style={{ fontSize: 11, color: "var(--text-muted)" }}>最近审计动作</div>
+        {operation ? (
+          <span className={`control-center__scenario-badge is-${getOperationTone(operation.status)}`}>
+            {getOperationLabel(operation)}
+          </span>
+        ) : (
+          <span className="control-center__scenario-badge is-partial">尚未进入审计链路</span>
+        )}
+      </div>
+      <div className="control-center__entity-note">
+        {operation ? operation.detail : "这个实体还没有审批或派发记录，适合从远程值守面板开始建立自动化链路。"}
+      </div>
+      <div className="control-center__quick-actions">
+        <button type="button" className="btn-ghost" onClick={onOpenRemoteOps}>
+          去远程值守
+        </button>
+        {onOpenExecution ? (
+          <button type="button" className="btn-ghost" onClick={onOpenExecution}>
+            查看对应执行
+          </button>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function getOperationTone(status: BusinessOperationRecord["status"]) {
+  if (status === "approved" || status === "sent") {
+    return "ready";
+  }
+  if (status === "pending") {
+    return "partial";
+  }
+  return "blocked";
+}
+
+function getOperationLabel(operation: BusinessOperationRecord) {
+  if (operation.eventType === "approval") {
+    if (operation.status === "approved") return "已批准";
+    if (operation.status === "rejected") return "已驳回";
+    return "待审批";
+  }
+
+  if (operation.status === "sent") {
+    return "已派发";
+  }
+  if (operation.status === "blocked") {
+    return "已阻断";
+  }
+  return "处理中";
 }

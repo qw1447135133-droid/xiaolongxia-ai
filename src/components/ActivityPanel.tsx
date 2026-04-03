@@ -13,6 +13,9 @@ const ACTIVITY_LABEL: Record<Activity["type"], string> = {
   task_done: "完成",
   task_fail: "失败",
   meeting: "会议",
+  tool_start: "工具",
+  tool_done: "工具完成",
+  tool_fail: "工具失败",
 };
 
 const ACTIVITY_COLOR: Record<Activity["type"], string> = {
@@ -21,6 +24,9 @@ const ACTIVITY_COLOR: Record<Activity["type"], string> = {
   task_done: "var(--success)",
   task_fail: "var(--danger)",
   meeting: "#a78bfa",
+  tool_start: "#7dd3fc",
+  tool_done: "#86efac",
+  tool_fail: "#fda4af",
 };
 
 export function ActivityPanel() {

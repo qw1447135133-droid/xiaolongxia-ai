@@ -11,6 +11,7 @@ import {
 import { AGENT_META, type ExecutionRun } from "@/store/types";
 import { timeAgo } from "@/lib/utils";
 import { runExecutionVerification } from "@/lib/execution-verification";
+import type { ControlCenterSectionId } from "@/store/types";
 
 function formatTimestamp(timestamp: number) {
   return new Intl.DateTimeFormat("zh-CN", {
@@ -38,12 +39,30 @@ function statusTone(status: ExecutionRun["status"]) {
   }
 }
 
+function getSemanticRecallEvents(run: ExecutionRun) {
+  return run.events.filter(event =>
+    event.type === "system" &&
+    (
+      event.title.includes("项目记忆") ||
+      event.title.includes("Desk Notes") ||
+      event.title.includes("知识文档")
+    ),
+  );
+}
+
 export function ExecutionCenter({ compact = false }: { compact?: boolean }) {
   const executionRuns = useStore(s => s.executionRuns);
   const activeExecutionRunId = useStore(s => s.activeExecutionRunId);
   const setActiveExecutionRun = useStore(s => s.setActiveExecutionRun);
+  const setActiveControlCenterSection = useStore(s => s.setActiveControlCenterSection);
+  const setTab = useStore(s => s.setTab);
   const chatSessions = useStore(s => s.chatSessions);
   const activeSessionId = useStore(s => s.activeSessionId);
+
+  const openControlSection = (section: ControlCenterSectionId) => {
+    setActiveControlCenterSection(section);
+    setTab("settings");
+  };
 
   const activeSession = useMemo(
     () => chatSessions.find(session => session.id === activeSessionId) ?? null,
@@ -90,6 +109,16 @@ export function ExecutionCenter({ compact = false }: { compact?: boolean }) {
         <div style={{ marginTop: 6, fontSize: 12, color: "var(--text-muted)" }}>
           Current project: {activeSession ? getSessionProjectLabel(activeSession) : "General"}
         </div>
+        {!compact ? (
+          <div style={{ marginTop: 14, display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button type="button" className="btn-ghost" onClick={() => openControlSection("workflow")}>
+              打开工作流面板
+            </button>
+            <button type="button" className="btn-ghost" onClick={() => openControlSection("artifacts")}>
+              查看产物面板
+            </button>
+          </div>
+        ) : null}
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
@@ -110,6 +139,7 @@ export function ExecutionCenter({ compact = false }: { compact?: boolean }) {
             const currentAgent = run.currentAgentId ? AGENT_META[run.currentAgentId] : null;
             const lastEvent = run.events[run.events.length - 1];
             const events = compact ? run.events.slice(-4) : run.events.slice(-8);
+            const semanticEvents = getSemanticRecallEvents(run);
             const isActive = activeExecutionRunId === run.id;
             const verificationTone = run.verificationStatus ? verificationStatusTone(run.verificationStatus) : null;
 
@@ -144,6 +174,55 @@ export function ExecutionCenter({ compact = false }: { compact?: boolean }) {
                   <TraceStat label="Failed" value={String(run.failedTasks)} />
                   <TraceStat label="Current" value={currentAgent ? `${currentAgent.emoji} ${currentAgent.name}` : "待分配"} />
                 </div>
+
+                {semanticEvents.length > 0 && (
+                  <div
+                    style={{
+                      padding: 12,
+                      borderRadius: 14,
+                      border: "1px solid rgba(56, 189, 248, 0.18)",
+                      background: "linear-gradient(180deg, rgba(56, 189, 248, 0.1), rgba(255,255,255,0.03))",
+                      display: "grid",
+                      gap: 10,
+                    }}
+                  >
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+                      <div>
+                        <div style={{ fontSize: 11, color: "var(--text-muted)" }}>Semantic Context</div>
+                        <div style={{ marginTop: 4, fontSize: 13, fontWeight: 700 }}>
+                          本次执行已召回 {semanticEvents.length} 项语义资产
+                        </div>
+                      </div>
+                      <span style={badgeStyle("#38bdf8")}>Memory Recall</span>
+                    </div>
+
+                    <div style={{ display: "grid", gap: 8 }}>
+                      {semanticEvents.map(event => (
+                        <div
+                          key={`${run.id}-${event.id}-semantic`}
+                          style={{
+                            padding: "10px 12px",
+                            borderRadius: 12,
+                            border: "1px solid var(--border)",
+                            background: "rgba(255,255,255,0.04)",
+                          }}
+                        >
+                          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                            <strong style={{ fontSize: 12 }}>{event.title}</strong>
+                            <span style={{ fontSize: 10, color: "var(--text-muted)" }}>
+                              {formatTimestamp(event.timestamp)}
+                            </span>
+                          </div>
+                          {event.detail && (
+                            <div style={{ marginTop: 6, fontSize: 11, lineHeight: 1.7, color: "var(--text-muted)", whiteSpace: "pre-wrap" }}>
+                              {event.detail}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
                 {verificationTone && (
                   <div
@@ -276,6 +355,9 @@ export function ExecutionCenter({ compact = false }: { compact?: boolean }) {
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                   <button type="button" className="btn-ghost" onClick={() => setActiveExecutionRun(run.id)}>
                     {isActive ? "当前正在查看" : "设为当前"}
+                  </button>
+                  <button type="button" className="btn-ghost" onClick={() => openControlSection("artifacts")}>
+                    查看相关产物
                   </button>
                   <button
                     type="button"

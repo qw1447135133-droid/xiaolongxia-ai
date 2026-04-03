@@ -4,6 +4,7 @@ import { useMemo, type CSSProperties } from "react";
 import { getAvailableWorkflowTemplates } from "@/lib/workflow-runtime";
 import { useStore } from "@/store";
 import { filterByProjectScope, getSessionProjectLabel } from "@/lib/project-context";
+import { getTeamOperatingTemplate, TEAM_OPERATING_SURFACES } from "@/store/types";
 import type { WorkflowRun } from "@/types/workflows";
 
 function formatTimestamp(timestamp: number) {
@@ -56,6 +57,7 @@ export function WorkflowCenter() {
   const chatSessions = useStore(s => s.chatSessions);
   const activeSessionId = useStore(s => s.activeSessionId);
   const enabledPluginIds = useStore(s => s.enabledPluginIds);
+  const activeTeamOperatingTemplateId = useStore(s => s.activeTeamOperatingTemplateId);
 
   const activeSession = useMemo(
     () => chatSessions.find(session => session.id === activeSessionId) ?? null,
@@ -85,6 +87,23 @@ export function WorkflowCenter() {
   const workflowTemplates = useMemo(
     () => getAvailableWorkflowTemplates(enabledPluginIds),
     [enabledPluginIds],
+  );
+  const activeTemplate = activeTeamOperatingTemplateId
+    ? getTeamOperatingTemplate(activeTeamOperatingTemplateId)
+    : null;
+  const activeSurface = activeTeamOperatingTemplateId
+    ? TEAM_OPERATING_SURFACES[activeTeamOperatingTemplateId]
+    : null;
+  const recommendedTemplateIds = activeSurface?.recommendedWorkflowTemplateIds ?? [];
+  const sortedWorkflowTemplates = useMemo(() => {
+    if (recommendedTemplateIds.length === 0) return workflowTemplates;
+    const recommended = workflowTemplates.filter(template => recommendedTemplateIds.includes(template.id));
+    const rest = workflowTemplates.filter(template => !recommendedTemplateIds.includes(template.id));
+    return [...recommended, ...rest];
+  }, [recommendedTemplateIds, workflowTemplates]);
+  const recommendedTemplates = useMemo(
+    () => sortedWorkflowTemplates.filter(template => recommendedTemplateIds.includes(template.id)),
+    [recommendedTemplateIds, sortedWorkflowTemplates],
   );
 
   const activeRuns = useMemo(
@@ -173,6 +192,51 @@ export function WorkflowCenter() {
         <div style={{ fontSize: 13, color: "var(--text-muted)", lineHeight: 1.8, marginTop: 8 }}>
           The shell now tracks workflow runs instead of only showing templates. Core flows and plugin-aware flows can both be queued, re-staged into the composer, and kept in a lightweight execution history.
         </div>
+        {activeTemplate && activeSurface ? (
+          <div
+            style={{
+              marginTop: 14,
+              padding: 12,
+              borderRadius: 16,
+              border: "1px solid rgba(125, 211, 252, 0.18)",
+              background: "rgba(6, 12, 24, 0.24)",
+              display: "grid",
+              gap: 8,
+            }}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+              <div style={{ fontSize: 13, fontWeight: 700 }}>
+                当前模式推荐 · {activeTemplate.label}
+              </div>
+              <div style={{ fontSize: 11, color: "var(--text-muted)" }}>
+                推荐模板 {recommendedTemplateIds.length} 个
+              </div>
+            </div>
+            <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.7 }}>
+              {activeSurface.statusCopy}
+            </div>
+            {recommendedTemplates.length > 0 ? (
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <button
+                  type="button"
+                  className="btn-primary"
+                  style={{ fontSize: 12, padding: "8px 14px" }}
+                  onClick={() => queueTemplate(recommendedTemplates[0]!)}
+                >
+                  一键排队推荐流程
+                </button>
+                <button
+                  type="button"
+                  className="btn-ghost"
+                  style={{ fontSize: 12, padding: "8px 14px" }}
+                  onClick={() => stageTemplate(recommendedTemplates[0]!)}
+                >
+                  暂存到聊天输入框
+                </button>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
@@ -183,7 +247,9 @@ export function WorkflowCenter() {
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 12 }}>
-        {workflowTemplates.map(template => (
+        {sortedWorkflowTemplates.map(template => {
+          const recommended = recommendedTemplateIds.includes(template.id);
+          return (
           <article
             key={template.id}
             className="card"
@@ -192,13 +258,20 @@ export function WorkflowCenter() {
               display: "flex",
               flexDirection: "column",
               gap: 12,
-              borderColor: `${template.accent}55`,
-              background: `linear-gradient(180deg, ${template.accent}18, rgba(255,255,255,0.02) 58%)`,
+              borderColor: recommended ? "rgba(var(--accent-rgb), 0.28)" : `${template.accent}55`,
+              background: recommended
+                ? `linear-gradient(180deg, rgba(var(--accent-rgb), 0.14), rgba(255,255,255,0.02) 58%)`
+                : `linear-gradient(180deg, ${template.accent}18, rgba(255,255,255,0.02) 58%)`,
             }}
           >
             <div>
               <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                 <div style={{ fontSize: 15, fontWeight: 700 }}>{template.title}</div>
+                {recommended && (
+                  <span style={badgeStyle("var(--accent)")}>
+                    当前模式推荐
+                  </span>
+                )}
                 <span style={badgeStyle(template.source === "plugin" ? "#fda4af" : "#7dd3fc")}>
                   {template.source === "plugin" ? (template.pluginName ?? "Plugin Flow") : "Core Flow"}
                 </span>
@@ -255,7 +328,7 @@ export function WorkflowCenter() {
               </button>
             </div>
           </article>
-        ))}
+        )})}
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.2fr) minmax(280px, 0.95fr)", gap: 12 }}>

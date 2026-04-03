@@ -41,6 +41,81 @@ const WS_PORT = 3001;
 let mainWindow = null;
 let wsServerProcess = null;
 
+function safeExists(targetPath) {
+  try {
+    return fs.existsSync(targetPath);
+  } catch {
+    return false;
+  }
+}
+
+function tokenizeCommandArgs(rawArgs) {
+  if (!Array.isArray(rawArgs)) return [];
+  return rawArgs
+    .map(value => String(value ?? '').trim())
+    .filter(Boolean);
+}
+
+function quoteForWindowsStart(value) {
+  const stringValue = String(value ?? '');
+  if (!stringValue) return '""';
+  if (!/[\s"]/u.test(stringValue)) return stringValue;
+  return `"${stringValue.replace(/"/g, '""')}"`;
+}
+
+async function launchNativeApplication(payload) {
+  const target = typeof payload?.target === 'string' ? payload.target.trim() : '';
+  const args = tokenizeCommandArgs(payload?.args);
+  const cwd = typeof payload?.cwd === 'string' && payload.cwd.trim()
+    ? path.resolve(payload.cwd.trim())
+    : undefined;
+
+  if (!target) {
+    throw new Error('程序路径或命令不能为空。');
+  }
+
+  if (cwd && !safeExists(cwd)) {
+    throw new Error('指定的工作目录不存在。');
+  }
+
+  try {
+    const child = spawn(target, args, {
+      detached: true,
+      stdio: 'ignore',
+      windowsHide: true,
+      shell: false,
+      ...(cwd ? { cwd } : {}),
+    });
+    child.unref();
+    return {
+      ok: true,
+      method: 'spawn',
+      message: `已直接启动 ${target}`,
+      pid: child.pid ?? null,
+    };
+  } catch (error) {
+    if (process.platform !== 'win32') {
+      throw error;
+    }
+
+    const startCommand = ['start', '""', quoteForWindowsStart(target), ...args.map(quoteForWindowsStart)].join(' ');
+    const child = spawn('cmd.exe', ['/d', '/s', '/c', startCommand], {
+      detached: true,
+      stdio: 'ignore',
+      windowsHide: true,
+      shell: false,
+      ...(cwd ? { cwd } : {}),
+    });
+    child.unref();
+    return {
+      ok: true,
+      method: 'shell',
+      message: `已通过 Windows Shell 启动 ${target}`,
+      pid: child.pid ?? null,
+    };
+  }
+}
+
 // ── 启动 WS 服务器 ──
 function startWsServer() {
   const serverScript = isDev()
@@ -123,7 +198,7 @@ function createMainWindow() {
   });
 
   const url = isDev()
-    ? 'http://localhost:3000'
+    ? (process.env.NEXT_DEV_URL || 'http://localhost:3000')
     : `file://${path.join(__dirname, 'out', 'index.html')}`;
 
   mainWindow.loadURL(url);
@@ -146,6 +221,7 @@ function createMainWindow() {
 app.whenReady().then(async () => {
   // ── IPC：前端获取 WS 端口 ──
   ipcMain.handle('get-ws-port', () => WS_PORT);
+  ipcMain.handle('launch-native-application', async (_event, payload) => launchNativeApplication(payload));
 
   startWsServer();
 

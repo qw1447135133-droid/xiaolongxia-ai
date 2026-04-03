@@ -3,9 +3,17 @@
 import { sendWs } from "@/hooks/useWebSocket";
 import { useStore } from "@/store";
 import { PLATFORM_DEFINITIONS } from "@/store/types";
+import type { ControlCenterSectionId } from "@/store/types";
 
 export function ChannelsCenter() {
   const { platformConfigs, updatePlatformConfig } = useStore();
+  const setActiveControlCenterSection = useStore(s => s.setActiveControlCenterSection);
+  const setTab = useStore(s => s.setTab);
+
+  const openControlSection = (section: ControlCenterSectionId) => {
+    setActiveControlCenterSection(section);
+    setTab("settings");
+  };
 
   const enabledCount = PLATFORM_DEFINITIONS.filter(def => platformConfigs[def.id]?.enabled).length;
   const connectedCount = PLATFORM_DEFINITIONS.filter(def => platformConfigs[def.id]?.status === "connected").length;
@@ -47,6 +55,14 @@ export function ChannelsCenter() {
         </div>
         <div style={{ fontSize: 13, color: "var(--text-muted)", lineHeight: 1.8, marginTop: 8 }}>
           This lightweight layer turns the existing platform settings into a visible channel board, so external access routes feel like part of the workbench rather than a hidden configuration form.
+        </div>
+        <div style={{ marginTop: 14, display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <button type="button" className="btn-ghost" onClick={() => openControlSection("remote")}>
+            去远程值守面板
+          </button>
+          <button type="button" className="btn-ghost" onClick={() => openControlSection("settings")}>
+            去详细平台设置
+          </button>
         </div>
       </div>
 
@@ -170,9 +186,17 @@ export function ChannelsCenter() {
                   <span style={{ fontSize: 11, color: config.enabled ? "var(--accent)" : "var(--text-muted)", fontWeight: 700 }}>
                     {config.enabled ? "Enabled in shell" : "Disabled in shell"}
                   </span>
-                  <button type="button" className="btn-ghost" onClick={() => toggleChannel(def.id)}>
-                    {config.enabled ? "Disable" : "Enable"}
-                  </button>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                    <button type="button" className="btn-ghost" onClick={() => openControlSection("remote")}>
+                      去远程值守
+                    </button>
+                    <button type="button" className="btn-ghost" onClick={() => openControlSection("settings")}>
+                      配置字段
+                    </button>
+                    <button type="button" className="btn-ghost" onClick={() => toggleChannel(def.id)}>
+                      {config.enabled ? "Disable" : "Enable"}
+                    </button>
+                  </div>
                 </div>
               </article>
             );

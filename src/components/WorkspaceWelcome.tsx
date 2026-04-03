@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { useStore } from "@/store";
 import { sendExecutionDispatch } from "@/lib/execution-dispatch";
+import { TEAM_OPERATING_SURFACES } from "@/store/types";
 
 const QUICK_PROMPTS = [
   "分析今天最值得推进的一项电商任务，并拆成团队分工。",
@@ -15,11 +16,16 @@ export function WorkspaceWelcome() {
   const tasks = useStore(s => s.tasks);
   const wsStatus = useStore(s => s.wsStatus);
   const createChatSession = useStore(s => s.createChatSession);
+  const activeTeamOperatingTemplateId = useStore(s => s.activeTeamOperatingTemplateId);
+  const setActiveControlCenterSection = useStore(s => s.setActiveControlCenterSection);
   const setTab = useStore(s => s.setTab);
   const [busyPrompt, setBusyPrompt] = useState<string | null>(null);
 
   const agentList = useMemo(() => Object.values(agents), [agents]);
   const hasConversation = tasks.length > 0;
+  const preferredControlSection = activeTeamOperatingTemplateId
+    ? TEAM_OPERATING_SURFACES[activeTeamOperatingTemplateId]?.recommendedSectionIds[0] ?? "settings"
+    : "settings";
 
   const runPrompt = (prompt: string) => {
     if (wsStatus !== "connected") return;
@@ -60,7 +66,14 @@ export function WorkspaceWelcome() {
             >
               新建工作会话
             </button>
-            <button type="button" className="btn-ghost" onClick={() => setTab("settings")}>
+            <button
+              type="button"
+              className="btn-ghost"
+              onClick={() => {
+                setActiveControlCenterSection(preferredControlSection);
+                setTab("settings");
+              }}
+            >
               打开设置中心
             </button>
             <button type="button" className="btn-ghost" onClick={() => setTab("meeting")}>

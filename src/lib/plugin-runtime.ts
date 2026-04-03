@@ -1,3 +1,5 @@
+import type { ControlCenterSectionId } from "@/store/types";
+
 export type PluginPermission = "restricted" | "full-access";
 
 export interface PluginSpec {
@@ -13,6 +15,7 @@ export interface PluginSpec {
   headline: string;
   actionLabel: string;
   actionTarget: "dashboard" | "tasks" | "meeting" | "settings";
+  controlCenterSectionId?: ControlCenterSectionId;
 }
 
 export interface PluginPackSpec {
@@ -51,6 +54,7 @@ export const PLUGIN_CATALOG: PluginSpec[] = [
     headline: "Keep generated outputs visible and ready to revisit.",
     actionLabel: "Open Artifacts",
     actionTarget: "settings",
+    controlCenterSectionId: "artifacts",
   },
   {
     id: "skills-market",
@@ -65,6 +69,7 @@ export const PLUGIN_CATALOG: PluginSpec[] = [
     headline: "Rebalance agent capabilities with prebuilt skill patterns.",
     actionLabel: "Open Skills",
     actionTarget: "settings",
+    controlCenterSectionId: "skills",
   },
   {
     id: "bridge-channel",
@@ -79,6 +84,7 @@ export const PLUGIN_CATALOG: PluginSpec[] = [
     headline: "Expose message routes and bridge visibility in one place.",
     actionLabel: "Open Channels",
     actionTarget: "settings",
+    controlCenterSectionId: "channels",
   },
   {
     id: "ops-telemetry",
@@ -107,6 +113,7 @@ export const PLUGIN_CATALOG: PluginSpec[] = [
     headline: "Experiment with provider combinations without losing the main setup flow.",
     actionLabel: "Open Settings",
     actionTarget: "settings",
+    controlCenterSectionId: "settings",
   },
 ];
 

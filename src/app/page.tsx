@@ -12,6 +12,7 @@ import {
   buildBusinessAutomationQueue,
   decorateBusinessDispatchQueue,
   pickNextAutoDispatchItem,
+  type BusinessAutomationQueueItem,
 } from "@/lib/business-operations";
 import { checkAndExecuteTasks } from "@/lib/scheduled-tasks";
 import { ChatSessionsPanel } from "@/components/ChatSessionsPanel";
@@ -24,6 +25,8 @@ import { MeetingRecordPanel } from "@/components/MeetingRecordPanel";
 import { AgentGrid } from "@/components/AgentGrid";
 import { WorkspaceStatusBar } from "@/components/WorkspaceStatusBar";
 import { DesktopShellBehaviors } from "@/components/DesktopShellBehaviors";
+import { DesktopRuntimeBadge, getDesktopRuntimeTone } from "@/components/DesktopRuntimeBadge";
+import { DesktopRuntimeBridge } from "@/components/DesktopRuntimeBridge";
 import { ExecutionVerificationBridge } from "@/components/ExecutionVerificationBridge";
 import { ControlCenter } from "@/components/ControlCenter";
 import { ExecutionCenter } from "@/components/ExecutionCenter";
@@ -35,7 +38,9 @@ import {
   registerSemanticMemoryProvider,
   resetSemanticMemoryProvider,
 } from "@/lib/semantic-memory";
-import type { AppTab } from "@/store/types";
+import { timeAgo } from "@/lib/utils";
+import { AGENT_META, getTeamOperatingTemplate, TEAM_OPERATING_SURFACES } from "@/store/types";
+import type { AppTab, ControlCenterSectionId } from "@/store/types";
 import { sendExecutionDispatch } from "@/lib/execution-dispatch";
 
 const NAV_ITEMS: Array<{ id: AppTab; label: string; eyebrow: string }> = [
@@ -68,13 +73,19 @@ function dispatchInstruction(instruction: string) {
   });
 }
 
+function openControlCenterSection(section: ControlCenterSectionId) {
+  const { setActiveControlCenterSection, setTab } = useStore.getState();
+  setActiveControlCenterSection(section);
+  setTab("settings");
+}
+
 export default function App() {
   useWebSocket();
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
-      const { providers, agentConfigs } = useStore.getState();
-      sendWs({ type: "settings_sync", providers, agentConfigs });
+      const { providers, agentConfigs, userNickname, desktopProgramSettings } = useStore.getState();
+      sendWs({ type: "settings_sync", providers, agentConfigs, userNickname, desktopProgramSettings });
     }, 1500);
     return () => window.clearTimeout(timer);
   }, []);
@@ -200,7 +211,12 @@ export default function App() {
   const platformConfigs = useStore(s => s.platformConfigs);
   const automationPaused = useStore(s => s.automationPaused);
   const automationMode = useStore(s => s.automationMode);
+  const desktopRuntime = useStore(s => s.desktopRuntime);
   const semanticMemoryConfig = useStore(s => s.semanticMemoryConfig);
+  const activeTeamOperatingTemplateId = useStore(s => s.activeTeamOperatingTemplateId);
+  const setBusinessApprovalDecision = useStore(s => s.setBusinessApprovalDecision);
+  const activeControlCenterSectionId = useStore(s => s.activeControlCenterSectionId);
+  const setActiveControlCenterSection = useStore(s => s.setActiveControlCenterSection);
 
   useEffect(() => {
     registerSemanticMemoryProvider(createSemanticMemoryProvider(semanticMemoryConfig));
@@ -216,12 +232,31 @@ export default function App() {
     () => Object.values(platformConfigs).filter(platform => platform.enabled).length,
     [platformConfigs],
   );
+  const desktopRuntimeTone = useMemo(
+    () => getDesktopRuntimeTone(desktopRuntime),
+    [desktopRuntime],
+  );
+  const desktopRuntimeSummary = useMemo(() => {
+    if (desktopRuntimeTone.tone === "ready") return "已连接";
+    if (desktopRuntimeTone.tone === "partial") return "部分";
+    return "未连接";
+  }, [desktopRuntimeTone.tone]);
 
   const activeNav = NAV_ITEMS.find(item => item.id === activeTab) ?? NAV_ITEMS[0];
+  const preferredControlSection = activeTeamOperatingTemplateId
+    ? TEAM_OPERATING_SURFACES[activeTeamOperatingTemplateId]?.recommendedSectionIds[0] ?? "overview"
+    : "overview";
+  const openTopbarControlCenter = () => {
+    if (activeControlCenterSectionId === "overview") {
+      setActiveControlCenterSection(preferredControlSection);
+    }
+    setTab("settings");
+  };
 
   return (
     <div className="ios-chat-shell">
       <DesktopShellBehaviors />
+      <DesktopRuntimeBridge />
       <ExecutionVerificationBridge />
 
       <div className="ios-chat-shell__layout">
@@ -263,6 +298,7 @@ export default function App() {
 
           <div className="ios-chat-shell__status-grid">
             <StatusPill label="连接" value={wsStatus === "connected" ? "在线" : wsStatus === "connecting" ? "连接中" : "离线"} />
+            <StatusPill label="桌面态" value={desktopRuntimeSummary} />
             <StatusPill label="运行中" value={String(runningCount)} />
             <StatusPill label="模式" value={automationPaused ? "已暂停" : automationMode === "manual" ? "人工" : automationMode === "supervised" ? "监督" : "自治"} />
             <StatusPill label="Tokens" value={cost.totalTokens.toLocaleString()} />
@@ -338,9 +374,10 @@ export default function App() {
             </div>
 
             <div className="ios-chat-shell__topbar-right">
+              <DesktopRuntimeBadge compact />
               <div className="ios-chat-shell__capsule">iOS Glass</div>
               <div className="ios-chat-shell__capsule">GPT-style Flow</div>
-              <button type="button" className="ios-chat-shell__capsule is-button" onClick={() => setTab("settings")}>
+              <button type="button" className="ios-chat-shell__capsule is-button" onClick={openTopbarControlCenter}>
                 打开控制台
               </button>
             </div>
@@ -365,11 +402,29 @@ function DashboardTab({ onOpenTab }: { onOpenTab: (tab: AppTab) => void }) {
   const tasks = useStore(s => s.tasks);
   const agents = useStore(s => s.agents);
   const workflowRuns = useStore(s => s.workflowRuns);
+  const executionRuns = useStore(s => s.executionRuns);
   const workspacePinnedPreviews = useStore(s => s.workspacePinnedPreviews);
   const workspaceDeskNotes = useStore(s => s.workspaceDeskNotes);
   const workspaceProjectMemories = useStore(s => s.workspaceProjectMemories);
+  const businessApprovals = useStore(s => s.businessApprovals);
+  const businessOperationLogs = useStore(s => s.businessOperationLogs);
+  const businessCustomers = useStore(s => s.businessCustomers);
+  const businessLeads = useStore(s => s.businessLeads);
+  const businessTickets = useStore(s => s.businessTickets);
+  const businessContentTasks = useStore(s => s.businessContentTasks);
+  const businessChannelSessions = useStore(s => s.businessChannelSessions);
+  const wsStatus = useStore(s => s.wsStatus);
+  const automationPaused = useStore(s => s.automationPaused);
+  const automationMode = useStore(s => s.automationMode);
+  const remoteSupervisorEnabled = useStore(s => s.remoteSupervisorEnabled);
+  const setAutomationPaused = useStore(s => s.setAutomationPaused);
+  const setRemoteSupervisorEnabled = useStore(s => s.setRemoteSupervisorEnabled);
+  const setBusinessApprovalDecision = useStore(s => s.setBusinessApprovalDecision);
+  const recordBusinessOperation = useStore(s => s.recordBusinessOperation);
+  const setActiveExecutionRun = useStore(s => s.setActiveExecutionRun);
   const chatSessions = useStore(s => s.chatSessions);
   const activeSessionId = useStore(s => s.activeSessionId);
+  const activeTeamOperatingTemplateId = useStore(s => s.activeTeamOperatingTemplateId);
 
   const activeSession = useMemo(
     () => chatSessions.find(session => session.id === activeSessionId) ?? null,
@@ -383,9 +438,88 @@ function DashboardTab({ onOpenTab }: { onOpenTab: (tab: AppTab) => void }) {
     () => filterByProjectScope(workspaceProjectMemories, activeSession ?? {}),
     [activeSession, workspaceProjectMemories],
   );
+  const scopedCustomers = useMemo(
+    () => filterByProjectScope(businessCustomers, activeSession ?? {}),
+    [activeSession, businessCustomers],
+  );
+  const scopedLeads = useMemo(
+    () => filterByProjectScope(businessLeads, activeSession ?? {}),
+    [activeSession, businessLeads],
+  );
+  const scopedTickets = useMemo(
+    () => filterByProjectScope(businessTickets, activeSession ?? {}),
+    [activeSession, businessTickets],
+  );
+  const scopedContentTasks = useMemo(
+    () => filterByProjectScope(businessContentTasks, activeSession ?? {}),
+    [activeSession, businessContentTasks],
+  );
+  const scopedChannelSessions = useMemo(
+    () => filterByProjectScope(businessChannelSessions, activeSession ?? {}),
+    [activeSession, businessChannelSessions],
+  );
+  const scopedApprovals = useMemo(
+    () => filterByProjectScope(businessApprovals, activeSession ?? {}),
+    [activeSession, businessApprovals],
+  );
+  const scopedOperationLogs = useMemo(
+    () => filterByProjectScope(businessOperationLogs, activeSession ?? {}),
+    [activeSession, businessOperationLogs],
+  );
+  const currentProjectKey = useMemo(
+    () => (activeSession ? getRunProjectScopeKey(activeSession, chatSessions) : "project:general"),
+    [activeSession, chatSessions],
+  );
+  const scopedExecutionRuns = useMemo(
+    () => executionRuns.filter(run => getRunProjectScopeKey(run, chatSessions) === currentProjectKey),
+    [chatSessions, currentProjectKey, executionRuns],
+  );
 
   const runningCount = Object.values(agents).filter(agent => agent.status === "running").length;
   const completedCount = tasks.filter(task => task.status === "done" && !task.isUserMessage).length;
+  const activeTemplate = activeTeamOperatingTemplateId
+    ? getTeamOperatingTemplate(activeTeamOperatingTemplateId)
+    : null;
+  const activeSurface = activeTeamOperatingTemplateId
+    ? TEAM_OPERATING_SURFACES[activeTeamOperatingTemplateId]
+    : null;
+  const homePrompts = activeSurface?.homePrompts ?? HOME_PROMPTS;
+  const businessFocusCards = useMemo(
+    () => getDashboardBusinessFocus(activeTeamOperatingTemplateId, {
+      customers: scopedCustomers.length,
+      leads: scopedLeads.length,
+      tickets: scopedTickets.length,
+      contentTasks: scopedContentTasks.length,
+      channelSessions: scopedChannelSessions.length,
+    }),
+    [
+      activeTeamOperatingTemplateId,
+      scopedChannelSessions.length,
+      scopedContentTasks.length,
+      scopedCustomers.length,
+      scopedLeads.length,
+      scopedTickets.length,
+    ],
+  );
+  const mobileApprovalQueue = useMemo(
+    () =>
+      buildBusinessAutomationQueue({
+        approvals: scopedApprovals,
+        customers: scopedCustomers,
+        leads: scopedLeads,
+        tickets: scopedTickets,
+        contentTasks: scopedContentTasks,
+        channelSessions: scopedChannelSessions,
+      }).filter(item => item.approvalState === "pending"),
+    [
+      scopedApprovals,
+      scopedChannelSessions,
+      scopedContentTasks,
+      scopedCustomers,
+      scopedLeads,
+      scopedTickets,
+    ],
+  );
 
   return (
     <div className="ios-home">
@@ -398,6 +532,36 @@ function DashboardTab({ onOpenTab }: { onOpenTab: (tab: AppTab) => void }) {
         <p className="ios-home__copy" style={{ marginTop: 6 }}>
           当前项目: {activeSession ? getSessionProjectLabel(activeSession) : "General"}
         </p>
+        {activeTemplate && activeSurface ? (
+          <div
+            style={{
+              display: "flex",
+              gap: 10,
+              alignItems: "center",
+              flexWrap: "wrap",
+              marginTop: 14,
+            }}
+          >
+            <span
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                padding: "6px 12px",
+                borderRadius: 999,
+                border: "1px solid rgba(var(--accent-rgb), 0.24)",
+                background: "rgba(var(--accent-rgb), 0.08)",
+                color: "var(--accent)",
+                fontSize: 12,
+                fontWeight: 700,
+              }}
+            >
+              当前团队模式 · {activeTemplate.label}
+            </span>
+            <span style={{ color: "var(--text-muted)", fontSize: 12, lineHeight: 1.7 }}>
+              {activeSurface.statusCopy}
+            </span>
+          </div>
+        ) : null}
 
         <div className="ios-home__composer">
           <CommandInput
@@ -408,7 +572,7 @@ function DashboardTab({ onOpenTab }: { onOpenTab: (tab: AppTab) => void }) {
         </div>
 
         <div className="ios-home__prompt-row">
-          {HOME_PROMPTS.map(prompt => (
+          {homePrompts.map(prompt => (
             <button
               key={prompt}
               type="button"
@@ -425,6 +589,112 @@ function DashboardTab({ onOpenTab }: { onOpenTab: (tab: AppTab) => void }) {
         </div>
       </section>
 
+      <MobileSupervisionPanel
+        approvalCount={scopedApprovals.filter(item => item.status === "pending").length}
+        activeRunCount={scopedExecutionRuns.filter(run => run.status === "analyzing" || run.status === "running").length}
+        latestRun={scopedExecutionRuns[0] ?? null}
+        latestOperation={scopedOperationLogs[0] ?? null}
+        approvalItems={mobileApprovalQueue.slice(0, 3)}
+        automationPaused={automationPaused}
+        automationMode={automationMode}
+        remoteSupervisorEnabled={remoteSupervisorEnabled}
+        onApproveItem={(item) => {
+          setBusinessApprovalDecision({
+            entityType: item.entityType,
+            entityId: item.entityId,
+            status: "approved",
+          });
+
+          const canAutoDispatch =
+            wsStatus === "connected"
+            && !automationPaused
+            && automationMode !== "manual"
+            && remoteSupervisorEnabled
+            && item.decision.autoRunEligible;
+
+          if (!canAutoDispatch) {
+            const blockedReason =
+              wsStatus !== "connected"
+                ? "远程通道还没连上"
+                : automationPaused
+                  ? "自动化当前已暂停"
+                  : automationMode === "manual"
+                    ? "当前仍是人工模式"
+                    : !remoteSupervisorEnabled
+                      ? "远程值守当前关闭"
+                      : "量化结果仍建议先观察";
+
+            return {
+              message: `已批准 ${item.title}，但这次没有自动派发，因为${blockedReason}。`,
+            };
+          }
+
+          const { ok, executionRunId } = sendExecutionDispatch({
+            instruction: item.instruction,
+            source: "remote-ops",
+            includeUserMessage: true,
+            taskDescription: item.taskDescription,
+            includeActiveProjectMemory: true,
+          });
+
+          recordBusinessOperation({
+            entityType: item.entityType,
+            entityId: item.entityId,
+            eventType: "dispatch",
+            trigger: "manual",
+            status: ok ? "sent" : "blocked",
+            title: item.title,
+            detail: ok
+              ? "人工在移动监督面板批准后立即派发了该业务对象。"
+              : "人工在移动监督面板批准了该业务对象，但发送链路未成功建立。",
+            executionRunId: ok ? executionRunId : undefined,
+          });
+
+          if (ok && executionRunId) {
+            setActiveExecutionRun(executionRunId);
+            return {
+              message: `已批准 ${item.title}，并已直接送入执行链路。`,
+              executionRunId,
+            };
+          }
+
+          return {
+            message: `已批准 ${item.title}，但派发链路没有成功建立。`,
+          };
+        }}
+        onRejectItem={(item) => setBusinessApprovalDecision({
+          entityType: item.entityType,
+          entityId: item.entityId,
+          status: "rejected",
+        })}
+        onToggleAutomationPaused={() => setAutomationPaused(!automationPaused)}
+        onToggleRemoteSupervisor={() => setRemoteSupervisorEnabled(!remoteSupervisorEnabled)}
+        onOpenRemoteOps={() => openControlCenterSection("remote")}
+        onOpenExecution={() => openControlCenterSection("execution")}
+        onOpenChat={() => onOpenTab("tasks")}
+        onRetryExecution={(run) => {
+          const { ok, executionRunId } = sendExecutionDispatch({
+            instruction: run.instruction,
+            source: run.source,
+            includeUserMessage: true,
+            taskDescription: `[重试执行] ${run.instruction}`,
+            includeActiveProjectMemory: true,
+          });
+
+          if (ok && executionRunId) {
+            setActiveExecutionRun(executionRunId);
+            return {
+              message: "已重新发起这条执行指令。",
+              executionRunId,
+            };
+          }
+
+          return {
+            message: "重试已发起，但发送链路没有成功建立。",
+          };
+        }}
+      />
+
       <section className="ios-home__status">
         <ProjectHubCard />
         <StatusCard label="运行中角色" value={String(runningCount)} hint="团队当前正在处理的任务数量" />
@@ -432,6 +702,66 @@ function DashboardTab({ onOpenTab }: { onOpenTab: (tab: AppTab) => void }) {
         <StatusCard label="工作流 Run" value={String(workflowRuns.length)} hint="可复用的编排入口与历史记录" />
         <StatusCard label="Desk 上下文" value={`${workspacePinnedPreviews.length + scopedDeskNotes.length + scopedProjectMemories.length}`} hint="当前项目下的固定引用、异步笔记和项目记忆总量" />
       </section>
+
+      {businessFocusCards.length > 0 ? (
+        <section style={{ display: "grid", gap: 12 }}>
+          <div style={{ display: "grid", gap: 4 }}>
+            <div className="ios-home__eyebrow">Business Focus</div>
+            <div className="ios-home__copy" style={{ margin: 0 }}>
+              {activeTemplate ? `${activeTemplate.label} 当前更应该盯这些业务对象。` : "当前项目下最值得关注的业务对象。"}
+            </div>
+          </div>
+
+          <div className="ios-home__grid">
+            {businessFocusCards.map(card => (
+              <ActionCard
+                key={card.id}
+                eyebrow={card.eyebrow}
+                title={card.title}
+                copy={card.copy}
+                actionLabel={card.actionLabel}
+                onClick={() => {
+                  if (card.tab === "settings" && card.controlCenterSectionId) {
+                    openControlCenterSection(card.controlCenterSectionId);
+                    return;
+                  }
+                  onOpenTab(card.tab);
+                }}
+              />
+            ))}
+          </div>
+        </section>
+      ) : null}
+
+      {activeTemplate && activeSurface ? (
+        <section style={{ display: "grid", gap: 12 }}>
+          <div style={{ display: "grid", gap: 4 }}>
+            <div className="ios-home__eyebrow">Recommended Flow</div>
+            <div className="ios-home__copy" style={{ margin: 0 }}>
+              {activeTemplate.label} 下，建议优先使用下面这些入口推进工作。
+            </div>
+          </div>
+
+          <div className="ios-home__grid">
+            {activeSurface.quickActions.map(action => (
+              <ActionCard
+                key={action.id}
+                eyebrow={action.eyebrow}
+                title={action.title}
+                copy={action.copy}
+                actionLabel={action.actionLabel}
+                onClick={() => {
+                  if (action.tab === "settings" && action.controlCenterSectionId) {
+                    openControlCenterSection(action.controlCenterSectionId);
+                    return;
+                  }
+                  onOpenTab(action.tab);
+                }}
+              />
+            ))}
+          </div>
+        </section>
+      ) : null}
 
       <section className="ios-home__grid">
         <ActionCard
@@ -475,9 +805,271 @@ function DashboardTab({ onOpenTab }: { onOpenTab: (tab: AppTab) => void }) {
   );
 }
 
+function MobileSupervisionPanel({
+  approvalCount,
+  activeRunCount,
+  latestRun,
+  latestOperation,
+  approvalItems,
+  automationPaused,
+  automationMode,
+  remoteSupervisorEnabled,
+  onApproveItem,
+  onRejectItem,
+  onToggleAutomationPaused,
+  onToggleRemoteSupervisor,
+  onOpenRemoteOps,
+  onOpenExecution,
+  onOpenChat,
+  onRetryExecution,
+}: {
+  approvalCount: number;
+  activeRunCount: number;
+  latestRun: ReturnType<typeof useStore.getState>["executionRuns"][number] | null;
+  latestOperation: ReturnType<typeof useStore.getState>["businessOperationLogs"][number] | null;
+  approvalItems: BusinessAutomationQueueItem[];
+  automationPaused: ReturnType<typeof useStore.getState>["automationPaused"];
+  automationMode: ReturnType<typeof useStore.getState>["automationMode"];
+  remoteSupervisorEnabled: boolean;
+  onApproveItem: (item: BusinessAutomationQueueItem) => { message: string; executionRunId?: string };
+  onRejectItem: (item: BusinessAutomationQueueItem) => void;
+  onToggleAutomationPaused: () => void;
+  onToggleRemoteSupervisor: () => void;
+  onOpenRemoteOps: () => void;
+  onOpenExecution: () => void;
+  onOpenChat: () => void;
+  onRetryExecution: (
+    run: NonNullable<ReturnType<typeof useStore.getState>["executionRuns"][number]>,
+  ) => { message: string; executionRunId?: string };
+}) {
+  const [approvalExpanded, setApprovalExpanded] = useState(false);
+  const [approvalFeedback, setApprovalFeedback] = useState<string | null>(null);
+  const [approvalExecutionRunId, setApprovalExecutionRunId] = useState<string | null>(null);
+  const [executionFeedback, setExecutionFeedback] = useState<string | null>(null);
+  const [retriedExecutionRunId, setRetriedExecutionRunId] = useState<string | null>(null);
+  const latestRunEvents = latestRun ? [...latestRun.events].slice(-3).reverse() : [];
+  const latestRunAgent = latestRun?.currentAgentId ? AGENT_META[latestRun.currentAgentId] : null;
+  const modeLabel = automationPaused
+    ? "已暂停"
+    : automationMode === "manual"
+      ? "人工"
+      : automationMode === "supervised"
+        ? "监督"
+        : "自治";
+
+  return (
+    <section className="ios-home__mobile-supervision">
+      <div className="ios-home__mobile-supervision-head">
+        <div>
+          <div className="ios-home__eyebrow">Mobile Supervision</div>
+          <div className="ios-home__action-title">手机值守面板</div>
+        </div>
+        <span className={`control-center__scenario-badge is-${automationPaused ? "blocked" : "ready"}`}>
+          {modeLabel}
+        </span>
+      </div>
+
+      <div className="ios-home__mobile-supervision-grid">
+        <article className="ios-home__mobile-supervision-card">
+          <div className="ios-home__mobile-supervision-label">待审批</div>
+          <div className="ios-home__mobile-supervision-value">{approvalCount}</div>
+          <div className="ios-home__mobile-supervision-note">适合手机端先看有没有需要人工拍板的对象。</div>
+        </article>
+        <article className="ios-home__mobile-supervision-card">
+          <div className="ios-home__mobile-supervision-label">运行中</div>
+          <div className="ios-home__mobile-supervision-value">{activeRunCount}</div>
+          <div className="ios-home__mobile-supervision-note">可以直接跳去执行中心看最新轨迹。</div>
+        </article>
+      </div>
+
+      <div className="ios-home__mobile-supervision-stack">
+        <article className="ios-home__mobile-supervision-card">
+          <div className="ios-home__mobile-supervision-label">自动化状态</div>
+          <div className="ios-home__mobile-supervision-note">
+            当前为 <strong>{modeLabel}</strong>，远程值守 {remoteSupervisorEnabled ? "开启" : "关闭"}。
+          </div>
+          <div className="ios-home__mobile-supervision-actions">
+            <button type="button" className="btn-ghost" onClick={onToggleAutomationPaused}>
+              {automationPaused ? "恢复自动化" : "暂停自动化"}
+            </button>
+            <button type="button" className="btn-ghost" onClick={onToggleRemoteSupervisor}>
+              {remoteSupervisorEnabled ? "关闭值守" : "开启值守"}
+            </button>
+          </div>
+        </article>
+
+        <article className="ios-home__mobile-supervision-card">
+          <div className="ios-home__mobile-supervision-inline-head">
+            <div>
+              <div className="ios-home__mobile-supervision-label">待审批队列</div>
+              <div className="ios-home__mobile-supervision-note">
+                {approvalCount > 0 ? "首页可直接批准或驳回高风险对象。" : "当前没有等待人工确认的业务对象。"}
+              </div>
+            </div>
+            <button
+              type="button"
+              className="btn-ghost"
+              onClick={() => setApprovalExpanded(current => !current)}
+            >
+              {approvalExpanded ? "收起" : approvalCount > 0 ? `展开 ${approvalCount}` : "查看"}
+            </button>
+          </div>
+          {approvalFeedback ? (
+            <div className="ios-home__mobile-supervision-feedback">
+              <div>{approvalFeedback}</div>
+              {approvalExecutionRunId ? (
+                <div className="ios-home__mobile-supervision-actions" style={{ marginTop: 8 }}>
+                  <button type="button" className="btn-ghost" onClick={onOpenExecution}>
+                    查看刚刚执行
+                  </button>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+          {approvalExpanded ? (
+            <div className="ios-home__mobile-supervision-approval-list">
+              {approvalItems.length > 0 ? approvalItems.map(item => (
+                <article key={`${item.entityType}-${item.entityId}`} className="ios-home__mobile-supervision-approval-item">
+                  <div style={{ display: "grid", gap: 4 }}>
+                    <strong style={{ fontSize: 13 }}>{item.title}</strong>
+                    <div className="ios-home__mobile-supervision-note">{item.subtitle}</div>
+                    <div className="ios-home__mobile-supervision-note">{item.summary}</div>
+                  </div>
+                  <div className="ios-home__mobile-supervision-actions">
+                    <button
+                      type="button"
+                      className="btn-ghost"
+                      onClick={() => {
+                        const result = onApproveItem(item);
+                        setApprovalFeedback(result.message);
+                        setApprovalExecutionRunId(result.executionRunId ?? null);
+                      }}
+                    >
+                      批准
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-ghost"
+                      onClick={() => {
+                        onRejectItem(item);
+                        setApprovalFeedback(`已驳回 ${item.title}，审计记录会保留这次处理。`);
+                        setApprovalExecutionRunId(null);
+                      }}
+                    >
+                      驳回
+                    </button>
+                  </div>
+                </article>
+              )) : (
+                <div className="ios-home__mobile-supervision-note">
+                  当前项目没有待审批对象，可以直接盯执行和远程值守状态。
+                </div>
+              )}
+            </div>
+          ) : null}
+        </article>
+
+        <article className="ios-home__mobile-supervision-card">
+          <div className="ios-home__mobile-supervision-inline-head">
+            <div>
+              <div className="ios-home__mobile-supervision-label">最近执行</div>
+              <div className="ios-home__mobile-supervision-note">
+                {latestRun ? latestRun.instruction : "当前项目还没有执行 run。"}
+              </div>
+            </div>
+            {latestRun ? (
+              <span className={`control-center__scenario-badge is-${getMobileExecutionTone(latestRun.status)}`}>
+                {getMobileExecutionLabel(latestRun.status)}
+              </span>
+            ) : null}
+          </div>
+          {latestRun ? (
+            <>
+              <div className="ios-home__mobile-supervision-meta">
+                <span>来源 {latestRun.source}</span>
+                <span>{latestRunAgent ? `${latestRunAgent.emoji} ${latestRunAgent.name}` : "待分配"}</span>
+                <span>更新于 {timeAgo(latestRun.updatedAt)}</span>
+              </div>
+              {latestRunEvents.length > 0 ? (
+                <div className="ios-home__mobile-supervision-event-list">
+                  {latestRunEvents.map(event => (
+                    <div key={event.id} className="ios-home__mobile-supervision-event">
+                      <div className="ios-home__mobile-supervision-event-title">{event.title}</div>
+                      {event.detail ? (
+                        <div className="ios-home__mobile-supervision-note">{event.detail}</div>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+              {executionFeedback ? (
+                <div className="ios-home__mobile-supervision-feedback">
+                  <div>{executionFeedback}</div>
+                  {retriedExecutionRunId ? (
+                    <div className="ios-home__mobile-supervision-actions" style={{ marginTop: 8 }}>
+                      <button type="button" className="btn-ghost" onClick={onOpenExecution}>
+                        查看重试执行
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+            </>
+          ) : null}
+          <div className="ios-home__mobile-supervision-actions">
+            <button type="button" className="btn-ghost" onClick={onOpenExecution}>
+              打开执行中心
+            </button>
+            {latestRun?.status === "failed" ? (
+              <button
+                type="button"
+                className="btn-ghost"
+                onClick={() => {
+                  const result = onRetryExecution(latestRun);
+                  setExecutionFeedback(result.message);
+                  setRetriedExecutionRunId(result.executionRunId ?? null);
+                }}
+              >
+                一键重试
+              </button>
+            ) : null}
+            <button type="button" className="btn-ghost" onClick={onOpenChat}>
+              {latestRun?.status === "failed" ? "回到聊天接管" : "去聊天接管"}
+            </button>
+          </div>
+        </article>
+
+        <article className="ios-home__mobile-supervision-card">
+          <div className="ios-home__mobile-supervision-label">最近审计动作</div>
+          <div className="ios-home__mobile-supervision-note">
+            {latestOperation
+              ? `${latestOperation.title} · ${latestOperation.detail}`
+              : "当前项目还没有业务审计记录。"}
+          </div>
+          <div className="ios-home__mobile-supervision-actions">
+            <button type="button" className="btn-ghost" onClick={onOpenRemoteOps}>
+              打开远程值守
+            </button>
+            {latestOperation?.executionRunId ? (
+              <button type="button" className="btn-ghost" onClick={onOpenExecution}>
+                查看对应执行
+              </button>
+            ) : null}
+          </div>
+        </article>
+      </div>
+    </section>
+  );
+}
+
 function TasksTab() {
   const tasks = useStore(s => s.tasks);
   const setCommandDraft = useStore(s => s.setCommandDraft);
+  const activeTeamOperatingTemplateId = useStore(s => s.activeTeamOperatingTemplateId);
+  const activeSurface = activeTeamOperatingTemplateId
+    ? TEAM_OPERATING_SURFACES[activeTeamOperatingTemplateId]
+    : null;
+  const chatStarters = activeSurface?.chatStarters ?? CHAT_STARTERS;
 
   return (
     <div className="ios-chat-page">
@@ -502,7 +1094,7 @@ function TasksTab() {
               这里保留和 ChatGPT 类似的中轴对话体验。你可以直接发目标，也可以先点一个起手式，再继续补充上下文。
             </div>
             <div className="ios-chat-page__empty-actions">
-              {CHAT_STARTERS.map(prompt => (
+              {chatStarters.map(prompt => (
                 <button
                   key={prompt}
                   type="button"
@@ -618,6 +1210,112 @@ function ActionCard({
       </button>
     </article>
   );
+}
+
+function getMobileExecutionTone(status: ReturnType<typeof useStore.getState>["executionRuns"][number]["status"]) {
+  if (status === "completed") return "ready";
+  if (status === "failed") return "blocked";
+  return "partial";
+}
+
+function getMobileExecutionLabel(status: ReturnType<typeof useStore.getState>["executionRuns"][number]["status"]) {
+  switch (status) {
+    case "queued":
+      return "已排队";
+    case "analyzing":
+      return "分析中";
+    case "running":
+      return "执行中";
+    case "completed":
+      return "已完成";
+    case "failed":
+      return "已失败";
+    default:
+      return status;
+  }
+}
+
+function getDashboardBusinessFocus(
+  activeTemplateId: ReturnType<typeof useStore.getState>["activeTeamOperatingTemplateId"],
+  counts: {
+    customers: number;
+    leads: number;
+    tickets: number;
+    contentTasks: number;
+    channelSessions: number;
+  },
+): Array<{
+  id: string;
+  eyebrow: string;
+  title: string;
+  copy: string;
+  actionLabel: string;
+  tab: AppTab;
+  controlCenterSectionId?: ControlCenterSectionId;
+}> {
+  if (activeTemplateId === "support") {
+    return [
+      {
+        id: "support-customers",
+        eyebrow: "Customers",
+        title: `客户与会话 · ${counts.customers + counts.channelSessions}`,
+        copy: `当前项目下有 ${counts.customers} 个客户、${counts.channelSessions} 个渠道会话，适合先检查值守响应与接待质量。`,
+        actionLabel: "查看控制台",
+        tab: "settings" as const,
+        controlCenterSectionId: "entities",
+      },
+      {
+        id: "support-tickets",
+        eyebrow: "Tickets",
+        title: `待跟进工单 · ${counts.tickets}`,
+        copy: `客服模式下先盯工单推进和售后处理，避免响应链路堆积。`,
+        actionLabel: "进入聊天",
+        tab: "tasks" as const,
+      },
+    ];
+  }
+
+  if (activeTemplateId === "content") {
+    return [
+      {
+        id: "content-tasks",
+        eyebrow: "Content",
+        title: `内容任务 · ${counts.contentTasks}`,
+        copy: `当前项目下有 ${counts.contentTasks} 个内容任务，可优先推进脚本、视觉和发布节奏。`,
+        actionLabel: "查看控制台",
+        tab: "settings" as const,
+        controlCenterSectionId: "entities",
+      },
+      {
+        id: "content-leads",
+        eyebrow: "Signals",
+        title: `选题线索 · ${counts.leads}`,
+        copy: `线索数量可以帮助判断哪些主题值得转成内容工单继续跟进。`,
+        actionLabel: "进入工作区",
+        tab: "workspace" as const,
+      },
+    ];
+  }
+
+  return [
+    {
+      id: "engineering-leads",
+      eyebrow: "Pipeline",
+      title: `研发相关线索 · ${counts.leads}`,
+      copy: `当前项目有 ${counts.leads} 条业务线索，可以帮助判断最值得先实现或联调的能力。`,
+      actionLabel: "查看控制台",
+      tab: "settings" as const,
+      controlCenterSectionId: "entities",
+    },
+    {
+      id: "engineering-tickets",
+      eyebrow: "Execution",
+      title: `待收敛问题 · ${counts.tickets}`,
+      copy: `工单与会话数量能反映当前产品缺口，适合转成研发修复和流程优化动作。`,
+      actionLabel: "进入聊天",
+      tab: "tasks" as const,
+    },
+  ];
 }
 
 function MeetingTab() {

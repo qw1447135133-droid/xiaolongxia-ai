@@ -60,5 +60,5 @@ function getDefaultModel(baseURL?: string): string {
   if (baseURL?.includes("siliconflow")) return "Qwen/Qwen2.5-72B-Instruct";
   if (baseURL?.includes("dashscope")) return "qwen3.5-plus";
   if (baseURL?.includes("deepseek")) return "deepseek-chat";
-  return "gpt-4o-mini";
+  return "gpt-5.4-mini";
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { reconnectWebSocket } from "@/hooks/useWebSocket";
 import { sendExecutionDispatch } from "@/lib/execution-dispatch";
 import { useStore } from "@/store";
@@ -15,11 +15,31 @@ import {
   getSessionProjectLabel,
   getSessionProjectScope,
 } from "@/lib/project-context";
-import { type AutomationMode, PLATFORM_DEFINITIONS } from "@/store/types";
+import { getTeamOperatingTemplate, TEAM_OPERATING_SURFACES, type AutomationMode, type ControlCenterSectionId, PLATFORM_DEFINITIONS } from "@/store/types";
+import type { BusinessOperationRecord } from "@/types/business-entities";
+
+type AuditFocusRequest = {
+  entityType: BusinessOperationRecord["entityType"];
+  entityId: string;
+  eventType: BusinessOperationRecord["eventType"];
+  status: BusinessOperationRecord["status"];
+  executionRunId?: string;
+};
+
+type ActionFeedback = {
+  title: string;
+  detail: string;
+  executionRunId?: string;
+  entitySection?: ControlCenterSectionId;
+};
 
 export function RemoteOpsCenter() {
   const [scheduledTasks, setScheduledTasks] = useState<ScheduledTask[]>([]);
   const [dispatchingKey, setDispatchingKey] = useState<string | null>(null);
+  const [highlightedAuditLogId, setHighlightedAuditLogId] = useState<string | null>(null);
+  const [actionFeedback, setActionFeedback] = useState<ActionFeedback | null>(null);
+  const auditSectionRef = useRef<HTMLDivElement | null>(null);
+  const pendingAuditFocusRef = useRef<AuditFocusRequest | null>(null);
 
   const providers = useStore(s => s.providers);
   const platformConfigs = useStore(s => s.platformConfigs);
@@ -36,6 +56,7 @@ export function RemoteOpsCenter() {
   const workspaceDeskNotes = useStore(s => s.workspaceDeskNotes);
   const chatSessions = useStore(s => s.chatSessions);
   const activeSessionId = useStore(s => s.activeSessionId);
+  const activeTeamOperatingTemplateId = useStore(s => s.activeTeamOperatingTemplateId);
   const automationMode = useStore(s => s.automationMode);
   const automationPaused = useStore(s => s.automationPaused);
   const remoteSupervisorEnabled = useStore(s => s.remoteSupervisorEnabled);
@@ -46,8 +67,33 @@ export function RemoteOpsCenter() {
   const setAutoDispatchScheduledTasks = useStore(s => s.setAutoDispatchScheduledTasks);
   const setBusinessApprovalDecision = useStore(s => s.setBusinessApprovalDecision);
   const recordBusinessOperation = useStore(s => s.recordBusinessOperation);
+  const setActiveExecutionRun = useStore(s => s.setActiveExecutionRun);
   const setTab = useStore(s => s.setTab);
+  const setActiveControlCenterSection = useStore(s => s.setActiveControlCenterSection);
   const wsStatus = useStore(s => s.wsStatus);
+
+  const openControlCenterSection = (section: ControlCenterSectionId) => {
+    setActiveControlCenterSection(section);
+    setTab("settings");
+  };
+
+  const focusExecutionRun = (runId?: string | null) => {
+    if (runId) {
+      setActiveExecutionRun(runId);
+    }
+    openControlCenterSection("execution");
+  };
+
+  const scrollAuditSectionIntoView = () => {
+    auditSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
+  const queueAuditFocus = (request: AuditFocusRequest) => {
+    pendingAuditFocusRef.current = request;
+    window.setTimeout(() => {
+      scrollAuditSectionIntoView();
+    }, 60);
+  };
 
   useEffect(() => {
     setScheduledTasks(getScheduledTasks());
@@ -171,6 +217,34 @@ export function RemoteOpsCenter() {
     [scopedOperationLogs],
   );
 
+  useEffect(() => {
+    if (!pendingAuditFocusRef.current) {
+      return;
+    }
+
+    const request = pendingAuditFocusRef.current;
+    const matchedLog = scopedOperationLogs.find(log =>
+      log.entityType === request.entityType
+      && log.entityId === request.entityId
+      && log.eventType === request.eventType
+      && log.status === request.status
+      && (request.executionRunId ? log.executionRunId === request.executionRunId : true),
+    );
+
+    if (!matchedLog) {
+      return;
+    }
+
+    pendingAuditFocusRef.current = null;
+    setHighlightedAuditLogId(matchedLog.id);
+  }, [scopedOperationLogs]);
+
+  useEffect(() => {
+    setHighlightedAuditLogId(null);
+    setActionFeedback(null);
+    pendingAuditFocusRef.current = null;
+  }, [currentProjectKey]);
+
   const scenarioCards = [
     buildScenarioCard({
       title: "自动化客服",
@@ -209,6 +283,18 @@ export function RemoteOpsCenter() {
       missingMessage: "当前仓库里还没有 X/Twitter 等社媒通道，也没有发布结果回执链路，所以这块还不能算已具备。",
     }),
   ];
+  const activeTemplate = activeTeamOperatingTemplateId
+    ? getTeamOperatingTemplate(activeTeamOperatingTemplateId)
+    : null;
+  const activeSurface = activeTeamOperatingTemplateId
+    ? TEAM_OPERATING_SURFACES[activeTeamOperatingTemplateId]
+    : null;
+  const remoteRecommendation = activeSurface?.remoteOpsRecommendation ?? null;
+  const recommendationMatches = remoteRecommendation
+    ? automationMode === remoteRecommendation.automationMode
+      && remoteSupervisorEnabled === remoteRecommendation.remoteSupervisorEnabled
+      && autoDispatchScheduledTasks === remoteRecommendation.autoDispatchScheduledTasks
+    : false;
 
   return (
     <div className="control-center">
@@ -224,6 +310,48 @@ export function RemoteOpsCenter() {
           当前项目: {activeSession ? getSessionProjectLabel(activeSession) : "General"} · 远程运营就绪度 {remoteReadinessPercent}%
         </div>
       </div>
+
+      {activeTemplate && remoteRecommendation ? (
+        <div
+          className="control-center__panel"
+          style={{
+            background: "linear-gradient(135deg, rgba(var(--accent-rgb), 0.12), rgba(255,255,255,0.02))",
+            borderColor: "rgba(var(--accent-rgb), 0.22)",
+          }}
+        >
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 16, alignItems: "flex-start", flexWrap: "wrap" }}>
+            <div style={{ display: "grid", gap: 6 }}>
+              <div className="control-center__panel-title">
+                当前模式建议 · {activeTemplate.label}
+              </div>
+              <div className="control-center__copy">{remoteRecommendation.title}</div>
+              <div className="control-center__copy">{remoteRecommendation.copy}</div>
+            </div>
+            <div style={{ display: "grid", gap: 8, minWidth: 220 }}>
+              <div className="control-center__copy">
+                建议模式: <strong className="control-center__strong">{remoteRecommendation.automationMode === "manual" ? "人工" : remoteRecommendation.automationMode === "supervised" ? "监督" : "自治"}</strong>
+              </div>
+              <div className="control-center__copy">
+                远程值守: <strong className="control-center__strong">{remoteRecommendation.remoteSupervisorEnabled ? "开启" : "关闭"}</strong>
+              </div>
+              <div className="control-center__copy">
+                定时自动派发: <strong className="control-center__strong">{remoteRecommendation.autoDispatchScheduledTasks ? "开启" : "关闭"}</strong>
+              </div>
+              <button
+                type="button"
+                className={recommendationMatches ? "btn-primary" : "btn-ghost"}
+                onClick={() => {
+                  setAutomationMode(remoteRecommendation.automationMode);
+                  setRemoteSupervisorEnabled(remoteRecommendation.remoteSupervisorEnabled);
+                  setAutoDispatchScheduledTasks(remoteRecommendation.autoDispatchScheduledTasks);
+                }}
+              >
+                {recommendationMatches ? "当前已符合建议" : "一键套用模式建议"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       <div className="control-center__stats">
         <div className="control-center__stat-card">
@@ -318,10 +446,52 @@ export function RemoteOpsCenter() {
         <button type="button" className="btn-ghost" onClick={() => setTab("tasks")}>
           进入人工接管聊天
         </button>
-        <button type="button" className="btn-ghost" onClick={() => setTab("settings")}>
+        <button type="button" className="btn-ghost" onClick={() => openControlCenterSection("execution")}>
+          查看执行轨迹
+        </button>
+        <button type="button" className="btn-ghost" onClick={() => openControlCenterSection("channels")}>
           打开执行与渠道面板
         </button>
       </div>
+
+      {actionFeedback ? (
+        <div
+          className="control-center__panel"
+          style={{
+            background: "linear-gradient(135deg, rgba(96, 165, 250, 0.12), rgba(255,255,255,0.03))",
+            borderColor: "rgba(96, 165, 250, 0.24)",
+          }}
+        >
+          <div className="control-center__panel-title">{actionFeedback.title}</div>
+          <div className="control-center__copy">{actionFeedback.detail}</div>
+          <div className="control-center__quick-actions" style={{ marginTop: 12 }}>
+            <button type="button" className="btn-ghost" onClick={() => scrollAuditSectionIntoView()}>
+              查看审计记录
+            </button>
+            {actionFeedback.executionRunId ? (
+              <button
+                type="button"
+                className="btn-ghost"
+                onClick={() => focusExecutionRun(actionFeedback.executionRunId)}
+              >
+                查看对应执行
+              </button>
+            ) : null}
+            {actionFeedback.entitySection ? (
+              <button
+                type="button"
+                className="btn-ghost"
+                onClick={() => openControlCenterSection(actionFeedback.entitySection!)}
+              >
+                打开相关面板
+              </button>
+            ) : null}
+            <button type="button" className="btn-ghost" onClick={() => setActionFeedback(null)}>
+              收起提示
+            </button>
+          </div>
+        </div>
+      ) : null}
 
       <div className="control-center__panel">
         <div className="control-center__panel-title">业务自动派发队列</div>
@@ -398,10 +568,35 @@ export function RemoteOpsCenter() {
                             : "人工尝试派发该业务对象，但发送链路未成功建立。",
                           executionRunId: ok ? executionRunId : undefined,
                         });
+                        queueAuditFocus({
+                          entityType: item.entityType,
+                          entityId: item.entityId,
+                          eventType: "dispatch",
+                          status: ok ? "sent" : "blocked",
+                          executionRunId: ok ? executionRunId : undefined,
+                        });
+                        setActionFeedback({
+                          title: ok ? "业务对象已进入执行链路" : "派发未成功建立",
+                          detail: ok
+                            ? "已写入审计日志，并把执行轨迹挂到了这次业务动作上。"
+                            : "这次尝试已进入审计记录，方便回看是哪一步被阻断。",
+                          executionRunId: ok ? executionRunId : undefined,
+                          entitySection: ok ? "execution" : "channels",
+                        });
+                        if (ok && executionRunId) {
+                          setActiveExecutionRun(executionRunId);
+                        }
                         window.setTimeout(() => setDispatchingKey(current => (current === itemKey ? null : current)), 900);
                       }}
                     >
                       {isDispatching ? "派发中..." : "派发执行"}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-ghost"
+                      onClick={() => focusExecutionRun(undefined)}
+                    >
+                      查看执行面板
                     </button>
                     <button type="button" className="btn-ghost" onClick={() => setTab("tasks")}>
                       去聊天页人工接管
@@ -444,25 +639,64 @@ export function RemoteOpsCenter() {
                     <button
                       type="button"
                       className="btn-ghost"
-                      onClick={() => setBusinessApprovalDecision({ entityType: item.entityType, entityId: item.entityId, status: "approved" })}
+                      onClick={() => {
+                        setBusinessApprovalDecision({ entityType: item.entityType, entityId: item.entityId, status: "approved" });
+                        queueAuditFocus({
+                          entityType: item.entityType,
+                          entityId: item.entityId,
+                          eventType: "approval",
+                          status: "approved",
+                        });
+                        setActionFeedback({
+                          title: "审批已批准",
+                          detail: "这条业务对象已进入可自动推进状态，审计区会保留这次批准记录。",
+                          entitySection: "execution",
+                        });
+                      }}
                     >
                       批准
                     </button>
                     <button
                       type="button"
                       className="btn-ghost"
-                      onClick={() => setBusinessApprovalDecision({ entityType: item.entityType, entityId: item.entityId, status: "rejected" })}
+                      onClick={() => {
+                        setBusinessApprovalDecision({ entityType: item.entityType, entityId: item.entityId, status: "rejected" });
+                        queueAuditFocus({
+                          entityType: item.entityType,
+                          entityId: item.entityId,
+                          eventType: "approval",
+                          status: "rejected",
+                        });
+                        setActionFeedback({
+                          title: "审批已驳回",
+                          detail: "这次驳回会保留在审计记录里，后续可以回到业务实体面板继续调整。",
+                          entitySection: "entities",
+                        });
+                      }}
                     >
                       驳回
                     </button>
                     <button
                       type="button"
                       className="btn-ghost"
-                      onClick={() => setBusinessApprovalDecision({ entityType: item.entityType, entityId: item.entityId, status: "pending" })}
+                      onClick={() => {
+                        setBusinessApprovalDecision({ entityType: item.entityType, entityId: item.entityId, status: "pending" });
+                        queueAuditFocus({
+                          entityType: item.entityType,
+                          entityId: item.entityId,
+                          eventType: "approval",
+                          status: "pending",
+                        });
+                        setActionFeedback({
+                          title: "审批已重新打开",
+                          detail: "系统已恢复待确认状态，审计记录会显示这次重新打开动作。",
+                          entitySection: "entities",
+                        });
+                      }}
                     >
                       重新打开
                     </button>
-                    <button type="button" className="btn-ghost" onClick={() => setTab("settings")}>
+                    <button type="button" className="btn-ghost" onClick={() => openControlCenterSection("entities")}>
                       去业务实体面板
                     </button>
                   </div>
@@ -473,7 +707,7 @@ export function RemoteOpsCenter() {
         </div>
       </div>
 
-      <div className="control-center__panel">
+      <div className="control-center__panel" ref={auditSectionRef}>
         <div className="control-center__panel-title">业务审计记录</div>
         <div className="control-center__list">
           <div>最近记录: <strong className="control-center__strong">{recentOperationLogs.length}</strong></div>
@@ -484,30 +718,69 @@ export function RemoteOpsCenter() {
           {recentOperationLogs.length === 0 ? (
             <div className="control-center__copy">当前项目还没有业务审计记录。</div>
           ) : (
-            recentOperationLogs.map(log => (
-              <article key={log.id} className="control-center__dispatch-card">
-                <div className="control-center__approval-head">
-                  <div>
-                    <div className="control-center__panel-title">{log.title}</div>
-                    <div className="control-center__copy">
-                      {log.eventType === "approval" ? "审批" : "派发"} · {log.trigger === "auto" ? "自动值守" : "人工操作"}
+            recentOperationLogs.map(log => {
+              const isHighlighted = log.id === highlightedAuditLogId;
+              return (
+                <article
+                  key={log.id}
+                  className="control-center__dispatch-card"
+                  style={isHighlighted ? {
+                    borderColor: "rgba(96, 165, 250, 0.38)",
+                    background: "linear-gradient(135deg, rgba(96, 165, 250, 0.16), rgba(255,255,255,0.04))",
+                    boxShadow: "0 0 0 1px rgba(96, 165, 250, 0.14) inset",
+                  } : undefined}
+                >
+                  <div className="control-center__approval-head">
+                    <div>
+                      <div className="control-center__panel-title">{log.title}</div>
+                      <div className="control-center__copy">
+                        {log.eventType === "approval" ? "审批" : "派发"} · {log.trigger === "auto" ? "自动值守" : "人工操作"}
+                        {isHighlighted ? " · 最新定位" : ""}
+                      </div>
                     </div>
+                    <span className={`control-center__scenario-badge is-${log.status === "approved" || log.status === "sent" ? "ready" : log.status === "pending" ? "partial" : "blocked"}`}>
+                      {log.status === "approved"
+                        ? "已批准"
+                        : log.status === "rejected"
+                          ? "已驳回"
+                          : log.status === "sent"
+                            ? "已派发"
+                            : log.status === "pending"
+                              ? "待处理"
+                              : "已阻断"}
+                    </span>
                   </div>
-                  <span className={`control-center__scenario-badge is-${log.status === "approved" || log.status === "sent" ? "ready" : log.status === "pending" ? "partial" : "blocked"}`}>
-                    {log.status === "approved"
-                      ? "已批准"
-                      : log.status === "rejected"
-                        ? "已驳回"
-                        : log.status === "sent"
-                          ? "已派发"
-                          : log.status === "pending"
-                            ? "待处理"
-                            : "已阻断"}
-                  </span>
-                </div>
-                <div className="control-center__dispatch-note">{log.detail}</div>
-              </article>
-            ))
+                  <div className="control-center__dispatch-note">{log.detail}</div>
+                  <div className="control-center__quick-actions">
+                    {log.executionRunId ? (
+                      <button
+                        type="button"
+                        className="btn-ghost"
+                        onClick={() => focusExecutionRun(log.executionRunId)}
+                      >
+                        查看对应执行
+                      </button>
+                    ) : null}
+                    <button
+                      type="button"
+                      className="btn-ghost"
+                      onClick={() => openControlCenterSection("entities")}
+                    >
+                      去业务实体面板
+                    </button>
+                    {isHighlighted ? (
+                      <button
+                        type="button"
+                        className="btn-ghost"
+                        onClick={() => setHighlightedAuditLogId(null)}
+                      >
+                        取消高亮
+                      </button>
+                    ) : null}
+                  </div>
+                </article>
+              );
+            })
           )}
         </div>
       </div>

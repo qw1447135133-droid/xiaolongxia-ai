@@ -38,6 +38,10 @@ let wsServerProcess = null;
 let isQuitting = false;
 const allowedWorkspaceRoots = new Set();
 const previewWindows = new Map();
+let installedApplicationsCache = {
+  items: null,
+  scannedAt: 0,
+};
 
 const WORKSPACE_LIST_LIMIT = 500;
 const TEXT_PREVIEW_LIMIT = 512 * 1024;
@@ -121,6 +125,267 @@ function getNpmCommand() {
 
 function getLocalBin(rootPath, name) {
   return path.join(rootPath, 'node_modules', '.bin', process.platform === 'win32' ? `${name}.cmd` : name);
+}
+
+function escapePowerShellSingleQuoted(value) {
+  return String(value ?? '').replace(/'/g, "''");
+}
+
+function tokenizeCommandArgs(rawArgs) {
+  if (!Array.isArray(rawArgs)) return [];
+  return rawArgs
+    .map(value => String(value ?? '').trim())
+    .filter(Boolean);
+}
+
+function quoteForWindowsStart(value) {
+  const stringValue = String(value ?? '');
+  if (!stringValue) return '""';
+  if (!/[\s"]/u.test(stringValue)) return stringValue;
+  return `"${stringValue.replace(/"/g, '""')}"`;
+}
+
+function execForText(command, args, options = {}) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      windowsHide: true,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      shell: false,
+      ...(options.cwd ? { cwd: options.cwd } : {}),
+      ...(options.env ? { env: options.env } : {}),
+    });
+
+    let stdout = '';
+    let stderr = '';
+
+    child.stdout.on('data', (chunk) => {
+      stdout += chunk.toString();
+    });
+
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk.toString();
+    });
+
+    child.once('error', reject);
+    child.once('exit', (code) => {
+      if (code === 0) {
+        resolve(stdout);
+        return;
+      }
+      reject(new Error(stderr.trim() || stdout.trim() || `${command} exited with code ${code}`));
+    });
+  });
+}
+
+async function runPowerShellJson(script) {
+  const powerShellCommand =
+    process.platform === 'win32'
+      ? (
+          safeExists(path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'))
+            ? path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
+            : 'powershell.exe'
+        )
+      : 'powershell';
+
+  const output = await execForText(powerShellCommand, [
+    "-NoProfile",
+    "-ExecutionPolicy",
+    "Bypass",
+    "-Command",
+    script,
+  ]);
+  const trimmed = output.trim();
+  if (!trimmed) return [];
+  return JSON.parse(trimmed);
+}
+
+function collectProgramIdentitySet(target) {
+  const raw = String(target ?? '').trim().toLowerCase();
+  if (!raw) return new Set();
+  const normalized = raw.replace(/^"+|"+$/g, '');
+  const identities = new Set([normalized]);
+  const parsed = path.win32.parse(normalized);
+  if (parsed.base) identities.add(parsed.base.toLowerCase());
+  if (parsed.name) identities.add(parsed.name.toLowerCase());
+  return identities;
+}
+
+function assertNativeProgramAllowed(payload) {
+  const policy = payload?.policy ?? {};
+  if (policy.enabled === false) {
+    throw new Error('本机程序调用已在设置中关闭。');
+  }
+
+  if (!policy.whitelistMode) {
+    return;
+  }
+
+  const whitelist = Array.isArray(policy.whitelist) ? policy.whitelist : [];
+  if (whitelist.length === 0) {
+    throw new Error('已开启白名单模式，但白名单为空，请先添加允许启动的程序。');
+  }
+
+  const targetIdentities = collectProgramIdentitySet(payload?.target);
+  const allowed = whitelist.some(entry => {
+    const identities = collectProgramIdentitySet(entry?.target);
+    for (const identity of identities) {
+      if (targetIdentities.has(identity)) {
+        return true;
+      }
+    }
+    return false;
+  });
+
+  if (!allowed) {
+    throw new Error('当前程序不在白名单内，已拒绝启动。');
+  }
+}
+
+async function listInstalledApplications(forceRefresh = false) {
+  const shouldUseCache =
+    !forceRefresh &&
+    Array.isArray(installedApplicationsCache.items) &&
+    Date.now() - installedApplicationsCache.scannedAt < 60_000;
+
+  if (shouldUseCache) {
+    return installedApplicationsCache.items;
+  }
+
+  if (process.platform !== 'win32') {
+    installedApplicationsCache = {
+      items: [],
+      scannedAt: Date.now(),
+    };
+    return [];
+  }
+
+  const startMenuDirs = [
+    path.join(process.env.ProgramData || 'C:\\ProgramData', 'Microsoft', 'Windows', 'Start Menu', 'Programs'),
+    path.join(process.env.APPDATA || '', 'Microsoft', 'Windows', 'Start Menu', 'Programs'),
+  ]
+    .filter(Boolean)
+    .map(dir => `'${escapePowerShellSingleQuoted(dir)}'`)
+    .join(', ');
+
+  const script = `
+$ErrorActionPreference = 'SilentlyContinue'
+$registryPaths = @(
+  'HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*',
+  'HKLM:\\Software\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*',
+  'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*'
+)
+$entries = New-Object System.Collections.Generic.List[object]
+function Add-Entry($name, $target, $source, $location) {
+  if ([string]::IsNullOrWhiteSpace($name) -or [string]::IsNullOrWhiteSpace($target)) { return }
+  $entries.Add([PSCustomObject]@{
+    name = $name.Trim()
+    target = $target.Trim('" ')
+    source = $source
+    location = $location
+  })
+}
+foreach ($registryPath in $registryPaths) {
+  Get-ItemProperty $registryPath | ForEach-Object {
+    $name = $_.DisplayName
+    if ([string]::IsNullOrWhiteSpace($name)) { return }
+    $target = $null
+    if ($_.DisplayIcon) {
+      $target = ($_.DisplayIcon -split ',')[0]
+    }
+    if ([string]::IsNullOrWhiteSpace($target) -and $_.InstallLocation -and (Test-Path $_.InstallLocation)) {
+      $candidate = Get-ChildItem -Path $_.InstallLocation -Filter *.exe -File | Select-Object -First 1
+      if ($candidate) { $target = $candidate.FullName }
+    }
+    Add-Entry $name $target 'registry' $_.InstallLocation
+  }
+}
+$wsh = New-Object -ComObject WScript.Shell
+foreach ($dir in @(${startMenuDirs})) {
+  if (-not (Test-Path $dir)) { continue }
+  Get-ChildItem -Path $dir -Recurse -File -Include *.lnk | ForEach-Object {
+    $shortcut = $wsh.CreateShortcut($_.FullName)
+    $name = [System.IO.Path]::GetFileNameWithoutExtension($_.Name)
+    $target = $shortcut.TargetPath
+    Add-Entry $name $target 'start-menu' $_.DirectoryName
+  }
+}
+$entries |
+  Group-Object { "{0}|{1}" -f $_.name.ToLowerInvariant(), $_.target.ToLowerInvariant() } |
+  ForEach-Object { $_.Group[0] } |
+  Sort-Object name |
+  ConvertTo-Json -Depth 4 -Compress
+`;
+
+  const scanned = await runPowerShellJson(script);
+  const scannedList = Array.isArray(scanned) ? scanned : scanned ? [scanned] : [];
+  const normalized = scannedList.map((item, index) => ({
+    id: `desktop-app-${index}-${Buffer.from(`${item.name}|${item.target}`).toString('base64').replace(/[^a-z0-9]/gi, '').slice(0, 12)}`,
+    name: item.name,
+    target: item.target,
+    source: item.source === 'registry' ? 'registry' : 'start-menu',
+    ...(item.location ? { location: item.location } : {}),
+  }));
+
+  installedApplicationsCache = {
+    items: normalized,
+    scannedAt: Date.now(),
+  };
+  return normalized;
+}
+
+async function launchNativeApplication(payload) {
+  const target = typeof payload?.target === 'string' ? payload.target.trim() : '';
+  const args = tokenizeCommandArgs(payload?.args);
+  const cwd = typeof payload?.cwd === 'string' && payload.cwd.trim()
+    ? path.resolve(payload.cwd.trim())
+    : undefined;
+
+  if (!target) {
+    throw new Error('程序路径或命令不能为空。');
+  }
+
+  assertNativeProgramAllowed(payload);
+
+  if (cwd && !safeExists(cwd)) {
+    throw new Error('指定的工作目录不存在。');
+  }
+
+  try {
+    const child = spawn(target, args, {
+      detached: true,
+      stdio: 'ignore',
+      windowsHide: true,
+      shell: false,
+      ...(cwd ? { cwd } : {}),
+    });
+    child.unref();
+    return {
+      ok: true,
+      method: 'spawn',
+      message: `已直接启动 ${target}`,
+      pid: child.pid ?? null,
+    };
+  } catch (error) {
+    if (process.platform !== 'win32') {
+      throw error;
+    }
+
+    const startCommand = ['start', '""', quoteForWindowsStart(target), ...args.map(quoteForWindowsStart)].join(' ');
+    const child = spawn('cmd.exe', ['/d', '/s', '/c', startCommand], {
+      detached: true,
+      stdio: 'ignore',
+      windowsHide: true,
+      shell: false,
+      ...(cwd ? { cwd } : {}),
+    });
+    child.unref();
+    return {
+      ok: true,
+      method: 'shell',
+      message: `已通过 Windows Shell 启动 ${target}`,
+      pid: child.pid ?? null,
+    };
+  }
 }
 
 function readWorkspacePackageJson(rootPath) {
@@ -719,7 +984,7 @@ function createMainWindow() {
   });
 
   const productionIndex = path.join(process.resourcesPath, 'app.asar.unpacked', 'out', 'index.html');
-  const url = 'http://localhost:3000';
+  const url = process.env.NEXT_DEV_URL || 'http://localhost:3000';
 
   log('[main] Loading target:', isDev() ? url : productionIndex);
   log('[main] __dirname:', __dirname);
@@ -790,6 +1055,17 @@ app.whenReady().then(async () => {
   });
   ipcMain.handle('run-workspace-verification', async (_event, targetPath) => {
     return runWorkspaceVerification(targetPath);
+  });
+  ipcMain.handle('launch-native-application', async (_event, payload) => {
+    return launchNativeApplication(payload);
+  });
+  ipcMain.handle('list-installed-applications', async (_event, forceRefresh) => {
+    try {
+      return await listInstalledApplications(Boolean(forceRefresh));
+    } catch (error) {
+      log('[main] list-installed-applications failed:', error);
+      throw error;
+    }
   });
 
   // 处理第二个实例尝试启动

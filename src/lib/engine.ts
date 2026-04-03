@@ -130,11 +130,11 @@ function getModel(complexity: TaskComplexity): string {
 
   switch (complexity) {
     case "high":
-      return "gpt-4o";
+      return "gpt-5.4";
     case "medium":
-      return "gpt-4o-mini";
+      return "gpt-5.4-mini";
     case "low":
-      return "gpt-4o-mini";
+      return "gpt-5.4-mini";
   }
 }
 

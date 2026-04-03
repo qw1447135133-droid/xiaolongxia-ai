@@ -154,6 +154,8 @@ export function sendExecutionDispatch({
     type: "settings_sync",
     providers: store.providers,
     agentConfigs: store.agentConfigs,
+    userNickname: store.userNickname,
+    desktopProgramSettings: store.desktopProgramSettings,
   });
 
   const ok = sendWs({

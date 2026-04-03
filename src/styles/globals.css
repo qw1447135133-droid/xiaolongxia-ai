@@ -2706,6 +2706,140 @@ body::after {
   gap: 22px;
 }
 
+.ios-home__mobile-supervision {
+  display: none;
+  gap: 14px;
+  padding: 18px;
+  border-radius: 28px;
+  border: 1px solid rgba(255,255,255,0.72);
+  background: rgba(255,255,255,0.58);
+  backdrop-filter: blur(24px);
+  box-shadow: var(--shadow);
+}
+
+.ios-home__mobile-supervision-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.ios-home__mobile-supervision-inline-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.ios-home__mobile-supervision-grid,
+.ios-home__mobile-supervision-stack {
+  display: grid;
+  gap: 10px;
+}
+
+.ios-home__mobile-supervision-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.ios-home__mobile-supervision-card {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  border-radius: 20px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  background: rgba(255,255,255,0.72);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.72);
+}
+
+.ios-home__mobile-supervision-label {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.ios-home__mobile-supervision-value {
+  font-size: 28px;
+  line-height: 1;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.ios-home__mobile-supervision-note {
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--text-muted);
+}
+
+.ios-home__mobile-supervision-note strong {
+  color: var(--text);
+}
+
+.ios-home__mobile-supervision-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.ios-home__mobile-supervision-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.ios-home__mobile-supervision-meta span {
+  padding: 4px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  background: rgba(255,255,255,0.68);
+}
+
+.ios-home__mobile-supervision-feedback {
+  padding: 10px 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(96, 165, 250, 0.18);
+  background: rgba(96, 165, 250, 0.1);
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.ios-home__mobile-supervision-approval-list {
+  display: grid;
+  gap: 10px;
+}
+
+.ios-home__mobile-supervision-approval-item {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border-radius: 16px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  background: rgba(255,255,255,0.78);
+}
+
+.ios-home__mobile-supervision-event-list {
+  display: grid;
+  gap: 8px;
+}
+
+.ios-home__mobile-supervision-event {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(15, 23, 42, 0.06);
+  background: rgba(255,255,255,0.78);
+}
+
+.ios-home__mobile-supervision-event-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text);
+}
+
 .ios-home__hero,
 .ios-home__plugins,
 .ios-feature-page,
@@ -3975,6 +4109,16 @@ body::after {
   color: var(--text);
 }
 
+.native-apps__status {
+  padding: 12px 14px;
+  border-radius: 16px;
+  border: 1px solid rgba(96, 165, 250, 0.18);
+  background: rgba(96, 165, 250, 0.1);
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.7;
+}
+
 .preset-panel,
 .scheduled-panel,
 .preset-tasks,
@@ -4526,8 +4670,13 @@ body::after {
   .ios-home__prompt-row,
   .ios-home__status,
   .ios-home__grid,
-  .ios-chat-page__empty-actions {
+  .ios-chat-page__empty-actions,
+  .ios-home__mobile-supervision-grid {
     grid-template-columns: 1fr;
+  }
+
+  .ios-home__mobile-supervision {
+    display: grid;
   }
 
   .scheduled-task-form__grid {
@@ -4551,6 +4700,7 @@ body::after {
 
   .ios-chat-shell__topbar,
   .ios-home__hero,
+  .ios-home__mobile-supervision,
   .ios-chat-page__surface,
   .ios-feature-page {
     border-radius: 24px;

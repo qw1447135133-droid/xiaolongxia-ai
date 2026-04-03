@@ -409,10 +409,10 @@ function MetricCard({ label, value, accent }: { label: string; value: string | n
 }
 
 async function syncSettings() {
-  const { providers, agentConfigs, userNickname } = useStore.getState();
+  const { providers, agentConfigs, userNickname, desktopProgramSettings } = useStore.getState();
 
   try {
-    if (sendWs({ type: "settings_sync", providers, agentConfigs, userNickname })) {
+    if (sendWs({ type: "settings_sync", providers, agentConfigs, userNickname, desktopProgramSettings })) {
       return;
     }
 
@@ -420,7 +420,7 @@ async function syncSettings() {
     await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ providers, agentConfigs, userNickname }),
+      body: JSON.stringify({ providers, agentConfigs, userNickname, desktopProgramSettings }),
     });
   } catch (error) {
     console.error("Failed to sync settings:", error);

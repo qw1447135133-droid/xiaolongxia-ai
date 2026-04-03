@@ -9,6 +9,9 @@ import type {
   AppTab,
   AutomationMode,
   CostSummary,
+  DesktopProgramEntry,
+  DesktopProgramSettings,
+  DesktopRuntimeState,
   ExecutionEvent,
   ExecutionRun,
   ExecutionRunSource,
@@ -18,6 +21,8 @@ import type {
   ModelProvider,
   PlatformConfig,
   Task,
+  ControlCenterSectionId,
+  TeamOperatingTemplateId,
 } from "./types";
 import { AGENT_META, PLATFORM_DEFINITIONS } from "./types";
 import {
@@ -137,7 +142,9 @@ interface SettingsSlice {
   platformConfigs: Record<string, PlatformConfig>;
   enabledPluginIds: string[];
   userNickname: string;
+  activeTeamOperatingTemplateId: TeamOperatingTemplateId | null;
   semanticMemoryConfig: SemanticMemoryConfig;
+  desktopProgramSettings: DesktopProgramSettings;
   addProvider: (p: ModelProvider) => void;
   updateProvider: (id: string, updates: Partial<ModelProvider>) => void;
   removeProvider: (id: string) => void;
@@ -147,8 +154,14 @@ interface SettingsSlice {
   togglePlugin: (id: string) => void;
   applyPluginPack: (id: string) => void;
   setUserNickname: (nickname: string) => void;
+  setActiveTeamOperatingTemplate: (id: TeamOperatingTemplateId | null) => void;
   updateSemanticMemoryConfig: (updates: Partial<SemanticMemoryConfig>) => void;
   updateSemanticMemoryPgvectorConfig: (updates: Partial<SemanticMemoryConfig["pgvector"]>) => void;
+  updateDesktopProgramSettings: (updates: Partial<DesktopProgramSettings>) => void;
+  saveDesktopFavorite: (payload: Pick<DesktopProgramEntry, "label" | "target" | "args" | "cwd" | "notes" | "source">) => void;
+  removeDesktopFavorite: (id: string) => void;
+  saveDesktopWhitelistEntry: (payload: Pick<DesktopProgramEntry, "label" | "target" | "args" | "cwd" | "notes" | "source">) => void;
+  removeDesktopWhitelistEntry: (id: string) => void;
 }
 
 interface UISlice {
@@ -156,15 +169,19 @@ interface UISlice {
   leftOpen: boolean;
   rightOpen: boolean;
   activeTab: AppTab;
+  activeControlCenterSectionId: ControlCenterSectionId;
   setTheme: (t: UISlice["theme"]) => void;
   toggleLeft: () => void;
   toggleRight: () => void;
   setTab: (t: AppTab) => void;
+  setActiveControlCenterSection: (section: ControlCenterSectionId) => void;
 }
 
 interface ConnectionSlice {
   wsStatus: "connecting" | "connected" | "disconnected";
+  desktopRuntime: DesktopRuntimeState;
   setWsStatus: (s: ConnectionSlice["wsStatus"]) => void;
+  setDesktopRuntime: (runtime: Partial<DesktopRuntimeState>) => void;
 }
 
 interface AutomationSlice {
@@ -239,6 +256,10 @@ interface BusinessEntitiesSlice {
 interface SemanticKnowledgeSlice {
   semanticKnowledgeDocs: SemanticKnowledgeDocument[];
   createSemanticKnowledgeDoc: (payload: Pick<SemanticKnowledgeDocument, "title" | "content" | "tags" | "sourceLabel">) => void;
+  updateSemanticKnowledgeDoc: (
+    id: string,
+    updates: Partial<Pick<SemanticKnowledgeDocument, "title" | "content" | "tags" | "sourceLabel">>,
+  ) => void;
   deleteSemanticKnowledgeDoc: (id: string) => void;
 }
 
@@ -442,6 +463,48 @@ function normalizeSemanticMemoryConfig(
   };
 }
 
+function normalizeDesktopProgramEntries(entries: unknown): DesktopProgramEntry[] {
+  if (!Array.isArray(entries)) return [];
+
+  return entries
+    .map((entry, index) => {
+      const item = entry as Partial<DesktopProgramEntry>;
+      const target = typeof item?.target === "string" ? item.target.trim() : "";
+      if (!target) return null;
+
+      const now = Date.now();
+      return {
+        id: typeof item?.id === "string" && item.id.trim() ? item.id : `desktop-entry-${now}-${index}`,
+        label: typeof item?.label === "string" && item.label.trim() ? item.label.trim() : target,
+        target,
+        args: Array.isArray(item?.args)
+          ? item.args.map(value => String(value ?? "").trim()).filter(Boolean)
+          : [],
+        ...(typeof item?.cwd === "string" && item.cwd.trim() ? { cwd: item.cwd.trim() } : {}),
+        ...(typeof item?.notes === "string" && item.notes.trim() ? { notes: item.notes.trim() } : {}),
+        source:
+          item?.source === "preset" || item?.source === "scan" || item?.source === "manual"
+            ? item.source
+            : "manual",
+        createdAt: typeof item?.createdAt === "number" ? item.createdAt : now,
+        updatedAt: typeof item?.updatedAt === "number" ? item.updatedAt : now,
+      } satisfies DesktopProgramEntry;
+    })
+    .filter((item): item is DesktopProgramEntry => Boolean(item));
+}
+
+function normalizeDesktopProgramSettings(
+  currentSettings: DesktopProgramSettings,
+  persistedSettings?: Partial<DesktopProgramSettings>,
+): DesktopProgramSettings {
+  return {
+    enabled: persistedSettings?.enabled ?? currentSettings.enabled,
+    whitelistMode: persistedSettings?.whitelistMode ?? currentSettings.whitelistMode,
+    favorites: normalizeDesktopProgramEntries(persistedSettings?.favorites ?? currentSettings.favorites),
+    whitelist: normalizeDesktopProgramEntries(persistedSettings?.whitelist ?? currentSettings.whitelist),
+  };
+}
+
 const seedSession = makeEmptySession();
 const MAX_EXECUTION_RUNS = 24;
 const MAX_EXECUTION_EVENTS = 40;
@@ -460,6 +523,21 @@ const DEFAULT_SEMANTIC_MEMORY_CONFIG: SemanticMemoryConfig = {
     embeddingModel: "text-embedding-3-small",
     dimensions: 1536,
   },
+};
+
+const DEFAULT_DESKTOP_PROGRAM_SETTINGS: DesktopProgramSettings = {
+  enabled: true,
+  whitelistMode: false,
+  favorites: [],
+  whitelist: [],
+};
+
+const DEFAULT_DESKTOP_RUNTIME_STATE: DesktopRuntimeState = {
+  totalClients: 0,
+  launchCapable: 0,
+  installedAppsCapable: 0,
+  lastCheckedAt: null,
+  fetchState: "idle",
 };
 
 function makeEmptyWorkspaceProjectView(rootPath: string | null = null): WorkspaceProjectViewState {
@@ -498,6 +576,31 @@ function capBusinessOperationLogs(records: BusinessOperationRecord[]): BusinessO
   return [...records]
     .sort((left, right) => right.createdAt - left.createdAt)
     .slice(0, MAX_BUSINESS_OPERATION_LOGS);
+}
+
+function upsertDesktopProgramEntry(
+  entries: DesktopProgramEntry[],
+  payload: Pick<DesktopProgramEntry, "label" | "target" | "args" | "cwd" | "notes" | "source">,
+): DesktopProgramEntry[] {
+  const now = Date.now();
+  const normalizedTarget = payload.target.trim().toLowerCase();
+  const existing = entries.find(item => item.target.trim().toLowerCase() === normalizedTarget);
+  const nextEntry: DesktopProgramEntry = {
+    id: existing?.id ?? `desktop-entry-${now}-${Math.random().toString(36).slice(2, 7)}`,
+    label: payload.label.trim() || payload.target.trim(),
+    target: payload.target.trim(),
+    args: payload.args.map(value => String(value ?? "").trim()).filter(Boolean),
+    ...(payload.cwd?.trim() ? { cwd: payload.cwd.trim() } : {}),
+    ...(payload.notes?.trim() ? { notes: payload.notes.trim() } : {}),
+    source: payload.source,
+    createdAt: existing?.createdAt ?? now,
+    updatedAt: now,
+  };
+
+  return [
+    nextEntry,
+    ...entries.filter(item => item.id !== nextEntry.id),
+  ].slice(0, 32);
 }
 
 function resolveActiveProjectScope(state: Pick<Store, "chatSessions" | "activeSessionId" | "workspaceRoot">) {
@@ -835,8 +938,11 @@ export const useStore = create<Store>()(
       agentConfigs: initAgentConfigs(),
       enabledPluginIds: [],
       userNickname: "您",
+      activeTeamOperatingTemplateId: null,
       semanticMemoryConfig: DEFAULT_SEMANTIC_MEMORY_CONFIG,
+      desktopProgramSettings: DEFAULT_DESKTOP_PROGRAM_SETTINGS,
       setUserNickname: (nickname) => set({ userNickname: nickname }),
+      setActiveTeamOperatingTemplate: (activeTeamOperatingTemplateId) => set({ activeTeamOperatingTemplateId }),
       platformConfigs: Object.fromEntries(
         PLATFORM_DEFINITIONS.map(p => [p.id, { enabled: false, fields: {}, status: "idle" as const }])
       ),
@@ -911,11 +1017,49 @@ export const useStore = create<Store>()(
             },
           },
         })),
+      updateDesktopProgramSettings: (updates) =>
+        set(s => ({
+          desktopProgramSettings: {
+            ...s.desktopProgramSettings,
+            ...updates,
+            favorites: updates.favorites ?? s.desktopProgramSettings.favorites,
+            whitelist: updates.whitelist ?? s.desktopProgramSettings.whitelist,
+          },
+        })),
+      saveDesktopFavorite: (payload) =>
+        set(s => ({
+          desktopProgramSettings: {
+            ...s.desktopProgramSettings,
+            favorites: upsertDesktopProgramEntry(s.desktopProgramSettings.favorites, payload),
+          },
+        })),
+      removeDesktopFavorite: (id) =>
+        set(s => ({
+          desktopProgramSettings: {
+            ...s.desktopProgramSettings,
+            favorites: s.desktopProgramSettings.favorites.filter(item => item.id !== id),
+          },
+        })),
+      saveDesktopWhitelistEntry: (payload) =>
+        set(s => ({
+          desktopProgramSettings: {
+            ...s.desktopProgramSettings,
+            whitelist: upsertDesktopProgramEntry(s.desktopProgramSettings.whitelist, payload),
+          },
+        })),
+      removeDesktopWhitelistEntry: (id) =>
+        set(s => ({
+          desktopProgramSettings: {
+            ...s.desktopProgramSettings,
+            whitelist: s.desktopProgramSettings.whitelist.filter(item => item.id !== id),
+          },
+        })),
 
       theme: "dark",
       leftOpen: true,
       rightOpen: true,
       activeTab: "dashboard",
+      activeControlCenterSectionId: "overview",
       setTheme: (theme) => {
         if (typeof document !== "undefined") {
           document.documentElement.setAttribute("data-theme", theme === "dark" ? "" : theme);
@@ -925,9 +1069,18 @@ export const useStore = create<Store>()(
       toggleLeft: () => set(s => ({ leftOpen: !s.leftOpen })),
       toggleRight: () => set(s => ({ rightOpen: !s.rightOpen })),
       setTab: (activeTab) => set({ activeTab }),
+      setActiveControlCenterSection: (activeControlCenterSectionId) => set({ activeControlCenterSectionId }),
 
       wsStatus: "disconnected",
+      desktopRuntime: DEFAULT_DESKTOP_RUNTIME_STATE,
       setWsStatus: (wsStatus) => set({ wsStatus }),
+      setDesktopRuntime: (desktopRuntime) =>
+        set(s => ({
+          desktopRuntime: {
+            ...s.desktopRuntime,
+            ...desktopRuntime,
+          },
+        })),
 
       automationMode: "supervised",
       automationPaused: false,
@@ -1320,6 +1473,29 @@ export const useStore = create<Store>()(
             ].slice(0, 120),
           };
         }),
+      updateSemanticKnowledgeDoc: (id, updates) =>
+        set(s => ({
+          semanticKnowledgeDocs: s.semanticKnowledgeDocs.map(item =>
+            item.id === id
+              ? {
+                  ...item,
+                  ...(updates.title !== undefined ? { title: updates.title.trim() || item.title } : {}),
+                  ...(updates.content !== undefined ? { content: updates.content.trim() || item.content } : {}),
+                  ...(updates.tags !== undefined
+                    ? {
+                        tags: updates.tags
+                          .map(tag => tag.trim())
+                          .filter(Boolean),
+                      }
+                    : {}),
+                  ...(updates.sourceLabel !== undefined
+                    ? { sourceLabel: updates.sourceLabel.trim() || item.sourceLabel }
+                    : {}),
+                  updatedAt: Date.now(),
+                }
+              : item,
+          ),
+        })),
       deleteSemanticKnowledgeDoc: (id) =>
         set(s => ({
           semanticKnowledgeDocs: s.semanticKnowledgeDocs.filter(item => item.id !== id),
@@ -1906,7 +2082,9 @@ export const useStore = create<Store>()(
         enabledPluginIds: s.enabledPluginIds,
         platformConfigs: s.platformConfigs,
         userNickname: s.userNickname,
+        activeTeamOperatingTemplateId: s.activeTeamOperatingTemplateId,
         semanticMemoryConfig: s.semanticMemoryConfig,
+        desktopProgramSettings: s.desktopProgramSettings,
         theme: s.theme,
         leftOpen: s.leftOpen,
         rightOpen: s.rightOpen,
@@ -1946,12 +2124,17 @@ export const useStore = create<Store>()(
           current.semanticMemoryConfig,
           persistedStore.semanticMemoryConfig,
         );
+        const desktopProgramSettings = normalizeDesktopProgramSettings(
+          current.desktopProgramSettings,
+          persistedStore.desktopProgramSettings,
+        );
 
         return ensureChatHydration({
           ...merged,
           agentConfigs,
           agents,
           semanticMemoryConfig,
+          desktopProgramSettings,
           semanticKnowledgeDocs: Array.isArray(persistedStore.semanticKnowledgeDocs)
             ? persistedStore.semanticKnowledgeDocs
             : current.semanticKnowledgeDocs,

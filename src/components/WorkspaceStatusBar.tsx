@@ -6,6 +6,7 @@ import { DEFAULT_CHAT_TITLE } from "@/lib/chat-sessions";
 import { buildBusinessAutomationQueue } from "@/lib/business-operations";
 import { filterByProjectScope, getSessionProjectLabel } from "@/lib/project-context";
 import { reconnectWebSocket } from "@/hooks/useWebSocket";
+import { getDesktopRuntimeTone } from "./DesktopRuntimeBadge";
 
 const WS_LABEL = {
   connected: "在线",
@@ -29,6 +30,7 @@ export function WorkspaceStatusBar() {
   const automationMode = useStore(s => s.automationMode);
   const automationPaused = useStore(s => s.automationPaused);
   const remoteSupervisorEnabled = useStore(s => s.remoteSupervisorEnabled);
+  const desktopRuntime = useStore(s => s.desktopRuntime);
 
   const activeSession = useMemo(
     () => chatSessions.find(session => session.id === activeSessionId),
@@ -70,12 +72,21 @@ export function WorkspaceStatusBar() {
     () => businessAutomationQueue.filter(item => item.automationState === "ready").length,
     [businessAutomationQueue],
   );
+  const desktopRuntimeTone = useMemo(
+    () => getDesktopRuntimeTone(desktopRuntime),
+    [desktopRuntime],
+  );
 
   return (
     <div className="workspace-statusbar">
       <div className={`workspace-statusbar__signal workspace-statusbar__signal--${wsStatus}`}>
         <span className="workspace-statusbar__dot" />
         <span>{WS_LABEL[wsStatus]}</span>
+      </div>
+
+      <div className={`workspace-statusbar__signal workspace-statusbar__signal--${desktopRuntimeTone.tone === "ready" ? "connected" : desktopRuntimeTone.tone === "partial" ? "connecting" : "disconnected"}`}>
+        <span className="workspace-statusbar__dot" style={{ background: desktopRuntimeTone.dot, boxShadow: `0 0 10px ${desktopRuntimeTone.dot}` }} />
+        <span>{desktopRuntimeTone.label}</span>
       </div>
 
       <div className="workspace-statusbar__meta">

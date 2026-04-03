@@ -4,6 +4,20 @@ export type TaskComplexity = "high" | "medium" | "low";
 export type TaskStatus = "pending" | "running" | "done" | "failed";
 export type AppTab = "dashboard" | "tasks" | "workspace" | "meeting" | "settings";
 export type AutomationMode = "manual" | "supervised" | "autonomous";
+export type ControlCenterSectionId =
+  | "overview"
+  | "entities"
+  | "remote"
+  | "execution"
+  | "desktop"
+  | "workspace"
+  | "workflow"
+  | "skills"
+  | "plugins"
+  | "artifacts"
+  | "channels"
+  | "settings"
+  | "about";
 
 export interface AgentState {
   id: AgentId;
@@ -31,7 +45,7 @@ export interface Task {
 export interface Activity {
   id: string;
   agentId: AgentId;
-  type: "task_start" | "task_done" | "task_fail" | "meeting" | "dispatch";
+  type: "task_start" | "task_done" | "task_fail" | "meeting" | "dispatch" | "tool_start" | "tool_done" | "tool_fail";
   summary: string;
   detail?: string;
   timestamp: number;
@@ -99,6 +113,43 @@ export interface ModelProvider {
   baseUrl: string;
 }
 
+export interface DesktopProgramEntry {
+  id: string;
+  label: string;
+  target: string;
+  args: string[];
+  cwd?: string;
+  notes?: string;
+  source: "preset" | "scan" | "manual";
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface DesktopProgramSettings {
+  enabled: boolean;
+  whitelistMode: boolean;
+  favorites: DesktopProgramEntry[];
+  whitelist: DesktopProgramEntry[];
+}
+
+export interface DesktopRuntimeSummary {
+  totalClients: number;
+  launchCapable: number;
+  installedAppsCapable: number;
+  updatedAt: number | null;
+}
+
+export type DesktopRuntimeFetchState = "idle" | "loading" | "ready" | "error";
+
+export interface DesktopRuntimeState {
+  totalClients: number;
+  launchCapable: number;
+  installedAppsCapable: number;
+  lastCheckedAt: number | null;
+  fetchState: DesktopRuntimeFetchState;
+  error?: string;
+}
+
 export interface AgentSkill {
   id: string;
   name: string;
@@ -157,6 +208,9 @@ export interface AgentConfig {
   skills: AgentSkillId[];
 }
 
+export type ModelPresetTier = "reasoning" | "balanced" | "budget";
+export type TeamOperatingTemplateId = "engineering" | "support" | "content";
+
 export const AGENT_META: Record<AgentId, { name: string; emoji: string; badge: string; defaultPersonality: string }> = {
   orchestrator: {
     name: "虾总管",
@@ -214,6 +268,9 @@ export const PROVIDER_MODELS: Record<string, string[]> = {
     "claude-haiku-4-5-20251001",
   ],
   openai: [
+    "gpt-5.4",
+    "gpt-5.4-mini",
+    "gpt-5.4-nano",
     "gpt-4o",
     "gpt-4o-mini",
     "o1",
@@ -258,6 +315,313 @@ export const PROVIDER_MODELS: Record<string, string[]> = {
     "claude-3-7-sonnet-20250219",
   ],
   custom: [],
+};
+
+const PROVIDER_MODEL_PRESETS: Record<string, Record<ModelPresetTier, string>> = {
+  anthropic: {
+    reasoning: "claude-opus-4-6",
+    balanced: "claude-sonnet-4-6",
+    budget: "claude-haiku-4-5-20251001",
+  },
+  openai: {
+    reasoning: "gpt-5.4",
+    balanced: "gpt-5.4-mini",
+    budget: "gpt-5.4-nano",
+  },
+  siliconflow: {
+    reasoning: "deepseek-ai/DeepSeek-R1",
+    balanced: "deepseek-ai/DeepSeek-V3",
+    budget: "Qwen/Qwen2.5-7B-Instruct",
+  },
+  deepseek: {
+    reasoning: "deepseek-reasoner",
+    balanced: "deepseek-chat",
+    budget: "deepseek-chat",
+  },
+  aliyun: {
+    reasoning: "qwen3-max-2026-01-23",
+    balanced: "qwen3.5-plus",
+    budget: "glm-4.7",
+  },
+  "aliyun-coding": {
+    reasoning: "qwen3-coder-next",
+    balanced: "qwen3-coder-plus",
+    budget: "glm-4.7",
+  },
+  "4sapi": {
+    reasoning: "claude-3-7-sonnet-20250219",
+    balanced: "gpt-4o",
+    budget: "gpt-4o-mini",
+  },
+};
+
+export const AGENT_RECOMMENDED_MODEL_TIERS: Record<AgentId, ModelPresetTier> = {
+  orchestrator: "balanced",
+  explorer: "reasoning",
+  writer: "balanced",
+  designer: "balanced",
+  performer: "balanced",
+  greeter: "budget",
+};
+
+export interface TeamOperatingTemplate {
+  id: TeamOperatingTemplateId;
+  label: string;
+  description: string;
+  summary: string;
+  agentTiers: Record<AgentId, ModelPresetTier>;
+  agentSkills: Partial<Record<AgentId, AgentSkillId[]>>;
+}
+
+export type TeamOperatingFocusSectionId = Exclude<ControlCenterSectionId, "overview" | "about">;
+
+export interface TeamOperatingQuickAction {
+  id: string;
+  eyebrow: string;
+  title: string;
+  copy: string;
+  actionLabel: string;
+  tab: AppTab;
+  controlCenterSectionId?: ControlCenterSectionId;
+}
+
+export interface TeamOperatingSurface {
+  statusLabel: string;
+  statusCopy: string;
+  recommendedSectionIds: TeamOperatingFocusSectionId[];
+  quickActions: TeamOperatingQuickAction[];
+  homePrompts: string[];
+  chatStarters: string[];
+  recommendedWorkflowTemplateIds: string[];
+  remoteOpsRecommendation: {
+    automationMode: AutomationMode;
+    remoteSupervisorEnabled: boolean;
+    autoDispatchScheduledTasks: boolean;
+    title: string;
+    copy: string;
+  };
+}
+
+export const TEAM_OPERATING_TEMPLATES: TeamOperatingTemplate[] = [
+  {
+    id: "engineering",
+    label: "研发模式",
+    description: "偏向规划、代码分析、实现和文档沉淀，适合产品搭建与迭代开发。",
+    summary: "总调度与研究走更高质量，设计和内容保持平衡，客服降成本待命。",
+    agentTiers: {
+      orchestrator: "reasoning",
+      explorer: "reasoning",
+      writer: "balanced",
+      designer: "balanced",
+      performer: "budget",
+      greeter: "budget",
+    },
+    agentSkills: {
+      orchestrator: ["frontend", "doc_word"],
+      explorer: ["frontend", "doc_excel"],
+      writer: ["doc_word", "doc_ppt"],
+      designer: ["frontend", "image_edit"],
+      performer: ["doc_ppt"],
+      greeter: ["doc_word"],
+    },
+  },
+  {
+    id: "support",
+    label: "客服值守模式",
+    description: "偏向高频对话、售后处理、口径统一和低成本持续在线。",
+    summary: "客服与文案保持高频响应，总调度居中，研究和设计退到辅助位。",
+    agentTiers: {
+      orchestrator: "balanced",
+      explorer: "budget",
+      writer: "balanced",
+      designer: "budget",
+      performer: "budget",
+      greeter: "balanced",
+    },
+    agentSkills: {
+      orchestrator: ["doc_word"],
+      explorer: ["doc_excel"],
+      writer: ["doc_word"],
+      designer: ["image_edit"],
+      performer: ["doc_ppt"],
+      greeter: ["doc_word", "doc_excel"],
+    },
+  },
+  {
+    id: "content",
+    label: "内容矩阵模式",
+    description: "偏向选题、脚本、视觉和发布协同，适合自动推文、视频和内容工单。",
+    summary: "研究与脚本创作提权，视觉保持平衡，总调度负责节奏和分发。",
+    agentTiers: {
+      orchestrator: "balanced",
+      explorer: "reasoning",
+      writer: "balanced",
+      designer: "balanced",
+      performer: "reasoning",
+      greeter: "budget",
+    },
+    agentSkills: {
+      orchestrator: ["doc_word", "doc_ppt"],
+      explorer: ["doc_excel", "doc_word"],
+      writer: ["doc_word", "doc_ppt"],
+      designer: ["image_edit", "screenshot"],
+      performer: ["doc_ppt", "doc_word"],
+      greeter: ["doc_word"],
+    },
+  },
+];
+
+export const TEAM_OPERATING_SURFACES: Record<TeamOperatingTemplateId, TeamOperatingSurface> = {
+  engineering: {
+    statusLabel: "研发推进",
+    statusCopy: "优先盯执行链路、工作流和工作区上下文，适合产品搭建、联调和交付闭环。",
+    recommendedSectionIds: ["execution", "workflow", "workspace", "settings"],
+    quickActions: [
+      {
+        id: "engineering-chat",
+        eyebrow: "Build",
+        title: "进入聊天推进实现",
+        copy: "把需求拆成执行步骤，直接在主对话区继续研发上下文。",
+        actionLabel: "打开聊天",
+        tab: "tasks",
+      },
+      {
+        id: "engineering-workspace",
+        eyebrow: "Desk",
+        title: "打开工作区整理上下文",
+        copy: "把文件、记忆、Desk Notes 和引用面板收束到当前项目里。",
+        actionLabel: "进入工作区",
+        tab: "workspace",
+      },
+      {
+        id: "engineering-control",
+        eyebrow: "Control",
+        title: "检查模型与工作流",
+        copy: "确认团队档位、插件与工作流是否适合当前开发阶段。",
+        actionLabel: "打开控制台",
+        tab: "settings",
+        controlCenterSectionId: "workflow",
+      },
+    ],
+    homePrompts: [
+      "基于当前项目上下文，帮我拆出今天最值得推进的研发任务，并给出最短交付路径。",
+      "检查当前工作区、项目记忆和执行记录，告诉我下一步该改哪一块代码。",
+      "按研发模式帮我生成一版可以直接开工的实现计划，优先标出风险和验证步骤。",
+    ],
+    chatStarters: [
+      "先 review 当前方案，按研发模式告诉我最大的风险和遗漏。",
+      "把这个开发任务拆成 3 个可以立即执行的小步骤。",
+      "结合当前项目记忆和工作区上下文，直接给我一版实现方案。",
+    ],
+    recommendedWorkflowTemplateIds: ["launch-sprint", "research-loop", "meeting-debrief"],
+    remoteOpsRecommendation: {
+      automationMode: "supervised",
+      remoteSupervisorEnabled: true,
+      autoDispatchScheduledTasks: true,
+      title: "研发模式建议保持监督自动化",
+      copy: "研发阶段适合保留自动派发和远程监督，但不要直接切全自治，便于随时人工接管验证。",
+    },
+  },
+  support: {
+    statusLabel: "客服值守",
+    statusCopy: "优先看业务实体、远程值守和渠道会话，让客户、工单和会话状态更直观。",
+    recommendedSectionIds: ["entities", "remote", "channels", "execution"],
+    quickActions: [
+      {
+        id: "support-chat",
+        eyebrow: "Ops",
+        title: "进入聊天处理当前问题",
+        copy: "直接输入客户诉求、退款场景或待处理事项，让团队立即响应。",
+        actionLabel: "打开聊天",
+        tab: "tasks",
+      },
+      {
+        id: "support-control",
+        eyebrow: "Control",
+        title: "查看值守与渠道面板",
+        copy: "从控制台快速定位客户、线索、工单与渠道会话的积压情况。",
+        actionLabel: "打开控制台",
+        tab: "settings",
+        controlCenterSectionId: "remote",
+      },
+      {
+        id: "support-workspace",
+        eyebrow: "Desk",
+        title: "整理口径与知识上下文",
+        copy: "把 SOP、退款规范和话术记忆收进当前项目工作区。",
+        actionLabel: "进入工作区",
+        tab: "workspace",
+      },
+    ],
+    homePrompts: [
+      "帮我按客服值守模式梳理当前待处理客户、工单和渠道会话，并给出优先级。",
+      "基于当前知识文档和 Desk Notes，生成一版客服值守 SOP 和接管建议。",
+      "检查远程值守、审批队列和自动派发状态，告诉我哪里最容易卡住服务响应。",
+    ],
+    chatStarters: [
+      "按客服值守模式，先告诉我当前最该优先处理的客户问题。",
+      "结合现有 SOP 和知识文档，给我一版统一回复口径。",
+      "把今天的客服待办拆成可自动处理与必须人工接管两部分。",
+    ],
+    recommendedWorkflowTemplateIds: ["research-loop", "meeting-debrief"],
+    remoteOpsRecommendation: {
+      automationMode: "autonomous",
+      remoteSupervisorEnabled: true,
+      autoDispatchScheduledTasks: true,
+      title: "客服值守适合高自动化",
+      copy: "客服场景更适合开启自动派发和远程监督，用自治模式持续值守，再由手机端做抽检和接管。",
+    },
+  },
+  content: {
+    statusLabel: "内容矩阵",
+    statusCopy: "优先看工作流、内容任务和产物输出，适合脚本、视觉和发布协同。",
+    recommendedSectionIds: ["workflow", "entities", "artifacts", "execution"],
+    quickActions: [
+      {
+        id: "content-chat",
+        eyebrow: "Create",
+        title: "进入聊天产出脚本",
+        copy: "从一个选题开始，快速推进到脚本、标题和分发动作。",
+        actionLabel: "打开聊天",
+        tab: "tasks",
+      },
+      {
+        id: "content-workspace",
+        eyebrow: "Desk",
+        title: "整理素材与知识记忆",
+        copy: "把参考素材、封面方向和内容规范收进工作区一起复用。",
+        actionLabel: "进入工作区",
+        tab: "workspace",
+      },
+      {
+        id: "content-control",
+        eyebrow: "Control",
+        title: "查看工作流与产物面板",
+        copy: "把内容工单、产物货架和执行记录串起来看，形成发布闭环。",
+        actionLabel: "打开控制台",
+        tab: "settings",
+        controlCenterSectionId: "workflow",
+      },
+    ],
+    homePrompts: [
+      "按内容矩阵模式，结合当前项目上下文给我今天的选题、脚本和发布优先级。",
+      "检查内容任务、知识文档和工作流，给我一版可以直接执行的内容生产节奏表。",
+      "帮我从当前上下文里提炼一轮内容选题，并拆成脚本、视觉和发布动作。",
+    ],
+    chatStarters: [
+      "按内容矩阵模式，先给我今天最值得做的一个选题。",
+      "把这个内容需求拆成脚本、视觉和分发三步。",
+      "结合当前知识文档和项目记忆，给我一版可以直接发布的内容 brief。",
+    ],
+    recommendedWorkflowTemplateIds: ["launch-sprint", "research-loop"],
+    remoteOpsRecommendation: {
+      automationMode: "supervised",
+      remoteSupervisorEnabled: true,
+      autoDispatchScheduledTasks: false,
+      title: "内容模式建议半自动推进",
+      copy: "内容生产适合保留远程监督，但默认关闭定时自动派发，避免未经确认就批量输出或发布。",
+    },
+  },
 };
 
 export interface PlatformFieldDef {
@@ -438,4 +802,36 @@ export function getModelsForProvider(providerId: string): string[] {
 
   const preset = PROVIDER_PRESETS.find(p => providerId.startsWith(`${p.id}-`) || providerId === p.id);
   return preset ? (PROVIDER_MODELS[preset.id] ?? []) : [];
+}
+
+function resolveProviderPresetId(providerId: string): string | null {
+  if (PROVIDER_MODELS[providerId] || PROVIDER_MODEL_PRESETS[providerId]) return providerId;
+  const preset = PROVIDER_PRESETS.find(p => providerId.startsWith(`${p.id}-`) || providerId === p.id);
+  return preset?.id ?? null;
+}
+
+export function getRecommendedModelForProvider(providerId: string, tier: ModelPresetTier): string | null {
+  const presetId = resolveProviderPresetId(providerId);
+  if (!presetId) return null;
+  return PROVIDER_MODEL_PRESETS[presetId]?.[tier] ?? null;
+}
+
+export function inferRecommendedModelTier(providerId: string, model: string): ModelPresetTier | null {
+  const presetId = resolveProviderPresetId(providerId);
+  if (!presetId || !model) return null;
+  const presets = PROVIDER_MODEL_PRESETS[presetId];
+  if (!presets) return null;
+
+  if (presets.reasoning === model) return "reasoning";
+  if (presets.balanced === model) return "balanced";
+  if (presets.budget === model) return "budget";
+  return null;
+}
+
+export function getRecommendedTierForAgent(agentId: AgentId): ModelPresetTier {
+  return AGENT_RECOMMENDED_MODEL_TIERS[agentId];
+}
+
+export function getTeamOperatingTemplate(id: TeamOperatingTemplateId): TeamOperatingTemplate | null {
+  return TEAM_OPERATING_TEMPLATES.find(template => template.id === id) ?? null;
 }

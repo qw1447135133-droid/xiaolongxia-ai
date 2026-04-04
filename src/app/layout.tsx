@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "@/styles/globals.css";
+import { ELECTRON_RUNTIME_QUERY_KEYS } from "@/lib/electron-runtime";
 
 export const metadata: Metadata = {
   title: "🦞 小龙虾 AI 团队",
@@ -7,6 +8,7 @@ export const metadata: Metadata = {
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
+  const electronRuntimeKeys = JSON.stringify(ELECTRON_RUNTIME_QUERY_KEYS);
   return (
     <html lang="zh" suppressHydrationWarning>
       <body>
@@ -16,8 +18,13 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               (function () {
                 try {
                   var search = window.location && window.location.search ? window.location.search : "";
+                  var params = new URLSearchParams(search.charAt(0) === "?" ? search.slice(1) : search);
+                  var electronKeys = ${electronRuntimeKeys};
                   var isElectron =
-                    /desktop-client=electron|electronSafe=1|electron=1|desktop=electron|runtime=electron|shell=electron|target=electron|platform=electron|client=electron|app=electron/.test(search)
+                    electronKeys.some(function (key) {
+                      var value = params.get(key);
+                      return value === "electron" || value === "1";
+                    })
                     || /electron/i.test((window.navigator && window.navigator.userAgent) || "");
                   if (!isElectron) return;
                   window.__XLX_ELECTRON__ = true;

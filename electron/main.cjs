@@ -1366,6 +1366,94 @@ function waitForWsServer(timeout = 15000) {
   });
 }
 
+const WINDOW_LOAD_TIMEOUT_MS = 15000;
+
+function buildDesktopFallbackHtml({ title, detail, target }) {
+  return `<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>${title}</title>
+    <style>
+      :root {
+        color-scheme: dark;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        padding: 24px;
+        background:
+          radial-gradient(circle at top left, rgba(56, 189, 248, 0.1), transparent 22%),
+          linear-gradient(180deg, #08101d 0%, #0b1220 100%);
+        color: #eef4ff;
+        font-family: "SF Pro Display", "PingFang SC", "Microsoft YaHei UI", sans-serif;
+      }
+      .card {
+        width: min(640px, 100%);
+        padding: 28px;
+        border-radius: 24px;
+        border: 1px solid rgba(148, 163, 184, 0.18);
+        background: rgba(15, 23, 42, 0.92);
+        box-shadow: 0 22px 46px rgba(2, 6, 23, 0.28);
+      }
+      .eyebrow {
+        font-size: 12px;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: #93c5fd;
+      }
+      h1 {
+        margin: 10px 0 12px;
+        font-size: 28px;
+        line-height: 1.1;
+      }
+      p {
+        margin: 0;
+        color: #c7d6ee;
+        line-height: 1.7;
+      }
+      .meta {
+        margin-top: 18px;
+        padding: 14px 16px;
+        border-radius: 18px;
+        background: rgba(30, 41, 59, 0.92);
+        border: 1px solid rgba(148, 163, 184, 0.16);
+        color: #b7c6de;
+        font-size: 13px;
+      }
+      code {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        color: #fde68a;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="card">
+      <div class="eyebrow">Desktop Workspace</div>
+      <h1>${title}</h1>
+      <p>${detail}</p>
+      <div class="meta">目标地址：<code>${target}</code></div>
+    </main>
+  </body>
+</html>`;
+}
+
+function loadDesktopFallback({ title, detail, target }) {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  const html = buildDesktopFallbackHtml({ title, detail, target });
+  const fallbackUrl = `data:text/html;charset=UTF-8,${encodeURIComponent(html)}`;
+  mainWindow.loadURL(fallbackUrl).catch(error => {
+    log('[main] failed to load desktop fallback:', error);
+  });
+  if (!mainWindow.isVisible()) {
+    mainWindow.show();
+  }
+}
+
 // ── 创建主窗口 ──
 function createMainWindow() {
   // 防止重复创建
@@ -1395,8 +1483,30 @@ function createMainWindow() {
   const productionIndex = path.join(process.resourcesPath, 'app.asar.unpacked', 'out', 'index.html');
   const baseUrl = process.env.NEXT_DEV_URL || 'http://localhost:3000';
   const url = `${baseUrl.replace(/\/$/, '')}/electron?desktop-client=electron`;
+  const targetLabel = isDev() ? url : productionIndex;
+  let windowReady = false;
+  let fallbackShown = false;
 
-  log('[main] Loading target:', isDev() ? url : productionIndex);
+  const showDesktopFallback = (title, detail) => {
+    if (fallbackShown) return;
+    fallbackShown = true;
+    loadDesktopFallback({
+      title,
+      detail,
+      target: targetLabel,
+    });
+  };
+
+  const loadGuard = setTimeout(() => {
+    if (windowReady || !mainWindow || mainWindow.isDestroyed()) return;
+    log('[main] load timeout reached, showing desktop fallback');
+    showDesktopFallback(
+      '桌面工作台启动超时',
+      '本地页面没有在预期时间内完成加载。通常是 dev 服务卡住、端口实例异常，或页面初始化被阻塞。请先检查当前开发服务，再重载桌面窗口。',
+    );
+  }, WINDOW_LOAD_TIMEOUT_MS);
+
+  log('[main] Loading target:', targetLabel);
   log('[main] __dirname:', __dirname);
   log('[main] process.resourcesPath:', process.resourcesPath);
 
@@ -1406,14 +1516,24 @@ function createMainWindow() {
 
   loadPromise.catch(err => {
     log('[main] Failed to load window:', err);
+    showDesktopFallback(
+      '桌面工作台加载失败',
+      `主窗口没有成功打开目标页面：${err && err.message ? err.message : err}`,
+    );
   });
 
   mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL) => {
     log('[main] did-fail-load', { errorCode, errorDescription, validatedURL });
+    showDesktopFallback(
+      '桌面页面未成功载入',
+      `页面请求失败（${errorCode} / ${errorDescription || 'unknown'}）。如果这是开发环境，通常意味着 Next 实例不可用或路由没有正确响应。`,
+    );
   });
 
   mainWindow.once('ready-to-show', () => {
     log('[main] ready-to-show');
+    windowReady = true;
+    clearTimeout(loadGuard);
     if (!mainWindow.isDestroyed()) {
       mainWindow.show();
       if (isDev()) mainWindow.webContents.openDevTools({ mode: 'detach' });
@@ -1427,6 +1547,7 @@ function createMainWindow() {
 
   mainWindow.on('closed', () => {
     log('[main] window closed');
+    clearTimeout(loadGuard);
     mainWindow = null;
   });
 

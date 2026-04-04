@@ -42,6 +42,7 @@ import { timeAgo } from "@/lib/utils";
 import { AGENT_META, getTeamOperatingTemplate, TEAM_OPERATING_SURFACES } from "@/store/types";
 import type { AppTab, ControlCenterSectionId } from "@/store/types";
 import { sendExecutionDispatch } from "@/lib/execution-dispatch";
+import { detectElectronRuntimeWindow } from "@/lib/electron-runtime";
 
 const NAV_ITEMS: Array<{ id: AppTab; label: string; eyebrow: string }> = [
   { id: "dashboard", label: "首页", eyebrow: "Home" },
@@ -65,24 +66,7 @@ const CHAT_STARTERS = [
 
 function detectElectronRuntime() {
   if (typeof window === "undefined") return false;
-  const params = new URLSearchParams(window.location.search);
-  return (
-    params.get("desktop-client") === "electron"
-    || params.get("electronSafe") === "1"
-    || params.get("electron") === "1"
-    || params.get("desktop") === "electron"
-    || params.get("runtime") === "electron"
-    || params.get("shell") === "electron"
-    || params.get("target") === "electron"
-    || params.get("platform") === "electron"
-    || params.get("client") === "electron"
-    || params.get("app") === "electron"
-    || Boolean(window.__XLX_ELECTRON__)
-    || Boolean(window.electronAPI?.isElectron)
-    || document.documentElement?.dataset?.runtime === "electron"
-    || document.documentElement?.classList?.contains("runtime-electron")
-    || /electron/i.test(window.navigator.userAgent || "")
-  );
+  return detectElectronRuntimeWindow(window);
 }
 
 function useRuntimeTarget() {

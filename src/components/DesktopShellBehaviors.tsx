@@ -9,6 +9,13 @@ export function DesktopShellBehaviors() {
   const setTab = useStore(s => s.setTab);
 
   useEffect(() => {
+    const isElectronRuntime =
+      Boolean(window.electronAPI?.isElectron)
+      || /electron/i.test(window.navigator.userAgent || "");
+
+    document.documentElement.classList.toggle("runtime-electron", isElectronRuntime);
+    document.body.classList.toggle("runtime-electron", isElectronRuntime);
+
     let autoClosedLeft = false;
     let autoClosedRight = false;
 
@@ -68,6 +75,8 @@ export function DesktopShellBehaviors() {
     document.addEventListener("keydown", onKeyDown);
 
     return () => {
+      document.documentElement.classList.remove("runtime-electron");
+      document.body.classList.remove("runtime-electron");
       window.removeEventListener("resize", syncResponsiveLayout);
       document.removeEventListener("keydown", onKeyDown);
     };

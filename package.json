@@ -12,8 +12,8 @@
     "electron:dev": "node scripts/electron-dev.js",
     "electron:dev:clean": "node scripts/electron-dev.js --clean",
     "build": "next build",
-    "electron:build": "cross-env ELECTRON_BUILD=true next build && electron-builder --win nsis portable",
-    "electron:build:mac": "cross-env ELECTRON_BUILD=true next build && electron-builder --mac",
+    "electron:build": "cross-env-shell \"ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/ ELECTRON_BUILD=true next build && electron-builder --win nsis portable\"",
+    "electron:build:mac": "cross-env-shell \"ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/ ELECTRON_BUILD=true next build && electron-builder --mac\"",
     "start": "next start"
   },
   "build": {

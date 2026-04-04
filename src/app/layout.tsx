@@ -8,8 +8,39 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="zh">
-      <body>{children}</body>
+    <html lang="zh" suppressHydrationWarning>
+      <body suppressHydrationWarning>
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `
+              (function () {
+                try {
+                  var isElectron =
+                    !!(window.electronAPI && window.electronAPI.isElectron) ||
+                    /electron/i.test((navigator && navigator.userAgent) || "");
+                  if (!isElectron) return;
+                  window.__XLX_ELECTRON__ = true;
+                  var mark = function () {
+                    document.documentElement.classList.add("runtime-electron");
+                    document.documentElement.setAttribute("data-runtime", "electron");
+                    if (document.body) {
+                      document.body.classList.add("runtime-electron");
+                    }
+                  };
+                  if (document.readyState === "loading") {
+                    document.addEventListener("DOMContentLoaded", mark, { once: true });
+                  } else {
+                    mark();
+                  }
+                } catch (error) {
+                  console.warn("runtime-electron bootstrap failed", error);
+                }
+              })();
+            `,
+          }}
+        />
+        {children}
+      </body>
     </html>
   );
 }

@@ -1,3 +1,4 @@
+import type { BusinessEntityType } from "@/types/business-entities";
 import type { AppTab } from "@/store/types";
 
 export type WorkflowTargetTab = AppTab;
@@ -29,6 +30,8 @@ export interface WorkflowTemplate {
 export interface WorkflowRun {
   id: string;
   templateId: string;
+  entityType?: BusinessEntityType;
+  entityId?: string;
   title: string;
   accent: string;
   summary: string;

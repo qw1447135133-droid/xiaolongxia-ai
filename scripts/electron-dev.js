@@ -4,11 +4,14 @@ const { spawn } = require("child_process");
 const http = require("http");
 const net = require("net");
 const path = require("path");
+const fs = require("fs");
 const electronBinary = require("electron");
 
 const projectRoot = path.resolve(__dirname, "..");
 const nextPort = 3000;
 const wsPort = 3001;
+const startupLog = path.join(process.env.APPDATA || projectRoot, "xiaolongxia-web-startup.log");
+const STARTUP_LOG_MAX_BYTES = 512 * 1024;
 const children = [];
 let shuttingDown = false;
 const cleanMode = process.argv.includes("--clean");
@@ -19,6 +22,13 @@ function log(scope, message) {
 
 function logError(scope, message) {
   process.stderr.write(`[${scope}] ${message}\n`);
+}
+
+function appendNodeOption(existingValue, option) {
+  const normalized = String(existingValue || "").trim();
+  if (!normalized) return option;
+  if (normalized.split(/\s+/).includes(option)) return normalized;
+  return `${normalized} ${option}`;
 }
 
 function getNextBin() {
@@ -84,7 +94,6 @@ async function waitFor(check, label, timeoutMs = 30000, intervalMs = 500) {
 
 function spawnManaged(name, command, args, envOverrides = {}) {
   log(name, `starting ${command} ${args.join(" ")}`.trim());
-  const useShell = process.platform === "win32" && command.toLowerCase().endsWith(".cmd");
   const env = {
     ...process.env,
     FORCE_COLOR: "1",
@@ -95,11 +104,15 @@ function spawnManaged(name, command, args, envOverrides = {}) {
     delete env.ELECTRON_RUN_AS_NODE;
   }
 
-  const child = spawn(command, args, {
+  const isWindowsCmdShim = process.platform === "win32" && command.toLowerCase().endsWith(".cmd");
+  const spawnCommand = isWindowsCmdShim ? process.env.ComSpec || "cmd.exe" : command;
+  const spawnArgs = isWindowsCmdShim ? ["/d", "/s", "/c", command, ...args] : args;
+
+  const child = spawn(spawnCommand, spawnArgs, {
     cwd: projectRoot,
     env,
     stdio: "inherit",
-    shell: useShell,
+    shell: false,
   });
 
   children.push(child);
@@ -173,30 +186,108 @@ async function cleanRepoProcesses() {
     `}`,
   ].join("\n");
 
-  const output = await execForText("powershell", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command]);
-  const lines = output
-    .split(/\r?\n/)
-    .map(line => line.trim())
-    .filter(Boolean);
+  try {
+    const output = await execForText("powershell", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", `${command}\nexit 0`]);
+    const lines = output
+      .split(/\r?\n/)
+      .map(line => line.trim())
+      .filter(Boolean);
 
-  if (lines.length === 0) {
-    log("clean", "no repo-specific Electron or Node processes were running");
-  } else {
+    if (lines.length === 0) {
+      log("clean", "no repo-specific Electron or Node processes were running");
+    } else {
+      for (const line of lines) {
+        log("clean", line);
+      }
+    }
+
+    await new Promise(resolve => setTimeout(resolve, 1200));
+  } catch (error) {
+    logError("clean", `failed to stop repo processes: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+async function cleanRepoElectronProcesses() {
+  if (process.platform !== "win32") {
+    return;
+  }
+
+  const escapedRoot = projectRoot.replace(/'/g, "''");
+  const escapedElectronBinary = path.join(projectRoot, "node_modules", "electron", "dist", "electron.exe").replace(/'/g, "''");
+  const command = [
+    `$repoRoot = '${escapedRoot}'`,
+    `$electronBinary = '${escapedElectronBinary}'`,
+    `$currentPid = ${process.pid}`,
+    `$targets = Get-CimInstance Win32_Process | Where-Object {`,
+    `  $_.ProcessId -ne $currentPid -and $_.Name -eq 'electron.exe' -and (`,
+    `    $_.CommandLine -like "*$repoRoot*" -or`,
+    `    $_.ExecutablePath -eq $electronBinary`,
+    `  )`,
+    `}`,
+    `foreach ($target in $targets) {`,
+    `  try {`,
+    `    Stop-Process -Id $target.ProcessId -Force -ErrorAction Stop`,
+    `    Write-Output ("stopped electron.exe #" + $target.ProcessId)`,
+    `  } catch {}`,
+    `}`,
+  ].join("\n");
+
+  try {
+    const output = await execForText("powershell", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", `${command}\nexit 0`]);
+    const lines = output
+      .split(/\r?\n/)
+      .map(line => line.trim())
+      .filter(Boolean);
+
     for (const line of lines) {
       log("clean", line);
     }
-  }
 
-  await new Promise(resolve => setTimeout(resolve, 1200));
+    if (lines.length > 0) {
+      await new Promise(resolve => setTimeout(resolve, 800));
+    }
+  } catch (error) {
+    logError("clean", `failed to stop stale Electron processes: ${error instanceof Error ? error.message : String(error)}`);
+  }
 }
 
+<<<<<<< Updated upstream
+=======
+function cleanNextArtifacts() {
+  const nextDir = path.join(projectRoot, ".next");
+
+  try {
+    if (require("fs").existsSync(nextDir)) {
+      require("fs").rmSync(nextDir, { recursive: true, force: true });
+      log("clean", "removed stale .next artifacts");
+    }
+  } catch (error) {
+    logError("clean", `failed to remove .next artifacts: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+function trimStartupLog() {
+  try {
+    if (!fs.existsSync(startupLog)) return;
+    const stats = fs.statSync(startupLog);
+    if (stats.size <= STARTUP_LOG_MAX_BYTES) return;
+    fs.writeFileSync(startupLog, "", "utf8");
+    log("clean", "trimmed stale desktop startup log");
+  } catch (error) {
+    logError("clean", `failed to trim desktop startup log: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+>>>>>>> Stashed changes
 async function ensureNextDev() {
   if (await isHttpReady(nextPort)) {
     log("Next", `reusing existing dev server on http://localhost:${nextPort}`);
     return { reused: true };
   }
 
-  const child = spawnManaged("Next", getNextBin(), ["dev", "-p", String(nextPort)]);
+  const child = spawnManaged("Next", getNextBin(), ["dev", "-p", String(nextPort)], {
+    NODE_OPTIONS: appendNodeOption(process.env.NODE_OPTIONS, "--no-deprecation"),
+  });
   await waitFor(() => isHttpReady(nextPort), "Next dev server");
   log("Next", `ready on http://localhost:${nextPort}`);
   return { reused: false, child };
@@ -227,6 +318,8 @@ function killStartedChildren() {
 }
 
 async function main() {
+  trimStartupLog();
+
   if (cleanMode) {
     await cleanRepoProcesses();
   }
@@ -234,7 +327,15 @@ async function main() {
   await ensureWsServer();
   await ensureNextDev();
 
+<<<<<<< Updated upstream
   log("Electron", "launching desktop shell");
+=======
+  if (!cleanMode) {
+    await cleanRepoElectronProcesses();
+  }
+
+  log("Electron", `launching desktop shell against http://localhost:${next.port}`);
+>>>>>>> Stashed changes
   const electronChild = spawnManaged("Electron", electronBinary, ["."], {
     NODE_ENV: "development",
   });

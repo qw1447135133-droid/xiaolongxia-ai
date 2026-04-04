@@ -24,6 +24,20 @@ import {
 } from "@/lib/chat-sessions";
 import { PLUGIN_PACKS } from "@/lib/plugin-runtime";
 import type {
+<<<<<<< Updated upstream
+=======
+  BusinessApprovalRecord,
+  BusinessChannelSession,
+  BusinessContentTask,
+  BusinessCustomer,
+  BusinessEntityType,
+  BusinessLead,
+  BusinessPublishedLink,
+  BusinessOperationRecord,
+  BusinessTicket,
+} from "@/types/business-entities";
+import type {
+>>>>>>> Stashed changes
   WorkspaceDeskNote,
   WorkspaceEntry,
   WorkspacePreview,
@@ -151,6 +165,101 @@ interface WorkflowSlice {
   removeWorkflowRun: (workflowRunId: string) => void;
 }
 
+<<<<<<< Updated upstream
+=======
+interface BusinessEntitiesSlice {
+  businessApprovals: BusinessApprovalRecord[];
+  businessOperationLogs: BusinessOperationRecord[];
+  businessCustomers: BusinessCustomer[];
+  businessLeads: BusinessLead[];
+  businessTickets: BusinessTicket[];
+  businessContentTasks: BusinessContentTask[];
+  businessChannelSessions: BusinessChannelSession[];
+  createBusinessCustomer: (payload: Pick<BusinessCustomer, "name" | "tier" | "primaryChannel" | "company" | "summary">) => void;
+  createBusinessLead: (payload: Pick<BusinessLead, "title" | "customerId" | "source" | "stage" | "score" | "nextAction">) => void;
+  createBusinessTicket: (payload: Pick<BusinessTicket, "subject" | "customerId" | "channelSessionId" | "status" | "priority" | "summary">) => void;
+  createBusinessContentTask: (payload: Pick<BusinessContentTask, "title" | "customerId" | "leadId" | "channel" | "format" | "goal" | "publishTargets" | "status" | "priority" | "brief" | "scheduledFor">) => void;
+  createBusinessChannelSession: (payload: Pick<BusinessChannelSession, "title" | "customerId" | "channel" | "externalRef" | "status" | "summary">) => void;
+  updateBusinessContentTask: (
+    id: string,
+    updates: Partial<Pick<BusinessContentTask, "channel" | "format" | "goal" | "publishTargets" | "status" | "priority" | "brief" | "scheduledFor" | "latestDraftSummary" | "publishedLinks" | "lastWorkflowRunId" | "lastExecutionRunId" | "lastOperationAt">>,
+  ) => void;
+  advanceBusinessLeadStage: (id: string) => void;
+  advanceBusinessTicketStatus: (id: string) => void;
+  advanceBusinessContentTaskStatus: (id: string) => void;
+  advanceBusinessChannelSessionStatus: (id: string) => void;
+  setBusinessApprovalDecision: (payload: {
+    entityType: BusinessEntityType;
+    entityId: string;
+    status: BusinessApprovalRecord["status"];
+    note?: string;
+  }) => void;
+  recordBusinessOperation: (payload: {
+    entityType: BusinessEntityType;
+    entityId: string;
+    eventType: BusinessOperationRecord["eventType"];
+    trigger: BusinessOperationRecord["trigger"];
+    status: BusinessOperationRecord["status"];
+    title: string;
+    detail: string;
+    executionRunId?: string;
+  }) => void;
+  recordBusinessPublishResult: (payload: {
+    entityId: string;
+    status: "completed" | "failed";
+    target: BusinessPublishedLink["label"];
+    channel: BusinessPublishedLink["channel"];
+    summary: string;
+    url?: string;
+    externalId?: string;
+    failureReason?: string;
+    executionRunId?: string;
+  }) => void;
+  seedBusinessEntitiesForProject: (scope?: { projectId?: string | null; rootPath?: string | null }) => void;
+  clearBusinessEntitiesForProject: (scope?: { projectId?: string | null; rootPath?: string | null }) => void;
+}
+
+interface SemanticKnowledgeSlice {
+  semanticKnowledgeDocs: SemanticKnowledgeDocument[];
+  createSemanticKnowledgeDoc: (payload: Pick<SemanticKnowledgeDocument, "title" | "content" | "tags" | "sourceLabel">) => void;
+  updateSemanticKnowledgeDoc: (
+    id: string,
+    updates: Partial<Pick<SemanticKnowledgeDocument, "title" | "content" | "tags" | "sourceLabel">>,
+  ) => void;
+  deleteSemanticKnowledgeDoc: (id: string) => void;
+}
+
+interface ExecutionSlice {
+  executionRuns: ExecutionRun[];
+  activeExecutionRunId: string | null;
+  createExecutionRun: (payload: {
+    id?: string;
+    sessionId: string;
+    instruction: string;
+    source?: ExecutionRunSource;
+  }) => string;
+  updateExecutionRun: (payload: {
+    id: string;
+    sessionId?: string;
+    instruction?: string;
+    status?: ExecutionRunStatus;
+    source?: ExecutionRunSource;
+    currentAgentId?: AgentId;
+    totalTasks?: number;
+    completedTasks?: number;
+    failedTasks?: number;
+    verificationStatus?: VerificationStatus;
+    verificationResults?: VerificationStepResult[];
+    verificationUpdatedAt?: number;
+    timestamp?: number;
+    completedAt?: number;
+    event?: ExecutionEvent;
+  }) => void;
+  failExecutionRun: (runId: string, detail: string) => void;
+  setActiveExecutionRun: (runId: string | null) => void;
+}
+
+>>>>>>> Stashed changes
 interface WorkspaceSlice {
   workspaceRoot: string | null;
   workspaceCurrentPath: string | null;
@@ -563,18 +672,64 @@ export const useStore = create<Store>()(
           ),
         })),
       completeWorkflowRun: (workflowRunId) =>
-        set(s => ({
-          workflowRuns: s.workflowRuns.map(run =>
+        set(s => {
+          const now = Date.now();
+          const targetRun = s.workflowRuns.find(run => run.id === workflowRunId) ?? null;
+          if (!targetRun) return {};
+
+          const nextWorkflowRuns = s.workflowRuns.map(run =>
             run.id === workflowRunId
               ? {
                   ...run,
-                  status: "completed",
-                  completedAt: Date.now(),
-                  updatedAt: Date.now(),
+                  status: "completed" as const,
+                  completedAt: now,
+                  updatedAt: now,
                 }
               : run,
-          ),
-        })),
+          );
+          const completionSummary = `已完成流程「${targetRun.title}」，请回到聊天或执行记录查看最新产出。`;
+
+          const nextContentTasks = targetRun.entityType === "contentTask" && targetRun.entityId
+            ? s.businessContentTasks.map(task =>
+                task.id === targetRun.entityId
+                  ? {
+                      ...task,
+                      latestDraftSummary: completionSummary,
+                      lastWorkflowRunId: targetRun.id,
+                      lastOperationAt: now,
+                      updatedAt: now,
+                    }
+                  : task,
+              )
+            : s.businessContentTasks;
+
+          const scope = resolveBusinessScope(s);
+          const nextOperationLogs = targetRun.entityType === "contentTask" && targetRun.entityId
+            ? capBusinessOperationLogs([
+                {
+                  id: `biz-op-${now}-${Math.random().toString(36).slice(2, 7)}`,
+                  entityType: "contentTask",
+                  entityId: targetRun.entityId,
+                  eventType: "workflow",
+                  trigger: "manual",
+                  status: "completed",
+                  title: targetRun.title,
+                  detail: `工作流已完成，并回写最近草稿摘要：${completionSummary}`,
+                  projectId: scope.projectId,
+                  rootPath: scope.rootPath,
+                  createdAt: now,
+                  updatedAt: now,
+                },
+                ...s.businessOperationLogs,
+              ])
+            : s.businessOperationLogs;
+
+          return {
+            workflowRuns: nextWorkflowRuns,
+            businessContentTasks: nextContentTasks,
+            businessOperationLogs: nextOperationLogs,
+          };
+        }),
       archiveWorkflowRun: (workflowRunId) =>
         set(s => ({
           workflowRuns: s.workflowRuns.map(run =>
@@ -592,6 +747,538 @@ export const useStore = create<Store>()(
           workflowRuns: s.workflowRuns.filter(run => run.id !== workflowRunId),
         })),
 
+<<<<<<< Updated upstream
+=======
+      businessApprovals: [],
+      businessOperationLogs: [],
+      businessCustomers: [],
+      businessLeads: [],
+      businessTickets: [],
+      businessContentTasks: [],
+      businessChannelSessions: [],
+      createBusinessCustomer: (payload) =>
+        set(s => {
+          const now = Date.now();
+          const scope = resolveBusinessScope(s);
+          return {
+            businessCustomers: [
+              {
+                id: `customer-${now}-${Math.random().toString(36).slice(2, 7)}`,
+                projectId: scope.projectId,
+                rootPath: scope.rootPath,
+                createdAt: now,
+                updatedAt: now,
+                ownerAgentId: "greeter",
+                tags: [],
+                ...payload,
+              },
+              ...s.businessCustomers,
+            ],
+          };
+        }),
+      createBusinessLead: (payload) =>
+        set(s => {
+          const now = Date.now();
+          const scope = resolveBusinessScope(s);
+          return {
+            businessLeads: [
+              {
+                id: `lead-${now}-${Math.random().toString(36).slice(2, 7)}`,
+                projectId: scope.projectId,
+                rootPath: scope.rootPath,
+                createdAt: now,
+                updatedAt: now,
+                ownerAgentId: "explorer",
+                ...payload,
+              },
+              ...s.businessLeads,
+            ],
+          };
+        }),
+      createBusinessTicket: (payload) =>
+        set(s => {
+          const now = Date.now();
+          const scope = resolveBusinessScope(s);
+          return {
+            businessTickets: [
+              {
+                id: `ticket-${now}-${Math.random().toString(36).slice(2, 7)}`,
+                projectId: scope.projectId,
+                rootPath: scope.rootPath,
+                createdAt: now,
+                updatedAt: now,
+                ownerAgentId: "greeter",
+                ...payload,
+              },
+              ...s.businessTickets,
+            ],
+          };
+        }),
+      createBusinessContentTask: (payload) =>
+        set(s => {
+          const now = Date.now();
+          const scope = resolveBusinessScope(s);
+          return {
+            businessContentTasks: [
+              {
+                id: `content-${now}-${Math.random().toString(36).slice(2, 7)}`,
+                projectId: scope.projectId,
+                rootPath: scope.rootPath,
+                createdAt: now,
+                updatedAt: now,
+                ownerAgentId: "writer",
+                publishedLinks: [],
+                lastOperationAt: now,
+                ...payload,
+              },
+              ...s.businessContentTasks,
+            ],
+          };
+        }),
+      createBusinessChannelSession: (payload) =>
+        set(s => {
+          const now = Date.now();
+          const scope = resolveBusinessScope(s);
+          return {
+            businessChannelSessions: [
+              {
+                id: `channel-session-${now}-${Math.random().toString(36).slice(2, 7)}`,
+                projectId: scope.projectId,
+                rootPath: scope.rootPath,
+                createdAt: now,
+                updatedAt: now,
+                lastMessageAt: now,
+                ...payload,
+              },
+              ...s.businessChannelSessions,
+            ],
+          };
+        }),
+      updateBusinessContentTask: (id, updates) =>
+        set(s => ({
+          businessContentTasks: s.businessContentTasks.map(item =>
+            item.id === id
+              ? {
+                  ...item,
+                  ...updates,
+                  updatedAt: Date.now(),
+                }
+              : item,
+          ),
+        })),
+      advanceBusinessLeadStage: (id) =>
+        set(s => ({
+          businessLeads: s.businessLeads.map(item =>
+            item.id === id
+              ? { ...item, stage: getNextLeadStage(item.stage), updatedAt: Date.now() }
+              : item,
+          ),
+        })),
+      advanceBusinessTicketStatus: (id) =>
+        set(s => ({
+          businessTickets: s.businessTickets.map(item =>
+            item.id === id
+              ? { ...item, status: getNextTicketStatus(item.status), updatedAt: Date.now() }
+              : item,
+          ),
+        })),
+      advanceBusinessContentTaskStatus: (id) =>
+        set(s => ({
+          businessContentTasks: s.businessContentTasks.map(item =>
+            item.id === id
+              ? { ...item, status: getNextContentTaskStatus(item.status), updatedAt: Date.now() }
+              : item,
+          ),
+        })),
+      advanceBusinessChannelSessionStatus: (id) =>
+        set(s => ({
+          businessChannelSessions: s.businessChannelSessions.map(item =>
+            item.id === id
+              ? { ...item, status: getNextChannelSessionStatus(item.status), updatedAt: Date.now() }
+              : item,
+          ),
+        })),
+      setBusinessApprovalDecision: ({ entityType, entityId, status, note }) =>
+        set(s => {
+          const now = Date.now();
+          const scope = resolveBusinessScope(s);
+          const entityTitle = getBusinessEntityTitle(s, entityType, entityId);
+          const existing = s.businessApprovals.find(
+            item => item.entityType === entityType && item.entityId === entityId,
+          );
+          const nextRecord: BusinessApprovalRecord = existing
+            ? {
+                ...existing,
+                status,
+                note: note?.trim() || existing.note,
+                decidedAt: status === "pending" ? undefined : now,
+                updatedAt: now,
+              }
+            : {
+                id: `approval-${now}-${Math.random().toString(36).slice(2, 7)}`,
+                entityType,
+                entityId,
+                status,
+                projectId: scope.projectId,
+                rootPath: scope.rootPath,
+                createdAt: now,
+                updatedAt: now,
+                requestedAt: now,
+                decidedAt: status === "pending" ? undefined : now,
+                note: note?.trim() || undefined,
+              };
+
+          return {
+            businessApprovals: [
+              nextRecord,
+              ...s.businessApprovals.filter(item => item.id !== nextRecord.id),
+            ].slice(0, 200),
+            businessOperationLogs: capBusinessOperationLogs([
+              {
+                id: `biz-op-${now}-${Math.random().toString(36).slice(2, 7)}`,
+                entityType,
+                entityId,
+                eventType: "approval",
+                trigger: "manual",
+                status,
+                title: entityTitle,
+                detail:
+                  status === "approved"
+                    ? "人工批准该业务对象进入自动执行链路。"
+                    : status === "rejected"
+                      ? "人工驳回该业务对象的自动执行请求。"
+                      : "重新打开审批，等待人工进一步确认。",
+                projectId: scope.projectId,
+                rootPath: scope.rootPath,
+                createdAt: now,
+                updatedAt: now,
+              },
+              ...s.businessOperationLogs,
+            ]),
+          };
+        }),
+      recordBusinessOperation: ({ entityType, entityId, eventType, trigger, status, title, detail, executionRunId }) =>
+        set(s => {
+          const now = Date.now();
+          const scope = resolveBusinessScope(s);
+          return {
+            businessOperationLogs: capBusinessOperationLogs([
+              {
+                id: `biz-op-${now}-${Math.random().toString(36).slice(2, 7)}`,
+                entityType,
+                entityId,
+                eventType,
+                trigger,
+                status,
+                title,
+                detail,
+                executionRunId,
+                projectId: scope.projectId,
+                rootPath: scope.rootPath,
+                createdAt: now,
+                updatedAt: now,
+              },
+              ...s.businessOperationLogs,
+            ]),
+          };
+        }),
+      recordBusinessPublishResult: ({ entityId, status, target, channel, summary, url, externalId, failureReason, executionRunId }) =>
+        set(s => {
+          const now = Date.now();
+          const scope = resolveBusinessScope(s);
+          const nextPublishedLinks = status === "completed"
+            ? s.businessContentTasks.find(item => item.id === entityId)?.publishedLinks ?? []
+            : [];
+
+          return {
+            businessContentTasks: s.businessContentTasks.map(item =>
+              item.id === entityId
+                ? {
+                    ...item,
+                    status: status === "completed" ? "published" : item.status,
+                    publishedLinks: status === "completed"
+                      ? [
+                          {
+                            channel,
+                            label: target,
+                            ...(url ? { url } : {}),
+                            ...(externalId ? { externalId } : {}),
+                            publishedAt: now,
+                          },
+                          ...nextPublishedLinks,
+                        ].slice(0, 8)
+                      : item.publishedLinks,
+                    lastOperationAt: now,
+                    lastExecutionRunId: executionRunId ?? item.lastExecutionRunId,
+                    updatedAt: now,
+                  }
+                : item,
+            ),
+            businessOperationLogs: capBusinessOperationLogs([
+              {
+                id: `biz-op-${now}-${Math.random().toString(36).slice(2, 7)}`,
+                entityType: "contentTask",
+                entityId,
+                eventType: "publish",
+                trigger: "manual",
+                status,
+                title: target,
+                detail: status === "completed"
+                  ? `${summary}${url ? ` · 链接 ${url}` : ""}${externalId ? ` · 外部ID ${externalId}` : ""}`
+                  : `${summary}${failureReason ? ` · 失败原因 ${failureReason}` : ""}`,
+                executionRunId,
+                projectId: scope.projectId,
+                rootPath: scope.rootPath,
+                createdAt: now,
+                updatedAt: now,
+              },
+              ...s.businessOperationLogs,
+            ]),
+          };
+        }),
+      seedBusinessEntitiesForProject: (scope) =>
+        set(s => {
+          const activeSession = s.chatSessions.find(session => session.id === s.activeSessionId) ?? null;
+          const resolvedScope = {
+            projectId: scope?.projectId ?? activeSession?.projectId ?? null,
+            rootPath: scope?.rootPath ?? activeSession?.workspaceRoot ?? s.workspaceRoot,
+          };
+          const existingInScope =
+            s.businessCustomers.some(item => matchProjectScope(item, resolvedScope)) ||
+            s.businessLeads.some(item => matchProjectScope(item, resolvedScope)) ||
+            s.businessTickets.some(item => matchProjectScope(item, resolvedScope)) ||
+            s.businessContentTasks.some(item => matchProjectScope(item, resolvedScope)) ||
+            s.businessChannelSessions.some(item => matchProjectScope(item, resolvedScope));
+
+          if (existingInScope) return {};
+
+          const demo = createDemoBusinessDataset(resolvedScope);
+          return {
+            businessCustomers: [...demo.customers, ...s.businessCustomers],
+            businessLeads: [...demo.leads, ...s.businessLeads],
+            businessTickets: [...demo.tickets, ...s.businessTickets],
+            businessContentTasks: [...demo.contentTasks, ...s.businessContentTasks],
+            businessChannelSessions: [...demo.channelSessions, ...s.businessChannelSessions],
+          };
+        }),
+      clearBusinessEntitiesForProject: (scope) =>
+        set(s => {
+          const activeSession = s.chatSessions.find(session => session.id === s.activeSessionId) ?? null;
+          const resolvedScope = {
+            projectId: scope?.projectId ?? activeSession?.projectId ?? null,
+            rootPath: scope?.rootPath ?? activeSession?.workspaceRoot ?? s.workspaceRoot,
+          };
+          return {
+            businessApprovals: s.businessApprovals.filter(item => !matchProjectScope(item, resolvedScope)),
+            businessOperationLogs: s.businessOperationLogs.filter(item => !matchProjectScope(item, resolvedScope)),
+            businessCustomers: s.businessCustomers.filter(item => !matchProjectScope(item, resolvedScope)),
+            businessLeads: s.businessLeads.filter(item => !matchProjectScope(item, resolvedScope)),
+            businessTickets: s.businessTickets.filter(item => !matchProjectScope(item, resolvedScope)),
+            businessContentTasks: s.businessContentTasks.filter(item => !matchProjectScope(item, resolvedScope)),
+            businessChannelSessions: s.businessChannelSessions.filter(item => !matchProjectScope(item, resolvedScope)),
+          };
+        }),
+
+      semanticKnowledgeDocs: [],
+      createSemanticKnowledgeDoc: (payload) =>
+        set(s => {
+          const now = Date.now();
+          const activeSession = s.chatSessions.find(session => session.id === s.activeSessionId) ?? null;
+          const nextDoc: SemanticKnowledgeDocument = {
+            id: `knowledge-${now}-${Math.random().toString(36).slice(2, 7)}`,
+            projectId: activeSession?.projectId ?? null,
+            rootPath: activeSession?.workspaceRoot ?? s.workspaceRoot,
+            createdAt: now,
+            updatedAt: now,
+            title: payload.title.trim() || "未命名知识文档",
+            content: payload.content.trim(),
+            tags: payload.tags
+              .map(tag => tag.trim())
+              .filter(Boolean),
+            sourceLabel: payload.sourceLabel.trim() || "手动录入",
+          };
+
+          return {
+            semanticKnowledgeDocs: [
+              nextDoc,
+              ...s.semanticKnowledgeDocs.filter(item => item.id !== nextDoc.id),
+            ].slice(0, 120),
+          };
+        }),
+      updateSemanticKnowledgeDoc: (id, updates) =>
+        set(s => ({
+          semanticKnowledgeDocs: s.semanticKnowledgeDocs.map(item =>
+            item.id === id
+              ? {
+                  ...item,
+                  ...(updates.title !== undefined ? { title: updates.title.trim() || item.title } : {}),
+                  ...(updates.content !== undefined ? { content: updates.content.trim() || item.content } : {}),
+                  ...(updates.tags !== undefined
+                    ? {
+                        tags: updates.tags
+                          .map(tag => tag.trim())
+                          .filter(Boolean),
+                      }
+                    : {}),
+                  ...(updates.sourceLabel !== undefined
+                    ? { sourceLabel: updates.sourceLabel.trim() || item.sourceLabel }
+                    : {}),
+                  updatedAt: Date.now(),
+                }
+              : item,
+          ),
+        })),
+      deleteSemanticKnowledgeDoc: (id) =>
+        set(s => ({
+          semanticKnowledgeDocs: s.semanticKnowledgeDocs.filter(item => item.id !== id),
+        })),
+
+      executionRuns: [],
+      activeExecutionRunId: null,
+      createExecutionRun: ({ id, sessionId, instruction, source = "chat" }) => {
+        const timestamp = Date.now();
+        const runId = id ?? `run-${timestamp}-${Math.random().toString(36).slice(2, 8)}`;
+        const activeSession = useStore.getState().chatSessions.find(session => session.id === sessionId) ?? null;
+        const nextRun: ExecutionRun = {
+          id: runId,
+          sessionId,
+          projectId: activeSession?.projectId ?? null,
+          instruction,
+          source,
+          status: "queued",
+          createdAt: timestamp,
+          updatedAt: timestamp,
+          totalTasks: 0,
+          completedTasks: 0,
+          failedTasks: 0,
+          events: capExecutionEvents([
+            {
+              id: `evt-${timestamp}`,
+              type: "user",
+              title: "任务已创建",
+              detail: instruction,
+              timestamp,
+            },
+          ]),
+        };
+
+        set(s => ({
+          executionRuns: capExecutionRuns([
+            nextRun,
+            ...s.executionRuns.filter(run => run.id !== runId),
+          ]),
+          activeExecutionRunId: runId,
+        }));
+
+        return runId;
+      },
+      updateExecutionRun: ({
+        id,
+        sessionId,
+        instruction,
+        status,
+        source,
+        currentAgentId,
+        totalTasks,
+        completedTasks,
+        failedTasks,
+        verificationStatus,
+        verificationResults,
+        verificationUpdatedAt,
+        timestamp,
+        completedAt,
+        event,
+      }) =>
+        set(s => {
+          const updateTime = timestamp ?? completedAt ?? Date.now();
+          const existing = s.executionRuns.find(run => run.id === id);
+          const baseRun: ExecutionRun =
+            existing ??
+            {
+              id,
+              sessionId: sessionId ?? s.activeSessionId,
+              projectId: s.chatSessions.find(session => session.id === (sessionId ?? s.activeSessionId))?.projectId ?? null,
+              instruction: instruction ?? "待补充指令",
+              source: source ?? "chat",
+              status: "queued",
+              createdAt: updateTime,
+              updatedAt: updateTime,
+              totalTasks: 0,
+              completedTasks: 0,
+              failedTasks: 0,
+              events: [],
+            };
+
+          const nextEvents = event
+            ? capExecutionEvents([
+                ...baseRun.events.filter(item => item.id !== event.id),
+                event,
+              ])
+            : baseRun.events;
+
+          const resolvedStatus = status ?? baseRun.status;
+          const nextRun: ExecutionRun = {
+            ...baseRun,
+            ...(sessionId ? { sessionId } : {}),
+            ...(instruction ? { instruction } : {}),
+            ...(source ? { source } : {}),
+            ...(status ? { status } : {}),
+            ...(currentAgentId === undefined ? {} : { currentAgentId }),
+            ...(typeof totalTasks === "number" ? { totalTasks } : {}),
+            ...(typeof completedTasks === "number" ? { completedTasks } : {}),
+            ...(typeof failedTasks === "number" ? { failedTasks } : {}),
+            ...(verificationStatus !== undefined ? { verificationStatus } : {}),
+            ...(verificationResults !== undefined ? { verificationResults } : {}),
+            ...(typeof verificationUpdatedAt === "number" ? { verificationUpdatedAt } : {}),
+            ...(completedAt
+              ? { completedAt }
+              : resolvedStatus === "completed" || resolvedStatus === "failed"
+                ? { completedAt: baseRun.completedAt ?? updateTime }
+                : {}),
+            updatedAt: updateTime,
+            events: nextEvents,
+          };
+
+          return {
+            executionRuns: capExecutionRuns([
+              nextRun,
+              ...s.executionRuns.filter(run => run.id !== id),
+            ]),
+            activeExecutionRunId: id,
+          };
+        }),
+      failExecutionRun: (runId, detail) =>
+        set(s => {
+          const now = Date.now();
+          return {
+            executionRuns: capExecutionRuns(
+              s.executionRuns.map(run =>
+                run.id === runId
+                  ? {
+                      ...run,
+                      status: "failed",
+                      updatedAt: now,
+                      completedAt: now,
+                      events: capExecutionEvents([
+                        ...run.events,
+                        {
+                          id: `evt-fail-${now}`,
+                          type: "error",
+                          title: "发送失败",
+                          detail,
+                          timestamp: now,
+                        },
+                      ]),
+                    }
+                  : run,
+              ),
+            ),
+            activeExecutionRunId: runId,
+          };
+        }),
+      setActiveExecutionRun: (activeExecutionRunId) => set({ activeExecutionRunId }),
+
+>>>>>>> Stashed changes
       workspaceRoot: null,
       workspaceCurrentPath: null,
       workspaceParentPath: null,

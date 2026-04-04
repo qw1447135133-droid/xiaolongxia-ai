@@ -22,6 +22,8 @@ let _retryDelay = 1000;
 let _retryCount = 0;
 let _retryTimer: number | null = null;
 let _isConnecting = false;
+let _lastWsUrl: string | null = null;
+let _pendingSettingsSync: string | null = null;
 
 const WS_MAX_RETRIES = 20;
 const WS_RETRY_MAX = 30000;
@@ -30,11 +32,44 @@ function getStore() {
   return useStore.getState();
 }
 
+<<<<<<< Updated upstream
 function syncSettingsToSocket() {
   if (_ws?.readyState !== WebSocket.OPEN) return;
   const { providers, agentConfigs, platformConfigs } = getStore();
   _ws.send(JSON.stringify({ type: "settings_sync", providers, agentConfigs }));
+=======
+function buildSettingsSyncPayload() {
+  const { providers, agentConfigs, platformConfigs, userNickname, desktopProgramSettings } = getStore();
+  return {
+    type: "settings_sync",
+    providers,
+    agentConfigs,
+    userNickname,
+    desktopProgramSettings,
+    runtime: {
+      isElectron: Boolean(window.electronAPI?.isElectron),
+      canLaunchNativeApplications: Boolean(window.electronAPI?.launchNativeApplication),
+      canListInstalledApplications: Boolean(window.electronAPI?.listInstalledApplications),
+      canControlDesktopInput: Boolean(window.electronAPI?.controlDesktopInput),
+      canCaptureDesktopScreenshot: Boolean(window.electronAPI?.captureDesktopScreenshot),
+    },
+  };
+}
+>>>>>>> Stashed changes
 
+function syncSettingsToSocket() {
+  const payload = buildSettingsSyncPayload();
+  const serialized = JSON.stringify(payload);
+
+  if (_ws?.readyState !== WebSocket.OPEN) {
+    _pendingSettingsSync = serialized;
+    return;
+  }
+
+  _ws.send(serialized);
+  _pendingSettingsSync = null;
+
+  const { platformConfigs } = getStore();
   for (const [platformId, config] of Object.entries(platformConfigs)) {
     if (config.enabled && Object.keys(config.fields).length > 0) {
       _ws.send(JSON.stringify({
@@ -118,10 +153,24 @@ export function getWebSocket(): WebSocket | null {
 }
 
 export function sendWs(msg: object): boolean {
+  const serialized = (() => {
+    const maybeSettingsSync = msg as { type?: string };
+    if (maybeSettingsSync.type === "settings_sync") {
+      return JSON.stringify(buildSettingsSyncPayload());
+    }
+    return JSON.stringify(msg);
+  })();
+
   if (_ws?.readyState === WebSocket.OPEN) {
-    _ws.send(JSON.stringify(msg));
+    _ws.send(serialized);
     return true;
   }
+
+  const maybeSettingsSync = msg as { type?: string };
+  if (maybeSettingsSync.type === "settings_sync") {
+    _pendingSettingsSync = serialized;
+  }
+
   return false;
 }
 
@@ -151,6 +200,7 @@ export function connectWebSocket(force = false) {
   setWsStatus("connecting");
 
   getWsUrl().then((wsUrl) => {
+    _lastWsUrl = wsUrl;
     _ws = new WebSocket(wsUrl);
 
     _ws.onopen = () => {
@@ -161,6 +211,10 @@ export function connectWebSocket(force = false) {
 
       window.setTimeout(() => {
         syncSettingsToSocket();
+        if (_pendingSettingsSync && _ws?.readyState === WebSocket.OPEN) {
+          _ws.send(_pendingSettingsSync);
+          _pendingSettingsSync = null;
+        }
       }, 100);
     };
 
@@ -172,10 +226,14 @@ export function connectWebSocket(force = false) {
       }
     };
 
-    _ws.onclose = () => {
+    _ws.onclose = (event) => {
       _isConnecting = false;
+      _ws = null;
       getStore().setWsStatus("disconnected");
       _retryCount += 1;
+      const wasClean = typeof event?.wasClean === "boolean" ? event.wasClean : false;
+      const reason = event?.reason ? ` reason=${event.reason}` : "";
+      console.warn(`[WS] closed code=${event?.code ?? "unknown"} clean=${wasClean}${reason}`);
       if (_retryCount <= WS_MAX_RETRIES) {
         _retryTimer = window.setTimeout(() => connectWebSocket(), _retryDelay);
         _retryDelay = Math.min(_retryDelay * 2, WS_RETRY_MAX);
@@ -183,7 +241,10 @@ export function connectWebSocket(force = false) {
     };
 
     _ws.onerror = (err) => {
-      console.error("[WS] error:", err);
+      console.warn("[WS] transport error", {
+        url: _lastWsUrl,
+        readyState: _ws?.readyState ?? null,
+      });
       _isConnecting = false;
     };
   }).catch((err) => {

@@ -49,6 +49,7 @@ export function WorkflowCenter() {
   const archiveWorkflowRun = useStore(s => s.archiveWorkflowRun);
   const removeWorkflowRun = useStore(s => s.removeWorkflowRun);
   const workflowRuns = useStore(s => s.workflowRuns);
+  const businessContentTasks = useStore(s => s.businessContentTasks);
   const workspacePinnedPreviews = useStore(s => s.workspacePinnedPreviews);
   const workspaceDeskNotes = useStore(s => s.workspaceDeskNotes);
   const workspaceSavedBundles = useStore(s => s.workspaceSavedBundles);
@@ -68,6 +69,30 @@ export function WorkflowCenter() {
     () => getAvailableWorkflowTemplates(enabledPluginIds),
     [enabledPluginIds],
   );
+<<<<<<< Updated upstream
+=======
+  const activeTemplate = activeTeamOperatingTemplateId
+    ? getTeamOperatingTemplate(activeTeamOperatingTemplateId)
+    : null;
+  const activeSurface = activeTeamOperatingTemplateId
+    ? TEAM_OPERATING_SURFACES[activeTeamOperatingTemplateId]
+    : null;
+  const recommendedTemplateIds = activeSurface?.recommendedWorkflowTemplateIds ?? [];
+  const sortedWorkflowTemplates = useMemo(() => {
+    if (recommendedTemplateIds.length === 0) return workflowTemplates;
+    const recommended = workflowTemplates.filter(template => recommendedTemplateIds.includes(template.id));
+    const rest = workflowTemplates.filter(template => !recommendedTemplateIds.includes(template.id));
+    return [...recommended, ...rest];
+  }, [recommendedTemplateIds, workflowTemplates]);
+  const recommendedTemplates = useMemo(
+    () => sortedWorkflowTemplates.filter(template => recommendedTemplateIds.includes(template.id)),
+    [recommendedTemplateIds, sortedWorkflowTemplates],
+  );
+  const contentTaskMap = useMemo(
+    () => Object.fromEntries(businessContentTasks.map(task => [task.id, task])),
+    [businessContentTasks],
+  );
+>>>>>>> Stashed changes
 
   const activeRuns = useMemo(
     () =>
@@ -263,6 +288,9 @@ export function WorkflowCenter() {
           <div style={{ display: "grid", gap: 12, marginTop: activeRuns.length > 0 ? 14 : 0 }}>
             {activeRuns.map(workflowRun => {
               const tone = statusTone(workflowRun.status);
+              const linkedContentTask = workflowRun.entityType === "contentTask" && workflowRun.entityId
+                ? contentTaskMap[workflowRun.entityId] ?? null
+                : null;
 
               return (
                 <article
@@ -303,6 +331,15 @@ export function WorkflowCenter() {
                       </span>
                     ))}
                   </div>
+
+                  {linkedContentTask ? (
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                      <span style={badgeStyle("#60a5fa")}>关联内容任务</span>
+                      <span style={{ fontSize: 12, color: "var(--text-muted)" }}>
+                        {linkedContentTask.title} · {linkedContentTask.status} · {linkedContentTask.publishTargets.length} 个发布目标
+                      </span>
+                    </div>
+                  ) : null}
 
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(110px, 1fr))", gap: 8 }}>
                     <WorkflowNote label="Created" value={formatTimestamp(workflowRun.createdAt)} />
@@ -361,6 +398,9 @@ export function WorkflowCenter() {
           <div style={{ display: "grid", gap: 10, marginTop: historyRuns.length > 0 ? 14 : 0 }}>
             {historyRuns.map(workflowRun => {
               const tone = statusTone(workflowRun.status);
+              const linkedContentTask = workflowRun.entityType === "contentTask" && workflowRun.entityId
+                ? contentTaskMap[workflowRun.entityId] ?? null
+                : null;
 
               return (
                 <article
@@ -388,6 +428,12 @@ export function WorkflowCenter() {
                   <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.75 }}>
                     {workflowRun.summary}
                   </div>
+
+                  {linkedContentTask ? (
+                    <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.75 }}>
+                      关联内容任务: {linkedContentTask.title} · 当前阶段 {linkedContentTask.status}
+                    </div>
+                  ) : null}
 
                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                     <button type="button" className="btn-ghost" onClick={() => restageRun(workflowRun)}>

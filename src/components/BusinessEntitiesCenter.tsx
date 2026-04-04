@@ -16,13 +16,16 @@ import {
   scoreTicket,
   type QuantDecision,
 } from "@/lib/business-quantification";
-import type { BusinessEntityType, BusinessOperationRecord } from "@/types/business-entities";
+import type { BusinessContentFormat, BusinessEntityType, BusinessOperationRecord } from "@/types/business-entities";
 import type { ControlCenterSectionId } from "@/store/types";
 
 export function BusinessEntitiesCenter() {
   const [creatorType, setCreatorType] = useState<"customer" | "lead" | "ticket" | "content" | "session">("customer");
   const [primaryText, setPrimaryText] = useState("");
   const [detailText, setDetailText] = useState("");
+  const [contentFormat, setContentFormat] = useState<BusinessContentFormat>("post");
+  const [contentGoal, setContentGoal] = useState("");
+  const [publishTargetsText, setPublishTargetsText] = useState("blog:官网博客");
   const [selectedCustomerId, setSelectedCustomerId] = useState("");
   const [selectedChannelSessionId, setSelectedChannelSessionId] = useState("");
   const [selectedLeadId, setSelectedLeadId] = useState("");
@@ -44,6 +47,7 @@ export function BusinessEntitiesCenter() {
   const advanceBusinessTicketStatus = useStore(s => s.advanceBusinessTicketStatus);
   const advanceBusinessContentTaskStatus = useStore(s => s.advanceBusinessContentTaskStatus);
   const advanceBusinessChannelSessionStatus = useStore(s => s.advanceBusinessChannelSessionStatus);
+  const queueContentTaskWorkflowRun = useStore(s => s.queueContentTaskWorkflowRun);
   const seedBusinessEntitiesForProject = useStore(s => s.seedBusinessEntitiesForProject);
   const clearBusinessEntitiesForProject = useStore(s => s.clearBusinessEntitiesForProject);
   const setActiveExecutionRun = useStore(s => s.setActiveExecutionRun);
@@ -149,6 +153,9 @@ export function BusinessEntitiesCenter() {
   const resetCreator = () => {
     setPrimaryText("");
     setDetailText("");
+    setContentFormat("post");
+    setContentGoal("");
+    setPublishTargetsText("blog:官网博客");
     setSelectedCustomerId("");
     setSelectedChannelSessionId("");
     setSelectedLeadId("");
@@ -192,11 +199,15 @@ export function BusinessEntitiesCenter() {
     }
 
     if (creatorType === "content") {
+      const parsedTargets = parsePublishTargets(publishTargetsText);
       createBusinessContentTask({
         title,
         customerId: selectedCustomerId || null,
         leadId: selectedLeadId || null,
         channel: "blog",
+        format: contentFormat,
+        goal: contentGoal.trim() || detail || "待补充内容目标",
+        publishTargets: parsedTargets.length > 0 ? parsedTargets : [{ channel: "blog", accountLabel: "官网博客" }],
         status: "draft",
         priority: "normal",
         brief: detail || "待补充内容任务说明",
@@ -322,21 +333,58 @@ export function BusinessEntitiesCenter() {
           )}
 
           {creatorType === "content" && (
-            <div className="scheduled-form__field">
-              <label className="scheduled-form__label">关联线索</label>
-              <select
-                className="input scheduled-form__input"
-                value={selectedLeadId}
-                onChange={event => setSelectedLeadId(event.target.value)}
-              >
-                <option value="">暂不关联</option>
-                {scopedLeads.map(lead => (
-                  <option key={lead.id} value={lead.id}>
-                    {lead.title}
-                  </option>
-                ))}
-              </select>
-            </div>
+            <>
+              <div className="scheduled-form__field">
+                <label className="scheduled-form__label">关联线索</label>
+                <select
+                  className="input scheduled-form__input"
+                  value={selectedLeadId}
+                  onChange={event => setSelectedLeadId(event.target.value)}
+                >
+                  <option value="">暂不关联</option>
+                  {scopedLeads.map(lead => (
+                    <option key={lead.id} value={lead.id}>
+                      {lead.title}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="scheduled-form__field">
+                <label className="scheduled-form__label">内容形式</label>
+                <select
+                  className="input scheduled-form__input"
+                  value={contentFormat}
+                  onChange={event => setContentFormat(event.target.value as BusinessContentFormat)}
+                >
+                  {(["post", "thread", "article", "script", "campaign"] as const).map(format => (
+                    <option key={format} value={format}>
+                      {format}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="scheduled-form__field">
+                <label className="scheduled-form__label">内容目标</label>
+                <textarea
+                  className="input scheduled-form__textarea"
+                  value={contentGoal}
+                  onChange={event => setContentGoal(event.target.value)}
+                  placeholder="例如：生成一版可转销售线索的产品介绍内容"
+                />
+              </div>
+
+              <div className="scheduled-form__field">
+                <label className="scheduled-form__label">发布目标</label>
+                <textarea
+                  className="input scheduled-form__textarea"
+                  value={publishTargetsText}
+                  onChange={event => setPublishTargetsText(event.target.value)}
+                  placeholder={"每行一个目标，例如：\nblog:官网博客\nx:品牌账号"}
+                />
+              </div>
+            </>
           )}
 
           <div className="scheduled-form__actions">
@@ -485,13 +533,57 @@ export function BusinessEntitiesCenter() {
                 <DecisionStrip decision={decision} />
                 <div className="control-center__copy">{task.brief}</div>
                 <div className="control-center__entity-meta">
-                  <span>渠道 {task.channel}</span>
+                  <span>{task.format} · {task.channel}</span>
                   <span>客户 {task.customerId ? customerNameMap[task.customerId] ?? "未关联" : "未关联"}</span>
+                </div>
+                <div className="control-center__entity-note">目标: {task.goal}</div>
+                <div className="control-center__entity-meta">
+                  <span>发布目标 {task.publishTargets.map(target => `${target.channel}:${target.accountLabel}`).join(" / ") || "未设置"}</span>
+                  <span>{task.scheduledFor ? `排期 ${new Date(task.scheduledFor).toLocaleString("zh-CN", { hour12: false })}` : "未排期"}</span>
+                </div>
+                {task.latestDraftSummary ? (
+                  <div className="control-center__entity-note">最近草稿: {task.latestDraftSummary}</div>
+                ) : null}
+                {task.latestPostmortemSummary ? (
+                  <div className="control-center__entity-note">最近复盘: {task.latestPostmortemSummary}</div>
+                ) : null}
+                {task.nextCycleRecommendation ? (
+                  <div className="control-center__entity-note">下一轮建议: {getNextCycleLabel(task.nextCycleRecommendation)}</div>
+                ) : null}
+                {task.publishedLinks.length > 0 ? (
+                  <div className="control-center__entity-note">已发布链接: {task.publishedLinks.join(" / ")}</div>
+                ) : null}
+                {task.publishedResults.length > 0 ? (
+                  <div className="control-center__entity-note">
+                    发布结果: {task.publishedResults.slice(0, 2).map(result =>
+                      `${result.channel}:${result.accountLabel} · ${result.status}${result.externalId ? ` · ${result.externalId}` : ""}${result.link ? ` · ${result.link}` : ""}`,
+                    ).join(" / ")}
+                  </div>
+                ) : null}
+                <div className="control-center__entity-meta">
+                  <span>{task.lastWorkflowRunId ? `Workflow ${task.lastWorkflowRunId}` : "暂无 workflow"}</span>
+                  <span>{task.lastExecutionRunId ? `Execution ${task.lastExecutionRunId}` : "暂无 execution"}</span>
                 </div>
                 <div className="control-center__quick-actions">
                   <button type="button" className="btn-ghost" onClick={() => advanceBusinessContentTaskStatus(task.id)}>
-                    推进状态
+                    手动推进状态
                   </button>
+                  <button
+                    type="button"
+                    className="btn-ghost"
+                    onClick={() => {
+                      const workflowRunId = queueContentTaskWorkflowRun(task.id);
+                      if (!workflowRunId) return;
+                      openControlCenterSection("workflow");
+                    }}
+                  >
+                    {task.lastWorkflowRunId ? "继续 workflow" : "创建 workflow"}
+                  </button>
+                  {task.lastExecutionRunId ? (
+                    <button type="button" className="btn-ghost" onClick={() => focusExecutionRun(task.lastExecutionRunId)}>
+                      查看执行链
+                    </button>
+                  ) : null}
                 </div>
                 <EntityAuditSummary
                   operation={latestOperation}
@@ -636,7 +728,7 @@ function EntityAuditSummary({
 }
 
 function getOperationTone(status: BusinessOperationRecord["status"]) {
-  if (status === "approved" || status === "sent") {
+  if (status === "approved" || status === "sent" || status === "completed") {
     return "ready";
   }
   if (status === "pending") {
@@ -652,6 +744,18 @@ function getOperationLabel(operation: BusinessOperationRecord) {
     return "待审批";
   }
 
+  if (operation.eventType === "workflow") {
+    if (operation.status === "completed") return "Workflow 完成";
+    if (operation.status === "failed") return "Workflow 失败";
+    return "Workflow 处理中";
+  }
+
+  if (operation.eventType === "publish") {
+    if (operation.status === "completed") return "已回写发布";
+    if (operation.status === "failed") return "发布失败";
+    return "发布处理中";
+  }
+
   if (operation.status === "sent") {
     return "已派发";
   }
@@ -659,4 +763,35 @@ function getOperationLabel(operation: BusinessOperationRecord) {
     return "已阻断";
   }
   return "处理中";
+}
+
+function parsePublishTargets(value: string) {
+  return value
+    .split(/\r?\n|,/)
+    .map(item => item.trim())
+    .filter(Boolean)
+    .map(item => {
+      const [channelRaw, ...labelParts] = item.split(":");
+      const channel = channelRaw?.trim();
+      const accountLabel = labelParts.join(":").trim();
+      if (!channel || !accountLabel) return null;
+      if (!["x", "telegram", "line", "feishu", "wecom", "blog"].includes(channel)) return null;
+
+      return {
+        channel: channel as "x" | "telegram" | "line" | "feishu" | "wecom" | "blog",
+        accountLabel,
+      };
+    })
+    .filter((item): item is { channel: "x" | "telegram" | "line" | "feishu" | "wecom" | "blog"; accountLabel: string } => Boolean(item));
+}
+
+function getNextCycleLabel(value: "reuse" | "retry" | "rewrite") {
+  switch (value) {
+    case "reuse":
+      return "待复用";
+    case "retry":
+      return "待重发";
+    default:
+      return "待改写";
+  }
 }

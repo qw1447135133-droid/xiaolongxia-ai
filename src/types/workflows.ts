@@ -1,3 +1,4 @@
+import type { BusinessEntityType } from "@/types/business-entities";
 import type { AppTab } from "@/store/types";
 
 export type WorkflowTargetTab = AppTab;
@@ -42,6 +43,8 @@ export interface WorkflowRun {
   updatedAt: number;
   context: WorkflowContextSnapshot;
   source: WorkflowSource;
+  entityType?: BusinessEntityType;
+  entityId?: string;
   pluginId?: string;
   pluginName?: string;
   lastLaunchedAt?: number;

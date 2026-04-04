@@ -36,6 +36,9 @@ export interface BusinessAutomationQueueItem {
   approvalState: BusinessApprovalState;
   automationState: BusinessAutomationState;
   blockedReason: string | null;
+  nextAction: string;
+  requiresApproval: boolean;
+  canAutoDispatch: boolean;
 }
 
 export interface BusinessDispatchQueueItem extends BusinessAutomationQueueItem {
@@ -57,6 +60,12 @@ interface BuildBusinessAutomationQueueInput {
   tickets: BusinessTicket[];
   contentTasks: BusinessContentTask[];
   channelSessions: BusinessChannelSession[];
+}
+
+interface ContentTaskAutomationPlan {
+  nextAction: string;
+  requiresApproval: boolean;
+  canAutoDispatch: boolean;
 }
 
 export function buildBusinessAutomationQueue({
@@ -125,6 +134,7 @@ export function buildBusinessAutomationQueue({
     const customer = contentTask.customerId ? customerMap[contentTask.customerId] ?? null : null;
     const lead = contentTask.leadId ? leadMap[contentTask.leadId] ?? null : null;
     const decision = scoreContentTask(contentTask, customer, lead);
+    const contentPlan = buildContentTaskAutomationPlan(contentTask, decision);
     items.push(
       buildQueueItem({
         entityType: "contentTask",
@@ -134,6 +144,9 @@ export function buildBusinessAutomationQueue({
         decision,
         approval: findApprovalRecord(approvals, "contentTask", contentTask.id),
         instruction: buildContentTaskInstruction(contentTask, customer, lead),
+        nextAction: contentPlan.nextAction,
+        requiresApproval: contentPlan.requiresApproval,
+        canAutoDispatch: contentPlan.canAutoDispatch,
       }),
     );
   }
@@ -180,6 +193,8 @@ export function decorateBusinessDispatchQueue(
             ? "当前为人工模式，自动派发已关闭"
             : !remoteSupervisorEnabled
               ? "远程值守已关闭，自动派发暂时停用"
+              : !item.canAutoDispatch
+                ? `当前阶段不建议直接派发。建议动作：${item.nextAction}`
               : item.blockedReason;
 
     return {
@@ -218,6 +233,9 @@ function buildQueueItem({
   decision,
   approval,
   instruction,
+  nextAction,
+  requiresApproval,
+  canAutoDispatch,
 }: {
   entityType: BusinessEntityType;
   entityId: string;
@@ -226,12 +244,26 @@ function buildQueueItem({
   decision: QuantDecision;
   approval: BusinessApprovalRecord | null;
   instruction: string;
+  nextAction?: string;
+  requiresApproval?: boolean;
+  canAutoDispatch?: boolean;
 }): BusinessAutomationQueueItem {
-  const approvalState: BusinessApprovalState = decision.humanApprovalRequired
+  const resolvedRequiresApproval = requiresApproval ?? decision.humanApprovalRequired;
+  const approvalState: BusinessApprovalState = resolvedRequiresApproval
     ? approval?.status ?? "pending"
     : "not-required";
 
-  const blockedReason = getEntityBlockedReason(decision, approvalState);
+  const blockedReason = getEntityBlockedReason(decision, approvalState, resolvedRequiresApproval);
+  const resolvedCanAutoDispatch = (canAutoDispatch ?? decision.autoRunEligible) && !blockedReason;
+  const automationState: BusinessAutomationState = blockedReason
+    ? approvalState === "pending"
+      ? "approval"
+      : approvalState === "rejected"
+        ? "blocked"
+        : "watch"
+    : resolvedCanAutoDispatch
+      ? "ready"
+      : "watch";
 
   return {
     entityType,
@@ -245,14 +277,11 @@ function buildQueueItem({
     decision,
     approval,
     approvalState,
-    automationState: blockedReason
-      ? approvalState === "pending"
-        ? "approval"
-        : approvalState === "rejected"
-          ? "blocked"
-          : "watch"
-      : "ready",
+    automationState,
     blockedReason,
+    nextAction: nextAction ?? buildDefaultNextAction(entityType, approvalState, blockedReason),
+    requiresApproval: resolvedRequiresApproval,
+    canAutoDispatch: resolvedCanAutoDispatch,
   };
 }
 
@@ -264,8 +293,12 @@ function findApprovalRecord(
   return approvals.find(item => item.entityType === entityType && item.entityId === entityId) ?? null;
 }
 
-function getEntityBlockedReason(decision: QuantDecision, approvalState: BusinessApprovalState) {
-  if (decision.humanApprovalRequired) {
+function getEntityBlockedReason(
+  decision: QuantDecision,
+  approvalState: BusinessApprovalState,
+  requiresApproval = decision.humanApprovalRequired,
+) {
+  if (requiresApproval) {
     if (approvalState === "pending") return "待审批，无法自动执行";
     if (approvalState === "rejected") return "审批已驳回，需重新打开后才能自动执行";
   }
@@ -307,6 +340,67 @@ function getEntityTypeLabel(entityType: BusinessEntityType) {
 
 export function getBusinessOperationTitle(entityType: BusinessEntityType, fallbackTitle: string) {
   return `[${getEntityTypeLabel(entityType)}] ${fallbackTitle}`;
+}
+
+function buildDefaultNextAction(
+  entityType: BusinessEntityType,
+  approvalState: BusinessApprovalState,
+  blockedReason: string | null,
+) {
+  if (approvalState === "pending") {
+    return "等待人工审批后继续推进";
+  }
+  if (approvalState === "rejected") {
+    return "先回到聊天或业务面板调整，再重新进入自动链路";
+  }
+  if (blockedReason) {
+    return "保持观察，补充上下文后再重新派发";
+  }
+
+  switch (entityType) {
+    case "customer":
+      return "继续跟进客户并生成下一轮沟通草稿";
+    case "lead":
+      return "推进下一阶段线索动作并准备跟进消息";
+    case "ticket":
+      return "按 SOP 处理工单并输出回复草稿";
+    case "contentTask":
+      return "创建对应 workflow，继续内容执行闭环";
+    case "channelSession":
+      return "继续接待会话并判断是否需要人工接管";
+  }
+}
+
+function buildContentTaskAutomationPlan(
+  task: BusinessContentTask,
+  decision: QuantDecision,
+): ContentTaskAutomationPlan {
+  switch (task.status) {
+    case "review":
+      return {
+        nextAction: "进入人工审校，确认后可继续排期或发布准备",
+        requiresApproval: true,
+        canAutoDispatch: false,
+      };
+    case "scheduled":
+      return {
+        nextAction: "生成发布准备包，外发前保留人工确认",
+        requiresApproval: true,
+        canAutoDispatch: decision.autoRunEligible,
+      };
+    case "published":
+      return {
+        nextAction: "回收发布结果并进入复盘 workflow",
+        requiresApproval: false,
+        canAutoDispatch: false,
+      };
+    default:
+      return {
+        nextAction: "生成选题与草稿 workflow，补齐首版内容产物",
+        requiresApproval: false,
+        canAutoDispatch: decision.autoRunEligible && !decision.humanApprovalRequired,
+      };
+  }
 }
 
 function buildCustomerInstruction(customer: BusinessCustomer) {
@@ -373,13 +467,25 @@ function buildContentTaskInstruction(
   customer: BusinessCustomer | null,
   lead: BusinessLead | null,
 ) {
+  const publishTargets = task.publishTargets.length > 0
+    ? task.publishTargets.map(target => `${target.channel}:${target.accountLabel}`).join("、")
+    : "未设置";
+  const scheduledFor = task.scheduledFor
+    ? new Date(task.scheduledFor).toLocaleString("zh-CN", { hour12: false })
+    : "未排期";
+
   return [
     "请作为内容运营数字员工，推进以下内容任务。",
     `任务标题: ${task.title}`,
+    `内容形式: ${task.format}`,
+    `内容目标: ${task.goal}`,
     `发布渠道: ${task.channel}`,
+    `发布目标: ${publishTargets}`,
     `任务状态: ${task.status}`,
+    `排期时间: ${scheduledFor}`,
     `任务优先级: ${task.priority}`,
     `任务说明: ${task.brief}`,
+    `最近草稿摘要: ${task.latestDraftSummary ?? "暂无"}`,
     `关联客户: ${customer?.name ?? "未关联"}`,
     `关联线索: ${lead?.title ?? "未关联"}`,
     lead ? `线索阶段: ${lead.stage}` : "线索阶段: 无",

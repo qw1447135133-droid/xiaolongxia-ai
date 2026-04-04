@@ -2,6 +2,25 @@ import type { AgentId } from "@/store/types";
 
 export type BusinessPriority = "low" | "normal" | "high" | "urgent";
 export type BusinessEntityType = "customer" | "lead" | "ticket" | "contentTask" | "channelSession";
+export type BusinessContentFormat = "post" | "thread" | "article" | "script" | "campaign";
+export type BusinessContentPublishTarget = {
+  channel: "x" | "telegram" | "line" | "feishu" | "wecom" | "blog";
+  accountLabel: string;
+};
+export type BusinessContentPublishResult = {
+  id: string;
+  channel: "x" | "telegram" | "line" | "feishu" | "wecom" | "blog";
+  accountLabel: string;
+  status: "completed" | "failed";
+  publishedAt: number;
+  link?: string;
+  externalId?: string;
+  summary?: string;
+  executionRunId?: string;
+  workflowRunId?: string;
+  failureReason?: string;
+};
+export type BusinessContentNextCycleRecommendation = "reuse" | "retry" | "rewrite";
 
 export interface BusinessScopedEntity {
   id: string;
@@ -46,10 +65,22 @@ export interface BusinessContentTask extends BusinessScopedEntity {
   customerId: string | null;
   leadId: string | null;
   channel: "x" | "telegram" | "line" | "feishu" | "wecom" | "blog";
+  format: BusinessContentFormat;
+  goal: string;
+  publishTargets: BusinessContentPublishTarget[];
   status: "draft" | "review" | "scheduled" | "published" | "archived";
   priority: BusinessPriority;
   ownerAgentId?: AgentId;
   brief: string;
+  scheduledFor?: number;
+  latestDraftSummary?: string;
+  latestPostmortemSummary?: string;
+  nextCycleRecommendation?: BusinessContentNextCycleRecommendation;
+  publishedLinks: string[];
+  publishedResults: BusinessContentPublishResult[];
+  lastExecutionRunId?: string;
+  lastWorkflowRunId?: string;
+  lastOperationAt?: number;
 }
 
 export interface BusinessChannelSession extends BusinessScopedEntity {
@@ -74,10 +105,13 @@ export interface BusinessApprovalRecord extends BusinessScopedEntity {
 export interface BusinessOperationRecord extends BusinessScopedEntity {
   entityType: BusinessEntityType;
   entityId: string;
-  eventType: "approval" | "dispatch";
+  eventType: "approval" | "dispatch" | "workflow" | "publish";
   trigger: "manual" | "auto";
-  status: "pending" | "approved" | "rejected" | "sent" | "blocked";
+  status: "pending" | "approved" | "rejected" | "sent" | "blocked" | "completed" | "failed";
   title: string;
   detail: string;
   executionRunId?: string;
+  workflowRunId?: string;
+  externalRef?: string;
+  failureReason?: string;
 }

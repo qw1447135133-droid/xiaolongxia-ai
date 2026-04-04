@@ -50,6 +50,12 @@ function getSemanticRecallEvents(run: ExecutionRun) {
   );
 }
 
+function getExecutionEntityLabel(run: Pick<ExecutionRun, "entityType" | "entityId" | "workflowRunId">) {
+  const entityLabel = run.entityType && run.entityId ? `${run.entityType}:${run.entityId.slice(0, 8)}` : null;
+  const workflowLabel = run.workflowRunId ? `workflow:${run.workflowRunId.slice(0, 12)}` : null;
+  return [entityLabel, workflowLabel].filter(Boolean).join(" · ");
+}
+
 export function ExecutionCenter({ compact = false }: { compact?: boolean }) {
   const executionRuns = useStore(s => s.executionRuns);
   const activeExecutionRunId = useStore(s => s.activeExecutionRunId);
@@ -174,6 +180,21 @@ export function ExecutionCenter({ compact = false }: { compact?: boolean }) {
                   <TraceStat label="Failed" value={String(run.failedTasks)} />
                   <TraceStat label="Current" value={currentAgent ? `${currentAgent.emoji} ${currentAgent.name}` : "待分配"} />
                 </div>
+
+                {getExecutionEntityLabel(run) ? (
+                  <div
+                    style={{
+                      padding: "10px 12px",
+                      borderRadius: 12,
+                      border: "1px solid var(--border)",
+                      background: "rgba(255,255,255,0.03)",
+                      fontSize: 11,
+                      color: "var(--text-muted)",
+                    }}
+                  >
+                    Bound to {getExecutionEntityLabel(run)}
+                  </div>
+                ) : null}
 
                 {semanticEvents.length > 0 && (
                   <div

@@ -2,6 +2,7 @@
 
 import { useMemo, type CSSProperties } from "react";
 import { getAvailableWorkflowTemplates } from "@/lib/workflow-runtime";
+import { sendExecutionDispatch } from "@/lib/execution-dispatch";
 import { useStore } from "@/store";
 import { filterByProjectScope, getSessionProjectLabel } from "@/lib/project-context";
 import { getTeamOperatingTemplate, TEAM_OPERATING_SURFACES } from "@/store/types";
@@ -41,16 +42,30 @@ function buildWorkflowDraft(title: string, contextLine: string, brief: string) {
   return `Workflow: ${title}\n${contextLine}\n\n${brief}`;
 }
 
+function summarizeWorkflowDraft(draft: string) {
+  return draft
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(Boolean)
+    .slice(0, 3)
+    .join(" | ")
+    .slice(0, 220);
+}
+
 export function WorkflowCenter() {
   const setCommandDraft = useStore(s => s.setCommandDraft);
   const setTab = useStore(s => s.setTab);
+  const setActiveExecutionRun = useStore(s => s.setActiveExecutionRun);
   const queueWorkflowRun = useStore(s => s.queueWorkflowRun);
+  const queueContentTaskWorkflowRun = useStore(s => s.queueContentTaskWorkflowRun);
   const restageWorkflowRun = useStore(s => s.restageWorkflowRun);
   const startWorkflowRun = useStore(s => s.startWorkflowRun);
   const completeWorkflowRun = useStore(s => s.completeWorkflowRun);
   const archiveWorkflowRun = useStore(s => s.archiveWorkflowRun);
   const removeWorkflowRun = useStore(s => s.removeWorkflowRun);
+  const recordBusinessOperation = useStore(s => s.recordBusinessOperation);
   const workflowRuns = useStore(s => s.workflowRuns);
+  const businessContentTasks = useStore(s => s.businessContentTasks);
   const workspacePinnedPreviews = useStore(s => s.workspacePinnedPreviews);
   const workspaceDeskNotes = useStore(s => s.workspaceDeskNotes);
   const workspaceSavedBundles = useStore(s => s.workspaceSavedBundles);
@@ -72,6 +87,10 @@ export function WorkflowCenter() {
   const scopedSavedBundles = useMemo(
     () => filterByProjectScope(workspaceSavedBundles, activeSession ?? {}),
     [activeSession, workspaceSavedBundles],
+  );
+  const scopedContentTasks = useMemo(
+    () => filterByProjectScope(businessContentTasks, activeSession ?? {}),
+    [activeSession, businessContentTasks],
   );
 
   const workflowContext = useMemo(
@@ -112,6 +131,14 @@ export function WorkflowCenter() {
         .filter(run => ["queued", "staged", "in-progress"].includes(run.status))
         .sort((left, right) => right.updatedAt - left.updatedAt),
     [workflowRuns],
+  );
+  const contentTasksNeedingWorkflow = useMemo(
+    () =>
+      scopedContentTasks
+        .filter(task => task.status !== "archived")
+        .sort((left, right) => right.updatedAt - left.updatedAt)
+        .slice(0, 6),
+    [scopedContentTasks],
   );
 
   const historyRuns = useMemo(
@@ -169,8 +196,50 @@ export function WorkflowCenter() {
   };
 
   const launchRun = (workflowRun: WorkflowRun) => {
+    const { ok, executionRunId } = sendExecutionDispatch({
+      instruction: workflowRun.draft,
+      source: "workflow",
+      taskDescription: workflowRun.title,
+      includeActiveProjectMemory: true,
+      includeUserMessage: true,
+      workflowRunId: workflowRun.id,
+      entityType: workflowRun.entityType,
+      entityId: workflowRun.entityId,
+    });
+
+    if (!ok) {
+      if (workflowRun.entityType && workflowRun.entityId) {
+        recordBusinessOperation({
+          entityType: workflowRun.entityType,
+          entityId: workflowRun.entityId,
+          eventType: "dispatch",
+          trigger: "manual",
+          status: "blocked",
+          title: workflowRun.title,
+          detail: "Workflow launch 尝试进入执行链路，但当前发送未成功建立。",
+          workflowRunId: workflowRun.id,
+        });
+      }
+      injectWorkflowRun(workflowRun);
+      return;
+    }
+
     startWorkflowRun(workflowRun.id);
-    injectWorkflowRun(workflowRun);
+    setActiveExecutionRun(executionRunId);
+
+    if (workflowRun.entityType && workflowRun.entityId) {
+      recordBusinessOperation({
+        entityType: workflowRun.entityType,
+        entityId: workflowRun.entityId,
+        eventType: "dispatch",
+        trigger: "manual",
+        status: "sent",
+        title: workflowRun.title,
+        detail: "Workflow launch 已进入执行链路。",
+        executionRunId,
+        workflowRunId: workflowRun.id,
+      });
+    }
   };
 
   return (
@@ -331,6 +400,99 @@ export function WorkflowCenter() {
         )})}
       </div>
 
+      <section className="card" style={{ padding: 16 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+          <div>
+            <div style={{ fontSize: 14, fontWeight: 700 }}>Content Task Binding</div>
+            <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 4 }}>
+              Queue a workflow directly from scoped content tasks so draft, review, and publish prep stay attached to the business entity.
+            </div>
+          </div>
+          <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
+            Scoped tasks {contentTasksNeedingWorkflow.length}
+          </div>
+        </div>
+
+        {contentTasksNeedingWorkflow.length === 0 ? (
+          <div style={{ ...emptyPanelStyle, marginTop: 14 }}>
+            No content tasks in the current project scope yet.
+          </div>
+        ) : (
+          <div style={{ display: "grid", gap: 10, marginTop: 14 }}>
+            {contentTasksNeedingWorkflow.map(task => (
+              <article
+                key={task.id}
+                style={{
+                  display: "grid",
+                  gap: 10,
+                  padding: 14,
+                  borderRadius: 18,
+                  border: "1px solid rgba(192, 132, 252, 0.24)",
+                  background: "linear-gradient(180deg, rgba(192, 132, 252, 0.12), rgba(255,255,255,0.02) 72%)",
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
+                  <div>
+                    <div style={{ fontSize: 15, fontWeight: 700 }}>{task.title}</div>
+                    <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 4 }}>
+                      {task.goal}
+                    </div>
+                  </div>
+                  <span style={badgeStyle("#c084fc")}>{task.status}</span>
+                </div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                  <span style={badgeStyle("#60a5fa")}>{task.format}</span>
+                  <span style={badgeStyle("#7dd3fc")}>
+                    {task.publishTargets.map(target => `${target.channel}:${target.accountLabel}`).join(" / ") || "no targets"}
+                  </span>
+                  {task.lastWorkflowRunId ? <span style={badgeStyle("#a78bfa")}>linked workflow</span> : null}
+                </div>
+                {task.latestDraftSummary ? (
+                  <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.7 }}>
+                    Latest draft: {task.latestDraftSummary}
+                  </div>
+                ) : null}
+                {task.latestPostmortemSummary ? (
+                  <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.7 }}>
+                    Latest postmortem: {task.latestPostmortemSummary}
+                  </div>
+                ) : null}
+                {task.nextCycleRecommendation ? (
+                  <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.7 }}>
+                    Next cycle: {task.nextCycleRecommendation}
+                  </div>
+                ) : null}
+                {task.publishedResults.length > 0 ? (
+                  <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.7 }}>
+                    Publish results: {task.publishedResults.slice(0, 2).map(result =>
+                      `${result.channel}:${result.accountLabel} · ${result.status}${result.externalId ? ` · ${result.externalId}` : ""}`,
+                    ).join(" / ")}
+                  </div>
+                ) : null}
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <button
+                    type="button"
+                    className="btn-ghost"
+                    onClick={() => {
+                      const workflowRunId = queueContentTaskWorkflowRun(task.id);
+                      if (!workflowRunId) return;
+                      setTab("tasks");
+                    }}
+                  >
+                    {task.lastWorkflowRunId ? "Queue next workflow" : "Create workflow"}
+                  </button>
+                  {task.lastExecutionRunId ? (
+                    <button type="button" className="btn-ghost" onClick={() => setTab("dashboard")}>
+                      Review execution chain
+                    </button>
+                  ) : null}
+                </div>
+              </article>
+            ))}
+          </div>
+        )}
+      </section>
+
       <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.2fr) minmax(280px, 0.95fr)", gap: 12 }}>
         <section className="card" style={{ padding: 16 }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
@@ -424,7 +586,11 @@ export function WorkflowCenter() {
                     <button type="button" className="btn-ghost" onClick={() => launchRun(workflowRun)}>
                       Launch
                     </button>
-                    <button type="button" className="btn-ghost" onClick={() => completeWorkflowRun(workflowRun.id)}>
+                    <button
+                      type="button"
+                      className="btn-ghost"
+                      onClick={() => completeWorkflowRun(workflowRun.id, { latestDraftSummary: summarizeWorkflowDraft(workflowRun.draft) })}
+                    >
                       Complete
                     </button>
                     <button type="button" className="btn-ghost" onClick={() => removeWorkflowRun(workflowRun.id)}>

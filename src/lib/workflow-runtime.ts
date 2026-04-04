@@ -44,6 +44,62 @@ const CORE_WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
     steps: ["Meeting record", "Action extraction", "Task handoff"],
     source: "core",
   },
+  {
+    id: "content-topic-draft",
+    title: "选题与草稿",
+    accent: "#60a5fa",
+    summary: "从内容目标、发布渠道和项目上下文生成首版选题与草稿框架。",
+    nextTab: "tasks",
+    brief: [
+      "Review the current content task goal, publish targets, and project context.",
+      "Propose the strongest angle, outline, and first-draft structure.",
+      "Return a draft that can move directly into review without re-collecting context.",
+    ].join("\n"),
+    steps: ["Goal review", "Angle select", "Draft outline"],
+    source: "core",
+  },
+  {
+    id: "content-final-review",
+    title: "定稿与审校",
+    accent: "#f59e0b",
+    summary: "把现有草稿压成定稿版本，并标出需要人工确认的风险点。",
+    nextTab: "tasks",
+    brief: [
+      "Review the latest draft, target audience, and publication constraints.",
+      "Tighten structure, tone, and CTA while preserving the core goal.",
+      "List the final approval checks before publishing.",
+    ].join("\n"),
+    steps: ["Draft review", "Copy tighten", "Approval checks"],
+    source: "core",
+  },
+  {
+    id: "content-publish-prep",
+    title: "发布准备",
+    accent: "#34d399",
+    summary: "整理发布文案、渠道映射和发布前检查，准备进入外发动作。",
+    nextTab: "settings",
+    brief: [
+      "Prepare channel-specific publish copy and posting checklist.",
+      "Map the content to each publish target and identify manual approval gates.",
+      "Return a clean publish packet ready for supervised release.",
+    ].join("\n"),
+    steps: ["Target mapping", "Publish packet", "Approval gate"],
+    source: "core",
+  },
+  {
+    id: "content-postmortem",
+    title: "发布复盘",
+    accent: "#a78bfa",
+    summary: "回收发布结果、外链和后续动作，形成下一轮内容复盘。",
+    nextTab: "dashboard",
+    brief: [
+      "Summarize the publish result, external links, and any delivery failures.",
+      "Capture what should be reused, improved, or retried in the next cycle.",
+      "Return a compact postmortem with recommended next actions.",
+    ].join("\n"),
+    steps: ["Result capture", "Failure review", "Next cycle"],
+    source: "core",
+  },
 ];
 
 const PLUGIN_WORKFLOW_TEMPLATES: Array<Omit<WorkflowTemplate, "accent" | "pluginName"> & { pluginId: string }> = [
@@ -154,4 +210,8 @@ export function getAvailableWorkflowTemplates(enabledPluginIds: string[]) {
   });
 
   return [...CORE_WORKFLOW_TEMPLATES, ...pluginTemplates];
+}
+
+export function getWorkflowTemplateById(id: string, enabledPluginIds: string[]) {
+  return getAvailableWorkflowTemplates(enabledPluginIds).find(template => template.id === id) ?? null;
 }

@@ -29,6 +29,9 @@ export function sendExecutionDispatch({
   taskDescription,
   includeActiveProjectMemory = false,
   sessionId,
+  workflowRunId,
+  entityType,
+  entityId,
 }: {
   instruction: string;
   source?: ExecutionRunSource;
@@ -37,6 +40,9 @@ export function sendExecutionDispatch({
   taskDescription?: string;
   includeActiveProjectMemory?: boolean;
   sessionId?: string;
+  workflowRunId?: string;
+  entityType?: "customer" | "lead" | "ticket" | "contentTask" | "channelSession";
+  entityId?: string;
 }) {
   const trimmed = instruction.trim();
   const store = useStore.getState();
@@ -93,6 +99,9 @@ export function sendExecutionDispatch({
     sessionId: resolvedSessionId,
     instruction: trimmed,
     source,
+    workflowRunId,
+    entityType,
+    entityId,
   });
 
   if (resolvedProjectMemory) {

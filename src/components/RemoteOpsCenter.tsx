@@ -38,6 +38,9 @@ export function RemoteOpsCenter() {
   const [dispatchingKey, setDispatchingKey] = useState<string | null>(null);
   const [highlightedAuditLogId, setHighlightedAuditLogId] = useState<string | null>(null);
   const [actionFeedback, setActionFeedback] = useState<ActionFeedback | null>(null);
+  const [publishLinkDrafts, setPublishLinkDrafts] = useState<Record<string, string>>({});
+  const [publishExternalIdDrafts, setPublishExternalIdDrafts] = useState<Record<string, string>>({});
+  const [publishTargetDrafts, setPublishTargetDrafts] = useState<Record<string, string>>({});
   const auditSectionRef = useRef<HTMLDivElement | null>(null);
   const pendingAuditFocusRef = useRef<AuditFocusRequest | null>(null);
 
@@ -66,7 +69,10 @@ export function RemoteOpsCenter() {
   const setRemoteSupervisorEnabled = useStore(s => s.setRemoteSupervisorEnabled);
   const setAutoDispatchScheduledTasks = useStore(s => s.setAutoDispatchScheduledTasks);
   const setBusinessApprovalDecision = useStore(s => s.setBusinessApprovalDecision);
+  const updateBusinessContentTask = useStore(s => s.updateBusinessContentTask);
+  const queueContentTaskWorkflowRun = useStore(s => s.queueContentTaskWorkflowRun);
   const recordBusinessOperation = useStore(s => s.recordBusinessOperation);
+  const recordContentPublishResult = useStore(s => s.recordContentPublishResult);
   const setActiveExecutionRun = useStore(s => s.setActiveExecutionRun);
   const setTab = useStore(s => s.setTab);
   const setActiveControlCenterSection = useStore(s => s.setActiveControlCenterSection);
@@ -161,6 +167,10 @@ export function RemoteOpsCenter() {
     () => filterByProjectScope(businessContentTasks, currentProjectScope),
     [businessContentTasks, currentProjectScope],
   );
+  const contentTaskMap = useMemo(
+    () => Object.fromEntries(scopedContentTasks.map(task => [task.id, task])),
+    [scopedContentTasks],
+  );
   const scopedChannelSessions = useMemo(
     () => filterByProjectScope(businessChannelSessions, currentProjectScope),
     [businessChannelSessions, currentProjectScope],
@@ -216,6 +226,185 @@ export function RemoteOpsCenter() {
     () => scopedOperationLogs.slice(0, 8),
     [scopedOperationLogs],
   );
+  const contentOpsSummary = useMemo(() => {
+    const publishedTasks = scopedContentTasks.filter(task => task.status === "published").length;
+    const publishSuccessCount = scopedContentTasks.reduce(
+      (count, task) => count + task.publishedResults.filter(result => result.status === "completed").length,
+      0,
+    );
+    const publishFailureCount = scopedContentTasks.reduce(
+      (count, task) => count + task.publishedResults.filter(result => result.status === "failed").length,
+      0,
+    );
+    const postmortemReadyCount = scopedContentTasks.filter(task => Boolean(task.latestPostmortemSummary)).length;
+    const latestPublishedResult = scopedContentTasks
+      .flatMap(task => task.publishedResults.map(result => ({ taskTitle: task.title, result })))
+      .sort((left, right) => right.result.publishedAt - left.result.publishedAt)[0] ?? null;
+
+    return {
+      publishedTasks,
+      publishSuccessCount,
+      publishFailureCount,
+      postmortemReadyCount,
+      latestPublishedResult,
+    };
+  }, [scopedContentTasks]);
+  const contentOpsKpi = useMemo(() => {
+    const totalPublishAttempts = contentOpsSummary.publishSuccessCount + contentOpsSummary.publishFailureCount;
+    const publishSuccessRate = totalPublishAttempts > 0
+      ? Math.round((contentOpsSummary.publishSuccessCount / totalPublishAttempts) * 100)
+      : 0;
+    const postmortemCoverage = contentOpsSummary.publishedTasks > 0
+      ? Math.round((contentOpsSummary.postmortemReadyCount / contentOpsSummary.publishedTasks) * 100)
+      : 0;
+
+    const avgPostmortemLagHours = (() => {
+      const lags: number[] = [];
+      for (const task of scopedContentTasks) {
+        const latestPublishAt = task.publishedResults
+          .filter(result => result.status === "completed")
+          .sort((left, right) => right.publishedAt - left.publishedAt)[0]?.publishedAt;
+        const latestPostmortemAt = scopedOperationLogs
+          .filter(log =>
+            log.entityType === "contentTask"
+            && log.entityId === task.id
+            && log.eventType === "workflow"
+            && log.status === "completed"
+            && log.title.includes("发布复盘"),
+          )
+          .sort((left, right) => right.updatedAt - left.updatedAt)[0]?.updatedAt;
+
+        if (latestPublishAt && latestPostmortemAt && latestPostmortemAt >= latestPublishAt) {
+          lags.push((latestPostmortemAt - latestPublishAt) / (1000 * 60 * 60));
+        }
+      }
+
+      if (lags.length === 0) return null;
+      return Math.round((lags.reduce((sum, value) => sum + value, 0) / lags.length) * 10) / 10;
+    })();
+
+    const recommendationBreakdown = scopedContentTasks.reduce(
+      (acc, task) => {
+        if (task.nextCycleRecommendation) {
+          acc[task.nextCycleRecommendation] += 1;
+        }
+        return acc;
+      },
+      { reuse: 0, retry: 0, rewrite: 0 } as Record<"reuse" | "retry" | "rewrite", number>,
+    );
+
+    const channelPerformance = Object.values(
+      scopedContentTasks
+        .flatMap(task => task.publishedResults)
+        .reduce((acc, result) => {
+          const current = acc[result.channel] ?? {
+            channel: result.channel,
+            completed: 0,
+            failed: 0,
+          };
+
+          if (result.status === "completed") {
+            current.completed += 1;
+          } else {
+            current.failed += 1;
+          }
+
+          acc[result.channel] = current;
+          return acc;
+        }, {} as Record<string, { channel: string; completed: number; failed: number }>),
+    )
+      .sort((left, right) => (right.completed + right.failed) - (left.completed + left.failed))
+      .slice(0, 6);
+
+    return {
+      totalPublishAttempts,
+      publishSuccessRate,
+      postmortemCoverage,
+      avgPostmortemLagHours,
+      recommendationBreakdown,
+      channelPerformance,
+    };
+  }, [contentOpsSummary, scopedContentTasks, scopedOperationLogs]);
+  const nextCycleQueue = useMemo(
+    () =>
+      scopedContentTasks
+        .filter(task => Boolean(task.nextCycleRecommendation))
+        .sort((left, right) => (right.lastOperationAt ?? right.updatedAt) - (left.lastOperationAt ?? left.updatedAt))
+        .slice(0, 6),
+    [scopedContentTasks],
+  );
+  const contentOpsAlerts = useMemo(() => {
+    const now = Date.now();
+    const alerts: Array<{
+      id: string;
+      severity: "critical" | "warning" | "info";
+      title: string;
+      detail: string;
+      entityId?: string;
+      action: "workflow" | "entities";
+    }> = [];
+
+    for (const task of scopedContentTasks) {
+      const latestCompletedPublish = task.publishedResults
+        .filter(result => result.status === "completed")
+        .sort((left, right) => right.publishedAt - left.publishedAt)[0];
+
+      if (
+        latestCompletedPublish
+        && !task.latestPostmortemSummary
+        && now - latestCompletedPublish.publishedAt > 24 * 60 * 60 * 1000
+      ) {
+        alerts.push({
+          id: `postmortem-overdue-${task.id}`,
+          severity: "warning",
+          title: "发布后超过 24 小时未复盘",
+          detail: `${task.title} 最近一次成功发布后仍未形成复盘摘要，建议尽快进入发布复盘 workflow。`,
+          entityId: task.id,
+          action: "workflow",
+        });
+      }
+
+      const recentFailures = task.publishedResults
+        .filter(result => result.status === "failed")
+        .sort((left, right) => right.publishedAt - left.publishedAt)
+        .slice(0, 2);
+
+      if (recentFailures.length >= 2) {
+        alerts.push({
+          id: `publish-failure-streak-${task.id}`,
+          severity: "critical",
+          title: "内容任务连续发布失败",
+          detail: `${task.title} 最近连续 ${recentFailures.length} 次发布失败，建议暂停直接外发，先回到改写或人工接管。`,
+          entityId: task.id,
+          action: "entities",
+        });
+      }
+    }
+
+    for (const channel of contentOpsKpi.channelPerformance) {
+      if (channel.failed >= 2 && channel.failed > channel.completed) {
+        alerts.push({
+          id: `channel-risk-${channel.channel}`,
+          severity: "warning",
+          title: "渠道成功率偏低",
+          detail: `${channel.channel} 当前成功 ${channel.completed} / 失败 ${channel.failed}，建议检查发布 SOP 或平台限制。`,
+          action: "entities",
+        });
+      }
+    }
+
+    if (contentOpsKpi.recommendationBreakdown.rewrite >= 3) {
+      alerts.push({
+        id: "rewrite-backlog",
+        severity: "info",
+        title: "待改写内容积压",
+        detail: `当前有 ${contentOpsKpi.recommendationBreakdown.rewrite} 条内容被建议改写，说明前序草稿或渠道匹配可能需要调整。`,
+        action: "workflow",
+      });
+    }
+
+    return alerts.slice(0, 8);
+  }, [contentOpsKpi.channelPerformance, contentOpsKpi.recommendationBreakdown.rewrite, scopedContentTasks]);
 
   useEffect(() => {
     if (!pendingAuditFocusRef.current) {
@@ -386,6 +575,171 @@ export function RemoteOpsCenter() {
         </div>
       </div>
 
+      <div className="control-center__panel">
+        <div className="control-center__panel-title">内容运营概览</div>
+        <div className="control-center__list">
+          <div>已发布内容任务: <strong className="control-center__strong">{contentOpsSummary.publishedTasks}</strong></div>
+          <div>成功发布次数: <strong className="control-center__strong">{contentOpsSummary.publishSuccessCount}</strong></div>
+          <div>失败发布次数: <strong className="control-center__strong">{contentOpsSummary.publishFailureCount}</strong></div>
+          <div>已完成复盘: <strong className="control-center__strong">{contentOpsSummary.postmortemReadyCount}</strong></div>
+        </div>
+        <div className="control-center__dispatch-note" style={{ marginTop: 10 }}>
+          {contentOpsSummary.latestPublishedResult
+            ? `最近一次发布: ${contentOpsSummary.latestPublishedResult.taskTitle} · ${contentOpsSummary.latestPublishedResult.result.channel}:${contentOpsSummary.latestPublishedResult.result.accountLabel} · ${contentOpsSummary.latestPublishedResult.result.status}${contentOpsSummary.latestPublishedResult.result.externalId ? ` · ${contentOpsSummary.latestPublishedResult.result.externalId}` : ""}`
+            : "当前项目还没有发布结果回写。"}
+        </div>
+        <div className="control-center__stats" style={{ marginTop: 14 }}>
+          <div className="control-center__stat-card">
+            <div className="control-center__stat-label">发布成功率</div>
+            <div className="control-center__stat-value" style={{ color: "#22c55e" }}>{contentOpsKpi.publishSuccessRate}%</div>
+          </div>
+          <div className="control-center__stat-card">
+            <div className="control-center__stat-label">复盘覆盖率</div>
+            <div className="control-center__stat-value" style={{ color: "#60a5fa" }}>{contentOpsKpi.postmortemCoverage}%</div>
+          </div>
+          <div className="control-center__stat-card">
+            <div className="control-center__stat-label">平均复盘时长</div>
+            <div className="control-center__stat-value" style={{ color: "#c084fc" }}>
+              {contentOpsKpi.avgPostmortemLagHours === null ? "--" : `${contentOpsKpi.avgPostmortemLagHours}h`}
+            </div>
+          </div>
+          <div className="control-center__stat-card">
+            <div className="control-center__stat-label">发布尝试数</div>
+            <div className="control-center__stat-value" style={{ color: "#f59e0b" }}>{contentOpsKpi.totalPublishAttempts}</div>
+          </div>
+        </div>
+        <div className="control-center__columns" style={{ marginTop: 14 }}>
+          <div className="control-center__panel">
+            <div className="control-center__panel-title">建议分布</div>
+            <div className="control-center__list control-center__list--dense">
+              <div>待复用: <strong className="control-center__strong">{contentOpsKpi.recommendationBreakdown.reuse}</strong></div>
+              <div>待重发: <strong className="control-center__strong">{contentOpsKpi.recommendationBreakdown.retry}</strong></div>
+              <div>待改写: <strong className="control-center__strong">{contentOpsKpi.recommendationBreakdown.rewrite}</strong></div>
+            </div>
+          </div>
+          <div className="control-center__panel">
+            <div className="control-center__panel-title">渠道表现</div>
+            {contentOpsKpi.channelPerformance.length === 0 ? (
+              <div className="control-center__copy">当前还没有可统计的渠道发布表现。</div>
+            ) : (
+              <div className="control-center__list control-center__list--dense">
+                {contentOpsKpi.channelPerformance.map(item => (
+                  <div key={item.channel}>
+                    {item.channel}: <strong className="control-center__strong">{item.completed}</strong> 成功 / <strong className="control-center__strong">{item.failed}</strong> 失败
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div className="control-center__panel">
+        <div className="control-center__panel-title">内容运营告警</div>
+        <div className="control-center__dispatch-list">
+          {contentOpsAlerts.length === 0 ? (
+            <div className="control-center__copy">当前没有明显的内容运营风险，SLA 状态正常。</div>
+          ) : (
+            contentOpsAlerts.map(alert => (
+              <article key={alert.id} className="control-center__dispatch-card">
+                <div className="control-center__approval-head">
+                  <div>
+                    <div className="control-center__panel-title">{alert.title}</div>
+                    <div className="control-center__copy">{alert.detail}</div>
+                  </div>
+                  <span className={`control-center__scenario-badge is-${getContentAlertTone(alert.severity)}`}>
+                    {getContentAlertLabel(alert.severity)}
+                  </span>
+                </div>
+                <div className="control-center__quick-actions">
+                  <button
+                    type="button"
+                    className="btn-ghost"
+                    onClick={() => openControlCenterSection(alert.action)}
+                  >
+                    {alert.action === "workflow" ? "去工作流面板" : "去业务实体面板"}
+                  </button>
+                  {alert.entityId ? (
+                    <button
+                      type="button"
+                      className="btn-ghost"
+                      onClick={() => {
+                        setActionFeedback({
+                          title: "已定位到内容告警对象",
+                          detail: "请在业务实体或工作流面板继续处理这条内容任务。",
+                          entitySection: alert.action,
+                        });
+                        openControlCenterSection(alert.action);
+                      }}
+                    >
+                      处理这条内容
+                    </button>
+                  ) : null}
+                </div>
+              </article>
+            ))
+          )}
+        </div>
+      </div>
+
+      <div className="control-center__panel">
+        <div className="control-center__panel-title">下一轮内容待办</div>
+        <div className="control-center__dispatch-list">
+          {nextCycleQueue.length === 0 ? (
+            <div className="control-center__copy">当前还没有形成明确的下一轮内容建议。</div>
+          ) : (
+            nextCycleQueue.map(task => (
+              <article key={task.id} className="control-center__dispatch-card">
+                <div className="control-center__approval-head">
+                  <div>
+                    <div className="control-center__panel-title">{task.title}</div>
+                    <div className="control-center__copy">
+                      {task.channel} · {task.format} · {getNextCycleRecommendationLabel(task.nextCycleRecommendation!)}
+                    </div>
+                  </div>
+                  <span className={`control-center__scenario-badge is-${getNextCycleRecommendationTone(task.nextCycleRecommendation!)}`}>
+                    {getNextCycleRecommendationLabel(task.nextCycleRecommendation!)}
+                  </span>
+                </div>
+                <div className="control-center__copy">
+                  {task.latestPostmortemSummary ?? "复盘已完成，但还没有写出摘要。"}
+                </div>
+                <div className="control-center__dispatch-note">
+                  最近发布结果: {task.publishedResults[0]
+                    ? `${task.publishedResults[0].channel}:${task.publishedResults[0].accountLabel} · ${task.publishedResults[0].status}${task.publishedResults[0].externalId ? ` · ${task.publishedResults[0].externalId}` : ""}`
+                    : "暂无"}
+                </div>
+                <div className="control-center__quick-actions">
+                  <button
+                    type="button"
+                    className="btn-ghost"
+                    onClick={() => {
+                      updateBusinessContentTask(task.id, {
+                        status: "draft",
+                        lastOperationAt: Date.now(),
+                      });
+                      const workflowRunId = queueContentTaskWorkflowRun(task.id);
+                      if (!workflowRunId) return;
+                      setActionFeedback({
+                        title: "已进入下一轮内容周期",
+                        detail: `系统已按“${getNextCycleRecommendationLabel(task.nextCycleRecommendation!)}”建议，把内容任务回到 draft 并排队新一轮 workflow。`,
+                        entitySection: "workflow",
+                      });
+                      openControlCenterSection("workflow");
+                    }}
+                  >
+                    进入下一轮 workflow
+                  </button>
+                  <button type="button" className="btn-ghost" onClick={() => openControlCenterSection("entities")}>
+                    查看内容实体
+                  </button>
+                </div>
+              </article>
+            ))
+          )}
+        </div>
+      </div>
+
       <div className="control-center__columns">
         <div className="control-center__panel">
           <div className="control-center__panel-title">远程值守模式</div>
@@ -538,6 +892,10 @@ export function RemoteOpsCenter() {
                     <span>自动化判断: {item.decision.autoRunEligible ? "可推进" : "建议观察"}</span>
                     <span>审批状态: {item.approvalState === "not-required" ? "无需审批" : item.approvalState === "approved" ? "已批准" : item.approvalState === "rejected" ? "已驳回" : "待审批"}</span>
                   </div>
+                  <div className="control-center__dispatch-meta">
+                    <span>下一动作: {item.nextAction}</span>
+                    <span>{item.requiresApproval ? "需要审批" : item.canAutoDispatch ? "可自动派发" : "建议人工判断"}</span>
+                  </div>
                   <div className="control-center__dispatch-note">
                     {item.dispatchBlockedReason ?? "满足量化和审批条件，允许从远程运营面板直接派发执行。"}
                   </div>
@@ -601,6 +959,153 @@ export function RemoteOpsCenter() {
                     <button type="button" className="btn-ghost" onClick={() => setTab("tasks")}>
                       去聊天页人工接管
                     </button>
+                    {item.entityType === "contentTask" ? (
+                      <button
+                        type="button"
+                        className="btn-ghost"
+                        onClick={() => {
+                          const workflowRunId = queueContentTaskWorkflowRun(item.entityId);
+                          if (!workflowRunId) return;
+                          setActionFeedback({
+                            title: "内容 workflow 已排队",
+                            detail: "系统已按内容任务当前阶段创建对应 workflow，并挂回该业务实体。",
+                            entitySection: "workflow",
+                          });
+                          openControlCenterSection("workflow");
+                        }}
+                      >
+                        创建内容 workflow
+                      </button>
+                    ) : null}
+                    {item.entityType === "contentTask" && contentTaskMap[item.entityId]?.status === "scheduled" ? (
+                      <>
+                        <div className="scheduled-form__field" style={{ width: "100%" }}>
+                          <label className="scheduled-form__label">发布目标账号</label>
+                          <select
+                            className="input scheduled-form__input"
+                            value={publishTargetDrafts[item.entityId] ?? ""}
+                            onChange={event =>
+                              setPublishTargetDrafts(current => ({
+                                ...current,
+                                [item.entityId]: event.target.value,
+                              }))
+                            }
+                          >
+                            <option value="">默认第一个目标</option>
+                            {(contentTaskMap[item.entityId]?.publishTargets ?? []).map(target => {
+                              const key = `${target.channel}:${target.accountLabel}`;
+                              return (
+                                <option key={key} value={key}>
+                                  {key}
+                                </option>
+                              );
+                            })}
+                          </select>
+                        </div>
+                        <div className="scheduled-form__field" style={{ width: "100%" }}>
+                          <label className="scheduled-form__label">发布链接 / 外部 ID</label>
+                          <input
+                            className="input scheduled-form__input"
+                            value={publishLinkDrafts[item.entityId] ?? ""}
+                            onChange={event =>
+                              setPublishLinkDrafts(current => ({
+                                ...current,
+                                [item.entityId]: event.target.value,
+                              }))
+                            }
+                            placeholder="https://... 或 平台返回的 post id"
+                          />
+                        </div>
+                        <div className="scheduled-form__field" style={{ width: "100%" }}>
+                          <label className="scheduled-form__label">外部发布 ID</label>
+                          <input
+                            className="input scheduled-form__input"
+                            value={publishExternalIdDrafts[item.entityId] ?? ""}
+                            onChange={event =>
+                              setPublishExternalIdDrafts(current => ({
+                                ...current,
+                                [item.entityId]: event.target.value,
+                              }))
+                            }
+                            placeholder="例如 tweet id / post id / message id"
+                          />
+                        </div>
+                        <button
+                          type="button"
+                          className="btn-ghost"
+                          onClick={() => {
+                            const publishLinks = splitPublishLinks(publishLinkDrafts[item.entityId]);
+                            const selectedTarget = resolvePublishTarget(
+                              contentTaskMap[item.entityId]?.publishTargets ?? [],
+                              publishTargetDrafts[item.entityId],
+                            );
+                            recordContentPublishResult({
+                              contentTaskId: item.entityId,
+                              status: "completed",
+                              detail: publishLinks.length > 0
+                                ? `人工在远程值守面板确认该内容任务已完成发布回写，并录入了 ${publishLinks.length} 条链接/外部 ID。`
+                                : "人工在远程值守面板确认该内容任务已完成发布回写。",
+                              publishLinks,
+                              channel: selectedTarget?.channel,
+                              accountLabel: selectedTarget?.accountLabel,
+                              externalId: publishExternalIdDrafts[item.entityId]?.trim() || undefined,
+                              summary: "远程值守人工确认发布成功",
+                            });
+                            setPublishLinkDrafts(current => ({ ...current, [item.entityId]: "" }));
+                            setPublishExternalIdDrafts(current => ({ ...current, [item.entityId]: "" }));
+                            queueAuditFocus({
+                              entityType: "contentTask",
+                              entityId: item.entityId,
+                              eventType: "publish",
+                              status: "completed",
+                            });
+                            setActionFeedback({
+                              title: "发布结果已回写",
+                              detail: publishLinks.length > 0
+                                ? "内容任务已进入 published 状态，发布链接已写回实体，并自动排队了一条发布复盘 workflow。"
+                                : "内容任务已进入 published 状态，并自动排队了一条发布复盘 workflow。",
+                              entitySection: "workflow",
+                            });
+                          }}
+                        >
+                          记录发布成功
+                        </button>
+                        <button
+                          type="button"
+                          className="btn-ghost"
+                          onClick={() => {
+                            const selectedTarget = resolvePublishTarget(
+                              contentTaskMap[item.entityId]?.publishTargets ?? [],
+                              publishTargetDrafts[item.entityId],
+                            );
+                            recordContentPublishResult({
+                              contentTaskId: item.entityId,
+                              status: "failed",
+                              detail: "人工在远程值守面板记录了发布失败，建议回到聊天或 workflow 继续处理。",
+                              channel: selectedTarget?.channel,
+                              accountLabel: selectedTarget?.accountLabel,
+                              externalId: publishExternalIdDrafts[item.entityId]?.trim() || undefined,
+                              summary: "远程值守人工记录发布失败",
+                              failureReason: "需要人工重试或调整发布内容",
+                            });
+                            setPublishExternalIdDrafts(current => ({ ...current, [item.entityId]: "" }));
+                            queueAuditFocus({
+                              entityType: "contentTask",
+                              entityId: item.entityId,
+                              eventType: "publish",
+                              status: "failed",
+                            });
+                            setActionFeedback({
+                              title: "发布失败已记录",
+                              detail: "审计链路已保留失败原因，内容任务仍可回到聊天或 workflow 继续补救。",
+                              entitySection: "workflow",
+                            });
+                          }}
+                        >
+                          记录发布失败
+                        </button>
+                      </>
+                    ) : null}
                   </div>
                 </article>
               );
@@ -623,6 +1128,9 @@ export function RemoteOpsCenter() {
           ) : (
             approvalQueue.map(item => {
               const status = item.approvalState === "not-required" ? "pending" : item.approvalState;
+              const linkedContentTask = item.entityType === "contentTask" ? contentTaskMap[item.entityId] : undefined;
+              const shouldPromoteToScheduled = linkedContentTask?.status === "review";
+              const shouldQueuePublishWorkflow = linkedContentTask?.status === "scheduled" || shouldPromoteToScheduled;
               return (
                 <article key={`${item.entityType}-${item.entityId}`} className="control-center__approval-card">
                   <div className="control-center__approval-head">
@@ -641,6 +1149,15 @@ export function RemoteOpsCenter() {
                       className="btn-ghost"
                       onClick={() => {
                         setBusinessApprovalDecision({ entityType: item.entityType, entityId: item.entityId, status: "approved" });
+                        if (shouldPromoteToScheduled) {
+                          updateBusinessContentTask(item.entityId, {
+                            status: "scheduled",
+                            lastOperationAt: Date.now(),
+                          });
+                        }
+                        if (shouldQueuePublishWorkflow) {
+                          queueContentTaskWorkflowRun(item.entityId);
+                        }
                         queueAuditFocus({
                           entityType: item.entityType,
                           entityId: item.entityId,
@@ -648,19 +1165,26 @@ export function RemoteOpsCenter() {
                           status: "approved",
                         });
                         setActionFeedback({
-                          title: "审批已批准",
-                          detail: "这条业务对象已进入可自动推进状态，审计区会保留这次批准记录。",
-                          entitySection: "execution",
+                          title: shouldQueuePublishWorkflow ? "审批已批准并继续发布准备" : "审批已批准",
+                          detail: shouldPromoteToScheduled
+                            ? "系统已保留批准记录，把内容任务推进到 scheduled，并自动排队发布准备 workflow。"
+                            : shouldQueuePublishWorkflow
+                              ? "系统已保留批准记录，并为这条内容任务继续排队发布准备 workflow。"
+                            : "这条业务对象已进入可自动推进状态，审计区会保留这次批准记录。",
+                          entitySection: shouldQueuePublishWorkflow ? "workflow" : "execution",
                         });
                       }}
                     >
-                      批准
+                      {shouldQueuePublishWorkflow ? "批准并继续发布" : "批准"}
                     </button>
                     <button
                       type="button"
                       className="btn-ghost"
                       onClick={() => {
                         setBusinessApprovalDecision({ entityType: item.entityType, entityId: item.entityId, status: "rejected" });
+                        if (linkedContentTask?.status === "scheduled") {
+                          updateBusinessContentTask(item.entityId, { status: "review" });
+                        }
                         queueAuditFocus({
                           entityType: item.entityType,
                           entityId: item.entityId,
@@ -668,13 +1192,15 @@ export function RemoteOpsCenter() {
                           status: "rejected",
                         });
                         setActionFeedback({
-                          title: "审批已驳回",
-                          detail: "这次驳回会保留在审计记录里，后续可以回到业务实体面板继续调整。",
+                          title: linkedContentTask?.status === "scheduled" ? "已驳回并退回定稿" : "审批已驳回",
+                          detail: linkedContentTask?.status === "scheduled"
+                            ? "系统已把这条内容任务退回 review，方便继续打磨定稿后再次进入发布链路。"
+                            : "这次驳回会保留在审计记录里，后续可以回到业务实体面板继续调整。",
                           entitySection: "entities",
                         });
                       }}
                     >
-                      驳回
+                      {linkedContentTask?.status === "scheduled" ? "驳回并退回定稿" : "驳回"}
                     </button>
                     <button
                       type="button"
@@ -734,20 +1260,12 @@ export function RemoteOpsCenter() {
                     <div>
                       <div className="control-center__panel-title">{log.title}</div>
                       <div className="control-center__copy">
-                        {log.eventType === "approval" ? "审批" : "派发"} · {log.trigger === "auto" ? "自动值守" : "人工操作"}
+                        {getAuditEventLabel(log.eventType)} · {log.trigger === "auto" ? "自动值守" : "人工操作"}
                         {isHighlighted ? " · 最新定位" : ""}
                       </div>
                     </div>
-                    <span className={`control-center__scenario-badge is-${log.status === "approved" || log.status === "sent" ? "ready" : log.status === "pending" ? "partial" : "blocked"}`}>
-                      {log.status === "approved"
-                        ? "已批准"
-                        : log.status === "rejected"
-                          ? "已驳回"
-                          : log.status === "sent"
-                            ? "已派发"
-                            : log.status === "pending"
-                              ? "待处理"
-                              : "已阻断"}
+                    <span className={`control-center__scenario-badge is-${getAuditStatusTone(log.status)}`}>
+                      {getAuditStatusLabel(log.status)}
                     </span>
                   </div>
                   <div className="control-center__dispatch-note">{log.detail}</div>
@@ -881,4 +1399,106 @@ function buildScenarioCard({
     return { title, description, checks, missingMessage, tone: "partial" as const, label: "半成品" };
   }
   return { title, description, checks, missingMessage, tone: "blocked" as const, label: "未就绪" };
+}
+
+function getAuditEventLabel(eventType: BusinessOperationRecord["eventType"]) {
+  switch (eventType) {
+    case "approval":
+      return "审批";
+    case "workflow":
+      return "Workflow";
+    case "publish":
+      return "发布回写";
+    default:
+      return "派发";
+  }
+}
+
+function getAuditStatusTone(status: BusinessOperationRecord["status"]) {
+  if (status === "approved" || status === "sent" || status === "completed") {
+    return "ready";
+  }
+  if (status === "pending") {
+    return "partial";
+  }
+  return "blocked";
+}
+
+function getAuditStatusLabel(status: BusinessOperationRecord["status"]) {
+  switch (status) {
+    case "approved":
+      return "已批准";
+    case "rejected":
+      return "已驳回";
+    case "sent":
+      return "已派发";
+    case "completed":
+      return "已完成";
+    case "failed":
+      return "已失败";
+    case "pending":
+      return "待处理";
+    default:
+      return "已阻断";
+  }
+}
+
+function splitPublishLinks(value: string | undefined) {
+  if (!value) return [];
+  return value
+    .split(/\r?\n|,|\s+/)
+    .map(item => item.trim())
+    .filter(Boolean);
+}
+
+function resolvePublishTarget(
+  targets: Array<{ channel: "x" | "telegram" | "line" | "feishu" | "wecom" | "blog"; accountLabel: string }>,
+  encodedTarget?: string,
+) {
+  if (!encodedTarget) return targets[0];
+  return targets.find(target => `${target.channel}:${target.accountLabel}` === encodedTarget) ?? targets[0];
+}
+
+function getNextCycleRecommendationLabel(value: "reuse" | "retry" | "rewrite") {
+  switch (value) {
+    case "reuse":
+      return "待复用";
+    case "retry":
+      return "待重发";
+    default:
+      return "待改写";
+  }
+}
+
+function getNextCycleRecommendationTone(value: "reuse" | "retry" | "rewrite") {
+  switch (value) {
+    case "reuse":
+      return "ready";
+    case "retry":
+      return "partial";
+    default:
+      return "blocked";
+  }
+}
+
+function getContentAlertTone(value: "critical" | "warning" | "info") {
+  switch (value) {
+    case "critical":
+      return "blocked";
+    case "warning":
+      return "partial";
+    default:
+      return "ready";
+  }
+}
+
+function getContentAlertLabel(value: "critical" | "warning" | "info") {
+  switch (value) {
+    case "critical":
+      return "高风险";
+    case "warning":
+      return "需关注";
+    default:
+      return "提示";
+  }
 }

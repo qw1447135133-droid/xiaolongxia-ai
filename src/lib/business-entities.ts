@@ -128,9 +128,17 @@ export function createDemoBusinessDataset(scope: { projectId: string | null; roo
       customerId,
       leadId,
       channel: "blog",
+      format: "post",
+      goal: "生成一版可用于销售跟进和对外介绍的内容草稿",
+      publishTargets: [
+        { channel: "blog", accountLabel: "官网博客" },
+        { channel: "x", accountLabel: "品牌账号" },
+      ],
       status: "draft",
       priority: "normal",
       ownerAgentId: "writer",
+      publishedLinks: [],
+      publishedResults: [],
       brief: "围绕远程监督、自动化客服和值守模式写一版可转销售线索的介绍内容。",
     },
   ];

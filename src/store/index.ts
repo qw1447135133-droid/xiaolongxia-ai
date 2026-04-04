@@ -44,12 +44,15 @@ import {
   getNextLeadStage,
   getNextTicketStatus,
 } from "@/lib/business-entities";
+import { getWorkflowTemplateById } from "@/lib/workflow-runtime";
 import { buildProjectContext, getProjectScopeKey, matchProjectScope } from "@/lib/project-context";
 import { PLUGIN_PACKS } from "@/lib/plugin-runtime";
 import type {
   BusinessApprovalRecord,
   BusinessChannelSession,
   BusinessContentTask,
+  BusinessContentNextCycleRecommendation,
+  BusinessContentPublishResult,
   BusinessCustomer,
   BusinessEntityType,
   BusinessLead,
@@ -67,7 +70,7 @@ import type {
   SemanticKnowledgeDocument,
   SemanticMemoryConfig,
 } from "@/types/semantic-memory";
-import type { WorkflowRun } from "@/types/workflows";
+import type { WorkflowContextSnapshot, WorkflowRun, WorkflowTemplate } from "@/types/workflows";
 
 interface AgentSlice {
   agents: Record<AgentId, AgentState>;
@@ -219,9 +222,10 @@ interface WorkflowSlice {
   queueWorkflowRun: (payload: Omit<WorkflowRun, "id" | "createdAt" | "updatedAt" | "launchCount" | "status">) => string;
   restageWorkflowRun: (workflowRunId: string) => void;
   startWorkflowRun: (workflowRunId: string) => void;
-  completeWorkflowRun: (workflowRunId: string) => void;
+  completeWorkflowRun: (workflowRunId: string, payload?: { latestDraftSummary?: string }) => void;
   archiveWorkflowRun: (workflowRunId: string) => void;
   removeWorkflowRun: (workflowRunId: string) => void;
+  queueContentTaskWorkflowRun: (contentTaskId: string) => string | null;
 }
 
 interface BusinessEntitiesSlice {
@@ -235,7 +239,13 @@ interface BusinessEntitiesSlice {
   createBusinessCustomer: (payload: Pick<BusinessCustomer, "name" | "tier" | "primaryChannel" | "company" | "summary">) => void;
   createBusinessLead: (payload: Pick<BusinessLead, "title" | "customerId" | "source" | "stage" | "score" | "nextAction">) => void;
   createBusinessTicket: (payload: Pick<BusinessTicket, "subject" | "customerId" | "channelSessionId" | "status" | "priority" | "summary">) => void;
-  createBusinessContentTask: (payload: Pick<BusinessContentTask, "title" | "customerId" | "leadId" | "channel" | "status" | "priority" | "brief">) => void;
+  createBusinessContentTask: (
+    payload: Pick<
+      BusinessContentTask,
+      "title" | "customerId" | "leadId" | "channel" | "format" | "goal" | "publishTargets" | "status" | "priority" | "brief" | "scheduledFor"
+    >,
+  ) => void;
+  updateBusinessContentTask: (id: string, updates: Partial<Omit<BusinessContentTask, "id" | "projectId" | "rootPath" | "createdAt">>) => void;
   createBusinessChannelSession: (payload: Pick<BusinessChannelSession, "title" | "customerId" | "channel" | "externalRef" | "status" | "summary">) => void;
   advanceBusinessLeadStage: (id: string) => void;
   advanceBusinessTicketStatus: (id: string) => void;
@@ -256,6 +266,25 @@ interface BusinessEntitiesSlice {
     title: string;
     detail: string;
     executionRunId?: string;
+    workflowRunId?: string;
+    externalRef?: string;
+    failureReason?: string;
+  }) => void;
+  recordContentPublishResult: (payload: {
+    contentTaskId: string;
+    status: Extract<BusinessOperationRecord["status"], "completed" | "failed">;
+    title?: string;
+    detail: string;
+    publishLinks?: string[];
+    channel?: BusinessContentPublishResult["channel"];
+    accountLabel?: string;
+    externalId?: string;
+    publishedAt?: number;
+    summary?: string;
+    executionRunId?: string;
+    workflowRunId?: string;
+    externalRef?: string;
+    failureReason?: string;
   }) => void;
   seedBusinessEntitiesForProject: (scope?: { projectId?: string | null; rootPath?: string | null }) => void;
   clearBusinessEntitiesForProject: (scope?: { projectId?: string | null; rootPath?: string | null }) => void;
@@ -279,6 +308,9 @@ interface ExecutionSlice {
     sessionId: string;
     instruction: string;
     source?: ExecutionRunSource;
+    workflowRunId?: string;
+    entityType?: BusinessEntityType;
+    entityId?: string;
   }) => string;
   updateExecutionRun: (payload: {
     id: string;
@@ -286,6 +318,9 @@ interface ExecutionSlice {
     instruction?: string;
     status?: ExecutionRunStatus;
     source?: ExecutionRunSource;
+    workflowRunId?: string;
+    entityType?: BusinessEntityType;
+    entityId?: string;
     currentAgentId?: AgentId;
     totalTasks?: number;
     completedTasks?: number;
@@ -744,6 +779,166 @@ function getBusinessEntityTitle(
   }
 }
 
+function getContentTaskWorkflowTemplateId(status: BusinessContentTask["status"]) {
+  switch (status) {
+    case "review":
+      return "content-final-review";
+    case "scheduled":
+      return "content-publish-prep";
+    case "published":
+      return "content-postmortem";
+    default:
+      return "content-topic-draft";
+  }
+}
+
+function buildContentTaskWorkflowContext(
+  state: Pick<Store, "workspacePinnedPreviews" | "workspaceDeskNotes" | "workspaceSavedBundles" | "enabledPluginIds">,
+  task: BusinessContentTask,
+): WorkflowContextSnapshot {
+  return {
+    deskRefs: state.workspacePinnedPreviews.length,
+    deskNotes: state.workspaceDeskNotes.filter(note => matchProjectScope(note, task)).length,
+    contextPacks: state.workspaceSavedBundles.filter(bundle => matchProjectScope(bundle, task)).length,
+    plugins: state.enabledPluginIds.length,
+  };
+}
+
+function buildContentTaskWorkflowDraft(
+  task: BusinessContentTask,
+  template: WorkflowTemplate,
+  context: WorkflowContextSnapshot,
+) {
+  const publishTargets = task.publishTargets.length > 0
+    ? task.publishTargets.map(target => `${target.channel}:${target.accountLabel}`).join(", ")
+    : "未设置";
+  const scheduledFor = task.scheduledFor
+    ? new Date(task.scheduledFor).toLocaleString("zh-CN", { hour12: false })
+    : "未排期";
+  const publishResultSummary = task.publishedResults.length > 0
+    ? task.publishedResults
+        .slice(0, 3)
+        .map(result => {
+          const parts = [`${result.channel}:${result.accountLabel}`, result.status];
+          if (result.externalId) parts.push(`externalId ${result.externalId}`);
+          if (result.link) parts.push(`link ${result.link}`);
+          if (result.failureReason) parts.push(`reason ${result.failureReason}`);
+          return parts.join(" · ");
+        })
+        .join("\n")
+    : "暂无";
+
+  return [
+    `Workflow: ${template.title}`,
+    `Content Task: ${task.title}`,
+    `Status: ${task.status}`,
+    `Format: ${task.format}`,
+    `Primary Channel: ${task.channel}`,
+    `Goal: ${task.goal}`,
+    `Publish Targets: ${publishTargets}`,
+    `Scheduled For: ${scheduledFor}`,
+    `Context: desk refs ${context.deskRefs}, desk notes ${context.deskNotes}, context packs ${context.contextPacks}, plugins ${context.plugins}`,
+    "",
+    `Brief: ${task.brief}`,
+    task.latestDraftSummary ? `Latest Draft Summary: ${task.latestDraftSummary}` : "Latest Draft Summary: 暂无",
+    task.latestPostmortemSummary ? `Latest Postmortem Summary: ${task.latestPostmortemSummary}` : "Latest Postmortem Summary: 暂无",
+    `Publish Results: ${publishResultSummary}`,
+    "",
+    template.brief,
+  ].join("\n");
+}
+
+function mergePublishedLinks(currentLinks: string[], nextLinks?: string[], fallbackRefs?: string[]) {
+  const normalized = [
+    ...(nextLinks ?? []),
+    ...(fallbackRefs ?? []),
+  ]
+    .map(link => link.trim())
+    .filter(Boolean);
+
+  if (normalized.length === 0) return currentLinks;
+  return Array.from(new Set([...currentLinks, ...normalized]));
+}
+
+function mergePublishedResults(
+  currentResults: BusinessContentPublishResult[],
+  nextResult?: BusinessContentPublishResult,
+) {
+  if (!nextResult) return currentResults;
+
+  return [
+    nextResult,
+    ...currentResults.filter(result => result.id !== nextResult.id),
+  ].slice(0, 24);
+}
+
+function resolveContentTaskStatusAfterWorkflow(
+  task: BusinessContentTask,
+  workflowRun: Pick<WorkflowRun, "templateId">,
+): BusinessContentTask["status"] {
+  if (workflowRun.templateId === "content-topic-draft" && task.status === "draft") {
+    return "review";
+  }
+
+  return task.status;
+}
+
+function inferNextCycleRecommendation(
+  task: BusinessContentTask,
+  workflowSummary?: string,
+): BusinessContentNextCycleRecommendation {
+  const normalizedSummary = workflowSummary?.toLowerCase() ?? "";
+
+  if (
+    normalizedSummary.includes("rewrite")
+    || normalizedSummary.includes("rework")
+    || normalizedSummary.includes("改写")
+    || normalizedSummary.includes("重写")
+    || normalizedSummary.includes("重做")
+  ) {
+    return "rewrite";
+  }
+
+  if (
+    normalizedSummary.includes("retry")
+    || normalizedSummary.includes("repost")
+    || normalizedSummary.includes("重发")
+    || normalizedSummary.includes("补发")
+    || normalizedSummary.includes("再发")
+  ) {
+    return "retry";
+  }
+
+  if (
+    normalizedSummary.includes("reuse")
+    || normalizedSummary.includes("repurpose")
+    || normalizedSummary.includes("复用")
+    || normalizedSummary.includes("沿用")
+    || normalizedSummary.includes("扩散")
+  ) {
+    return "reuse";
+  }
+
+  const successCount = task.publishedResults.filter(result => result.status === "completed").length;
+  const failureCount = task.publishedResults.filter(result => result.status === "failed").length;
+
+  if (failureCount > successCount) return "retry";
+  if (successCount > 0) return "reuse";
+  return "rewrite";
+}
+
+function hasActiveContentPostmortemRun(
+  workflowRuns: WorkflowRun[],
+  contentTaskId: string,
+) {
+  return workflowRuns.some(run =>
+    run.entityType === "contentTask"
+    && run.entityId === contentTaskId
+    && run.templateId === "content-postmortem"
+    && (run.status === "queued" || run.status === "staged" || run.status === "in-progress"),
+  );
+}
+
 function buildSessionActivationState(
   state: Store,
   session: ChatSession,
@@ -785,7 +980,7 @@ function buildSessionActivationState(
 
 export const useStore = create<Store>()(
   persist(
-    (set) => ({
+    (set, get) => ({
       agents: initAgents(),
       setAgentStatus: (id, status, currentTask) =>
         set(s => ({
@@ -1216,19 +1411,78 @@ export const useStore = create<Store>()(
               : run,
           ),
         })),
-      completeWorkflowRun: (workflowRunId) =>
-        set(s => ({
-          workflowRuns: s.workflowRuns.map(run =>
-            run.id === workflowRunId
-              ? {
-                  ...run,
-                  status: "completed",
-                  completedAt: Date.now(),
-                  updatedAt: Date.now(),
-                }
-              : run,
-          ),
-        })),
+      completeWorkflowRun: (workflowRunId, payload) =>
+        set(s => {
+          const now = Date.now();
+          const completedRun = s.workflowRuns.find(run => run.id === workflowRunId) ?? null;
+          const linkedContentTask = completedRun?.entityType === "contentTask" && completedRun.entityId
+            ? s.businessContentTasks.find(task => task.id === completedRun.entityId) ?? null
+            : null;
+          const workflowSummary = payload?.latestDraftSummary?.trim() || completedRun?.summary;
+          const isPostmortemWorkflow = completedRun?.templateId === "content-postmortem";
+          const nextContentTaskStatus = linkedContentTask && completedRun
+            ? resolveContentTaskStatusAfterWorkflow(linkedContentTask, completedRun)
+            : null;
+          const nextCycleRecommendation = linkedContentTask && isPostmortemWorkflow
+            ? inferNextCycleRecommendation(linkedContentTask, workflowSummary)
+            : undefined;
+
+          return {
+            workflowRuns: s.workflowRuns.map(run =>
+              run.id === workflowRunId
+                ? {
+                    ...run,
+                    status: "completed",
+                    completedAt: now,
+                    updatedAt: now,
+                  }
+                : run,
+            ),
+            businessContentTasks:
+              completedRun?.entityType === "contentTask" && completedRun.entityId
+                ? s.businessContentTasks.map(task =>
+                    task.id === completedRun.entityId
+                      ? {
+                          ...task,
+                          status: nextContentTaskStatus ?? task.status,
+                          ...(isPostmortemWorkflow
+                            ? {
+                                latestPostmortemSummary: workflowSummary,
+                                nextCycleRecommendation,
+                              }
+                            : { latestDraftSummary: workflowSummary }),
+                          lastWorkflowRunId: completedRun.id,
+                          lastOperationAt: now,
+                          updatedAt: now,
+                        }
+                      : task,
+                  )
+                : s.businessContentTasks,
+            businessOperationLogs:
+              completedRun?.entityType === "contentTask" && completedRun.entityId
+                ? capBusinessOperationLogs([
+                    {
+                      id: `biz-op-${now}-${Math.random().toString(36).slice(2, 7)}`,
+                      entityType: completedRun.entityType,
+                      entityId: completedRun.entityId,
+                      eventType: "workflow",
+                      trigger: "manual",
+                      status: "completed",
+                      title: completedRun.title,
+                      detail: linkedContentTask && nextContentTaskStatus && nextContentTaskStatus !== linkedContentTask.status
+                        ? `Workflow completed. ${workflowSummary ?? completedRun.summary} · 状态已推进到 ${nextContentTaskStatus}`
+                        : `Workflow completed. ${workflowSummary ?? completedRun.summary}`,
+                      workflowRunId: completedRun.id,
+                      projectId: linkedContentTask?.projectId ?? null,
+                      rootPath: linkedContentTask?.rootPath ?? null,
+                      createdAt: now,
+                      updatedAt: now,
+                    },
+                    ...s.businessOperationLogs,
+                  ])
+                : s.businessOperationLogs,
+          };
+        }),
       archiveWorkflowRun: (workflowRunId) =>
         set(s => ({
           workflowRuns: s.workflowRuns.map(run =>
@@ -1245,6 +1499,52 @@ export const useStore = create<Store>()(
         set(s => ({
           workflowRuns: s.workflowRuns.filter(run => run.id !== workflowRunId),
         })),
+      queueContentTaskWorkflowRun: (contentTaskId) => {
+        const state = get();
+        const contentTask = state.businessContentTasks.find(task => task.id === contentTaskId) ?? null;
+        if (!contentTask) return null;
+
+        const templateId = getContentTaskWorkflowTemplateId(contentTask.status);
+        const template = getWorkflowTemplateById(templateId, state.enabledPluginIds);
+        if (!template) return null;
+
+        const workflowContext = buildContentTaskWorkflowContext(state, contentTask);
+        const draft = buildContentTaskWorkflowDraft(contentTask, template, workflowContext);
+
+        const workflowRunId = get().queueWorkflowRun({
+          templateId: template.id,
+          title: `${template.title} · ${contentTask.title}`,
+          summary: `${template.summary} · ${contentTask.goal}`,
+          nextTab: template.nextTab,
+          brief: template.brief,
+          draft,
+          accent: template.accent,
+          steps: template.steps,
+          context: workflowContext,
+          source: template.source,
+          entityType: "contentTask",
+          entityId: contentTask.id,
+          pluginId: template.pluginId,
+          pluginName: template.pluginName,
+        });
+
+        get().updateBusinessContentTask(contentTask.id, {
+          lastWorkflowRunId: workflowRunId,
+          lastOperationAt: Date.now(),
+        });
+        get().recordBusinessOperation({
+          entityType: "contentTask",
+          entityId: contentTask.id,
+          eventType: "workflow",
+          trigger: "manual",
+          status: "pending",
+          title: contentTask.title,
+          detail: `Workflow queued. ${template.summary}`,
+          workflowRunId,
+        });
+
+        return workflowRunId;
+      },
 
       businessApprovals: [],
       businessOperationLogs: [],
@@ -1324,12 +1624,26 @@ export const useStore = create<Store>()(
                 createdAt: now,
                 updatedAt: now,
                 ownerAgentId: "writer",
+                publishedLinks: [],
+                publishedResults: [],
                 ...payload,
               },
               ...s.businessContentTasks,
             ],
           };
         }),
+      updateBusinessContentTask: (id, updates) =>
+        set(s => ({
+          businessContentTasks: s.businessContentTasks.map(item =>
+            item.id === id
+              ? {
+                  ...item,
+                  ...updates,
+                  updatedAt: Date.now(),
+                }
+              : item,
+          ),
+        })),
       createBusinessChannelSession: (payload) =>
         set(s => {
           const now = Date.now();
@@ -1440,11 +1754,25 @@ export const useStore = create<Store>()(
             ]),
           };
         }),
-      recordBusinessOperation: ({ entityType, entityId, eventType, trigger, status, title, detail, executionRunId }) =>
+      recordBusinessOperation: ({ entityType, entityId, eventType, trigger, status, title, detail, executionRunId, workflowRunId, externalRef, failureReason }) =>
         set(s => {
           const now = Date.now();
           const scope = resolveBusinessScope(s);
           return {
+            businessContentTasks:
+              entityType === "contentTask"
+                ? s.businessContentTasks.map(task =>
+                    task.id === entityId
+                      ? {
+                          ...task,
+                          lastExecutionRunId: executionRunId ?? task.lastExecutionRunId,
+                          lastWorkflowRunId: workflowRunId ?? task.lastWorkflowRunId,
+                          lastOperationAt: now,
+                          updatedAt: now,
+                        }
+                      : task,
+                  )
+                : s.businessContentTasks,
             businessOperationLogs: capBusinessOperationLogs([
               {
                 id: `biz-op-${now}-${Math.random().toString(36).slice(2, 7)}`,
@@ -1456,6 +1784,9 @@ export const useStore = create<Store>()(
                 title,
                 detail,
                 executionRunId,
+                workflowRunId,
+                externalRef,
+                failureReason,
                 projectId: scope.projectId,
                 rootPath: scope.rootPath,
                 createdAt: now,
@@ -1465,6 +1796,104 @@ export const useStore = create<Store>()(
             ]),
           };
         }),
+      recordContentPublishResult: ({
+        contentTaskId,
+        status,
+        title,
+        detail,
+        publishLinks,
+        channel,
+        accountLabel,
+        externalId,
+        publishedAt,
+        summary,
+        executionRunId,
+        workflowRunId,
+        externalRef,
+        failureReason,
+      }) => {
+        const currentState = get();
+        const shouldQueuePostmortem = status === "completed"
+          && (currentState.businessContentTasks.find(task => task.id === contentTaskId)?.status !== "published")
+          && !hasActiveContentPostmortemRun(currentState.workflowRuns, contentTaskId);
+
+        set(s => {
+          const now = Date.now();
+          const contentTask = s.businessContentTasks.find(task => task.id === contentTaskId) ?? null;
+          if (!contentTask) {
+            return {};
+          }
+
+          const resolvedTitle = title?.trim() || contentTask.title;
+          const resolvedTarget = contentTask.publishTargets.find(target =>
+            target.channel === channel && (!accountLabel || target.accountLabel === accountLabel),
+          ) ?? contentTask.publishTargets[0];
+          const resolvedChannel = channel ?? resolvedTarget?.channel ?? contentTask.channel;
+          const resolvedAccountLabel = accountLabel?.trim() || resolvedTarget?.accountLabel || "默认账号";
+          const resolvedTargetLabel = `${resolvedChannel}:${resolvedAccountLabel}`;
+          const resultTimestamp = publishedAt ?? now;
+          const nextLinks = mergePublishedLinks(contentTask.publishedLinks, publishLinks, [
+            externalId?.trim() ?? "",
+            externalRef?.trim() ?? "",
+          ]);
+          const primaryLink = nextLinks[0];
+          const nextPublishResult: BusinessContentPublishResult = {
+            id: `publish-result-${resultTimestamp}-${Math.random().toString(36).slice(2, 7)}`,
+            channel: resolvedChannel,
+            accountLabel: resolvedAccountLabel,
+            status,
+            publishedAt: resultTimestamp,
+            ...(primaryLink ? { link: primaryLink } : {}),
+            ...(externalId?.trim() ? { externalId: externalId.trim() } : {}),
+            ...(summary?.trim() ? { summary: summary.trim() } : {}),
+            ...(executionRunId ? { executionRunId } : {}),
+            ...(workflowRunId ? { workflowRunId } : {}),
+            ...(failureReason ? { failureReason } : {}),
+          };
+
+          return {
+            businessContentTasks: s.businessContentTasks.map(task =>
+              task.id === contentTaskId
+                ? {
+                    ...task,
+                    status: status === "completed" ? "published" : task.status,
+                    publishedLinks: nextLinks,
+                    publishedResults: mergePublishedResults(task.publishedResults, nextPublishResult),
+                    lastExecutionRunId: executionRunId ?? task.lastExecutionRunId,
+                    lastWorkflowRunId: workflowRunId ?? task.lastWorkflowRunId,
+                    lastOperationAt: now,
+                    updatedAt: now,
+                  }
+                : task,
+            ),
+            businessOperationLogs: capBusinessOperationLogs([
+              {
+                id: `biz-op-${now}-${Math.random().toString(36).slice(2, 7)}`,
+                entityType: "contentTask",
+                entityId: contentTaskId,
+                eventType: "publish",
+                trigger: "manual",
+                status,
+                title: resolvedTitle,
+                detail,
+                executionRunId,
+                workflowRunId,
+                externalRef: externalRef ?? resolvedTargetLabel,
+                failureReason,
+                projectId: contentTask.projectId,
+                rootPath: contentTask.rootPath,
+                createdAt: now,
+                updatedAt: now,
+              },
+              ...s.businessOperationLogs,
+            ]),
+          };
+        });
+
+        if (shouldQueuePostmortem) {
+          get().queueContentTaskWorkflowRun(contentTaskId);
+        }
+      },
       seedBusinessEntitiesForProject: (scope) =>
         set(s => {
           const activeSession = s.chatSessions.find(session => session.id === s.activeSessionId) ?? null;
@@ -1564,7 +1993,7 @@ export const useStore = create<Store>()(
 
       executionRuns: [],
       activeExecutionRunId: null,
-      createExecutionRun: ({ id, sessionId, instruction, source = "chat" }) => {
+      createExecutionRun: ({ id, sessionId, instruction, source = "chat", workflowRunId, entityType, entityId }) => {
         const timestamp = Date.now();
         const runId = id ?? `run-${timestamp}-${Math.random().toString(36).slice(2, 8)}`;
         const activeSession = useStore.getState().chatSessions.find(session => session.id === sessionId) ?? null;
@@ -1574,6 +2003,9 @@ export const useStore = create<Store>()(
           projectId: activeSession?.projectId ?? null,
           instruction,
           source,
+          workflowRunId,
+          entityType,
+          entityId,
           status: "queued",
           createdAt: timestamp,
           updatedAt: timestamp,
@@ -1596,6 +2028,20 @@ export const useStore = create<Store>()(
             nextRun,
             ...s.executionRuns.filter(run => run.id !== runId),
           ]),
+          businessContentTasks:
+            entityType === "contentTask" && entityId
+              ? s.businessContentTasks.map(task =>
+                  task.id === entityId
+                    ? {
+                        ...task,
+                        lastExecutionRunId: runId,
+                        lastWorkflowRunId: workflowRunId ?? task.lastWorkflowRunId,
+                        lastOperationAt: timestamp,
+                        updatedAt: timestamp,
+                      }
+                    : task,
+                )
+              : s.businessContentTasks,
           activeExecutionRunId: runId,
         }));
 
@@ -1607,6 +2053,9 @@ export const useStore = create<Store>()(
         instruction,
         status,
         source,
+        workflowRunId,
+        entityType,
+        entityId,
         currentAgentId,
         totalTasks,
         completedTasks,
@@ -1629,6 +2078,9 @@ export const useStore = create<Store>()(
               projectId: s.chatSessions.find(session => session.id === (sessionId ?? s.activeSessionId))?.projectId ?? null,
               instruction: instruction ?? "待补充指令",
               source: source ?? "chat",
+              workflowRunId,
+              entityType,
+              entityId,
               status: "queued",
               createdAt: updateTime,
               updatedAt: updateTime,
@@ -1651,6 +2103,9 @@ export const useStore = create<Store>()(
             ...(sessionId ? { sessionId } : {}),
             ...(instruction ? { instruction } : {}),
             ...(source ? { source } : {}),
+            ...(workflowRunId === undefined ? {} : { workflowRunId }),
+            ...(entityType === undefined ? {} : { entityType }),
+            ...(entityId === undefined ? {} : { entityId }),
             ...(status ? { status } : {}),
             ...(currentAgentId === undefined ? {} : { currentAgentId }),
             ...(typeof totalTasks === "number" ? { totalTasks } : {}),
@@ -1673,6 +2128,20 @@ export const useStore = create<Store>()(
               nextRun,
               ...s.executionRuns.filter(run => run.id !== id),
             ]),
+            businessContentTasks:
+              nextRun.entityType === "contentTask" && nextRun.entityId
+                ? s.businessContentTasks.map(task =>
+                    task.id === nextRun.entityId
+                      ? {
+                          ...task,
+                          lastExecutionRunId: id,
+                          lastWorkflowRunId: nextRun.workflowRunId ?? task.lastWorkflowRunId,
+                          lastOperationAt: updateTime,
+                          updatedAt: updateTime,
+                        }
+                      : task,
+                  )
+                : s.businessContentTasks,
             activeExecutionRunId: id,
           };
         }),

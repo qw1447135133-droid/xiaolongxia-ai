@@ -86,6 +86,9 @@ export interface ExecutionRun {
   projectId?: string | null;
   instruction: string;
   source: ExecutionRunSource;
+  workflowRunId?: string;
+  entityType?: "customer" | "lead" | "ticket" | "contentTask" | "channelSession";
+  entityId?: string;
   status: ExecutionRunStatus;
   createdAt: number;
   updatedAt: number;
@@ -651,7 +654,7 @@ export const TEAM_OPERATING_SURFACES: Record<TeamOperatingTemplateId, TeamOperat
       "把这个内容需求拆成脚本、视觉和分发三步。",
       "结合当前知识文档和项目记忆，给我一版可以直接发布的内容 brief。",
     ],
-    recommendedWorkflowTemplateIds: ["launch-sprint", "research-loop"],
+    recommendedWorkflowTemplateIds: ["content-topic-draft", "content-final-review", "content-publish-prep"],
     remoteOpsRecommendation: {
       automationMode: "supervised",
       remoteSupervisorEnabled: true,

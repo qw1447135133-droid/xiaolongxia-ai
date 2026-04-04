@@ -30,6 +30,7 @@ import { DesktopRuntimeBridge } from "@/components/DesktopRuntimeBridge";
 import { ExecutionVerificationBridge } from "@/components/ExecutionVerificationBridge";
 import { ControlCenter } from "@/components/ControlCenter";
 import { ExecutionCenter } from "@/components/ExecutionCenter";
+import { HermesDispatchCenter } from "@/components/HermesDispatchCenter";
 import { ProjectHubCard } from "@/components/ProjectHubCard";
 import { WorkspaceDesk } from "@/components/WorkspaceDesk";
 import {
@@ -48,6 +49,7 @@ const NAV_ITEMS: Array<{ id: AppTab; label: string; eyebrow: string }> = [
   { id: "dashboard", label: "首页", eyebrow: "Home" },
   { id: "tasks", label: "聊天", eyebrow: "Chat" },
   { id: "workspace", label: "工作区", eyebrow: "Desk" },
+  { id: "dispatch", label: "Hermes", eyebrow: "Dispatch" },
   { id: "meeting", label: "会议", eyebrow: "Meet" },
   { id: "settings", label: "控制台", eyebrow: "Control" },
 ];
@@ -368,6 +370,12 @@ export default function App() {
               </SidebarSection>
             )}
 
+            {activeTab === "dispatch" && (
+              <SidebarSection title="执行轨迹" subtitle="复用现有 run 与活动流观察 dispatch">
+                <ExecutionCenter compact />
+              </SidebarSection>
+            )}
+
             <SidebarSection title="系统摘要" subtitle="当前工作台能力">
               <div className="ios-chat-shell__summary-list">
                 <div className="ios-chat-shell__summary-item">
@@ -413,6 +421,7 @@ export default function App() {
             {activeTab === "dashboard" && <DashboardTab onOpenTab={setTab} />}
             {activeTab === "tasks" && <TasksTab />}
             {activeTab === "workspace" && <WorkspaceTab />}
+            {activeTab === "dispatch" && <DispatchTab />}
             {activeTab === "meeting" && <MeetingTab />}
             {activeTab === "settings" && <SettingsTab />}
           </div>
@@ -543,6 +552,15 @@ function DesktopWorkspaceApp() {
               </section>
             ) : null}
 
+            {activeTab === "dispatch" ? (
+              <section className="desktop-workspace-shell__section">
+                <div className="desktop-workspace-shell__section-eyebrow">执行轨迹</div>
+                <div className="desktop-workspace-shell__panel">
+                  <ExecutionCenter compact />
+                </div>
+              </section>
+            ) : null}
+
             <section className="desktop-workspace-shell__section">
               <div className="desktop-workspace-shell__section-eyebrow">桌面态摘要</div>
               <div className="desktop-workspace-shell__summary-grid">
@@ -618,6 +636,11 @@ function DesktopWorkspaceApp() {
           {activeTab === "workspace" ? (
             <section className="desktop-workspace-shell__content-panel">
               <WorkspaceTab />
+            </section>
+          ) : null}
+          {activeTab === "dispatch" ? (
+            <section className="desktop-workspace-shell__content-panel">
+              <DispatchTab />
             </section>
           ) : null}
           {activeTab === "meeting" ? (
@@ -2144,6 +2167,18 @@ function WorkspaceTab() {
         <div className="ios-feature-page__title">工作区与引用上下文</div>
       </div>
       <WorkspaceDesk />
+    </div>
+  );
+}
+
+function DispatchTab() {
+  return (
+    <div className="ios-feature-page">
+      <div className="ios-feature-page__header">
+        <div className="ios-feature-page__eyebrow">Dispatch</div>
+        <div className="ios-feature-page__title">Hermes 规划与外部执行器分发</div>
+      </div>
+      <HermesDispatchCenter />
     </div>
   );
 }

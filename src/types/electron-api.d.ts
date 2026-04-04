@@ -98,6 +98,72 @@ export interface NativeInstalledApplication {
   location?: string;
 }
 
+export interface HermesDispatchRuntimeStatus {
+  command: string;
+  available: boolean;
+}
+
+export interface HermesDispatchEnvironment {
+  prototypeAvailable: boolean;
+  repoRoot: string;
+  prototypeRoot?: string;
+  outputRoot: string;
+  commands: {
+    node: HermesDispatchRuntimeStatus;
+    hermes: HermesDispatchRuntimeStatus;
+    codex: HermesDispatchRuntimeStatus;
+    claude: HermesDispatchRuntimeStatus;
+    gemini: HermesDispatchRuntimeStatus;
+  };
+}
+
+export interface HermesDispatchRequest {
+  instruction?: string;
+  mode: "plan-only" | "execute";
+  planner: "hermes" | "sample-plan";
+  configPath?: string;
+}
+
+export interface HermesDispatchTaskResult {
+  status: "fulfilled" | "rejected";
+  taskId: string;
+  executor: "codex" | "claude" | "gemini";
+  title: string;
+  workdir?: string;
+  stdout?: string;
+  stderr?: string;
+  error?: string;
+  startedAt?: number;
+  finishedAt?: number;
+  durationMs?: number;
+}
+
+export interface HermesDispatchResponse {
+  ok: boolean;
+  runDir: string;
+  command: string;
+  args: string[];
+  stdout: string;
+  stderr: string;
+  plan?: {
+    summary: string;
+    tasks: Array<{
+      id: string;
+      title: string;
+      executor: "codex" | "claude" | "gemini";
+      objective: string;
+      workdir: string;
+      dependsOn: string[];
+    }>;
+  };
+  results?: HermesDispatchTaskResult[];
+  summary?: {
+    runDir: string;
+    completed: number;
+    failed: number;
+  };
+}
+
 declare global {
   interface Window {
     __XLX_ELECTRON__?: boolean;
@@ -118,6 +184,8 @@ declare global {
       controlDesktopInput?: (payload: DesktopInputControlPayload) => Promise<DesktopInputControlResult>;
       captureDesktopScreenshot?: (payload?: DesktopScreenshotPayload) => Promise<DesktopScreenshotResult>;
       listInstalledApplications?: (forceRefresh?: boolean) => Promise<NativeInstalledApplication[]>;
+      inspectHermesDispatchEnvironment?: () => Promise<HermesDispatchEnvironment>;
+      runHermesDispatchPrototype?: (payload: HermesDispatchRequest) => Promise<HermesDispatchResponse>;
       reloadDesktopWindow?: () => Promise<{ ok: boolean; message: string }>;
       relaunchDesktopApp?: () => Promise<{ ok: boolean; message: string }>;
     };

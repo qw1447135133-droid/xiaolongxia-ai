@@ -1,0 +1,29 @@
+{
+  "summary": "为现有仓库增加 Hermes 到外部执行器的最小分发原型。",
+  "tasks": [
+    {
+      "id": "task-1",
+      "title": "Codex 实现 CLI 分发脚本",
+      "executor": "codex",
+      "objective": "在仓库中实现一个独立的原型脚本，用于读取计划 JSON 并将子任务分发给不同执行器。避免修改现有业务文件。",
+      "workdir": ".",
+      "dependsOn": []
+    },
+    {
+      "id": "task-2",
+      "title": "Claude 审核原型结构",
+      "executor": "claude",
+      "objective": "审查分发原型的目录结构、CLI 参数和配置项设计，指出明显的缺失和风险，并给出简短修改建议。",
+      "workdir": ".",
+      "dependsOn": ["task-1"]
+    },
+    {
+      "id": "task-3",
+      "title": "Gemini 横向总结局限",
+      "executor": "gemini",
+      "objective": "总结该原型在并行执行、权限控制、工作区隔离上的当前局限，并给出后续迭代建议。",
+      "workdir": ".",
+      "dependsOn": ["task-1"]
+    }
+  ]
+}

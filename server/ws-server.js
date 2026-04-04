@@ -3,11 +3,16 @@ import { createServer } from "http";
 import { promises as fs, readFileSync, existsSync } from "fs";
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
+import { spawn } from "child_process";
 import Anthropic from "@anthropic-ai/sdk";
 
 // ── 加载 .env.local（强制覆盖系统环境变量）──
 const __dirname_ws = dirname(fileURLToPath(import.meta.url));
 const envPath = join(__dirname_ws, '..', '.env.local');
+const repoRoot = join(__dirname_ws, "..");
+const hermesDispatchPrototypePath = join(repoRoot, "prototypes", "hermes-dispatch", "run.mjs");
+const hermesDispatchSamplePlanPath = join(repoRoot, "prototypes", "hermes-dispatch", "sample-plan.json");
+const hermesDispatchOutputRoot = join(repoRoot, "output", "hermes-dispatch");
 if (existsSync(envPath)) {
   for (const line of readFileSync(envPath, 'utf-8').split(/\r?\n/)) {
     const m = line.trim().match(/^([A-Z_][A-Z0-9_]*)=(.*)$/);
@@ -59,6 +64,7 @@ let settings = {
     },
   },
 };
+const hermesDispatchRuns = new Map();
 
 const ROUTING_RULES = [
   { keywords: ["浏览器", "打开网页", "打开网站", "截图", "爬取", "爬虫", "搜索网页", "访问网址", "访问网站", "点击", "填写表单", "自动化操作", "browser"], agent: "orchestrator", complexity: "medium" },
@@ -108,6 +114,211 @@ function writeJson(res, status, payload) {
     "Access-Control-Allow-Headers": "Content-Type",
   });
   res.end(JSON.stringify(payload));
+}
+
+function commandLocator() {
+  return process.platform === "win32" ? "where" : "which";
+}
+
+function commandAvailable(command) {
+  return new Promise((resolve) => {
+    const child = spawn(commandLocator(), [command], { stdio: "ignore" });
+    child.on("close", (code) => resolve(code === 0));
+    child.on("error", () => resolve(false));
+  });
+}
+
+function slugify(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9\u4e00-\u9fa5]+/gi, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 48) || "run";
+}
+
+async function safeReadJson(filePath) {
+  try {
+    const text = await fs.readFile(filePath, "utf8");
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
+async function safeReadText(filePath) {
+  try {
+    return await fs.readFile(filePath, "utf8");
+  } catch {
+    return "";
+  }
+}
+
+function tailText(value, maxChars = 6000) {
+  if (!value) return "";
+  return value.length <= maxChars ? value : value.slice(-maxChars);
+}
+
+async function getHermesDispatchAvailability() {
+  const checks = await Promise.all([
+    commandAvailable("hermes"),
+    commandAvailable("codex"),
+    commandAvailable("claude"),
+    commandAvailable("gemini"),
+  ]);
+
+  return {
+    hermes: { command: "hermes", available: checks[0] },
+    codex: { command: "codex", available: checks[1] },
+    claude: { command: "claude", available: checks[2] },
+    gemini: { command: "gemini", available: checks[3] },
+  };
+}
+
+async function collectHermesDispatchRunFromDirectory(dirName) {
+  const runDir = join(hermesDispatchOutputRoot, dirName);
+  const plan = await safeReadJson(join(runDir, "plan.json"));
+  const summary = await safeReadJson(join(runDir, "summary.json"));
+  const results = await safeReadJson(join(runDir, "results.json"));
+  const plannerStdout = await safeReadText(join(runDir, "planner-stdout.txt"));
+  const latestTaskStdout = await collectLatestTaskLog(runDir, "stdout.txt");
+  const latestTaskStderr = await collectLatestTaskLog(runDir, "stderr.txt");
+  const createdAt = Number.isFinite(Date.parse(dirName.split("-run-")[0] || dirName))
+    ? Date.parse(dirName.split("-run-")[0] || dirName)
+    : Date.now();
+
+  return {
+    id: dirName,
+    instruction: plan?.summary || "",
+    mode: summary ? "execute" : "plan-only",
+    planner: "hermes",
+    status: summary ? (summary.failed > 0 ? "failed" : "completed") : "planned",
+    createdAt,
+    updatedAt: createdAt,
+    outputDir: runDir,
+    plan,
+    summary,
+    results,
+    stdoutTail: tailText(latestTaskStdout || plannerStdout),
+    stderrTail: tailText(latestTaskStderr),
+    error: null,
+  };
+}
+
+async function collectLatestTaskLog(runDir, fileName) {
+  try {
+    const entries = await fs.readdir(runDir, { withFileTypes: true });
+    const taskDirs = entries
+      .filter(entry => entry.isDirectory())
+      .map(entry => entry.name)
+      .sort()
+      .reverse();
+
+    for (const taskDir of taskDirs) {
+      const filePath = join(runDir, taskDir, fileName);
+      if (existsSync(filePath)) {
+        return await safeReadText(filePath);
+      }
+    }
+  } catch {}
+
+  return "";
+}
+
+async function listHermesDispatchRuns() {
+  await fs.mkdir(hermesDispatchOutputRoot, { recursive: true });
+  const directoryEntries = await fs.readdir(hermesDispatchOutputRoot, { withFileTypes: true });
+  const finishedRuns = await Promise.all(
+    directoryEntries
+      .filter(entry => entry.isDirectory())
+      .map(entry => collectHermesDispatchRunFromDirectory(entry.name)),
+  );
+
+  const merged = new Map(finishedRuns.map(run => [run.id, run]));
+  for (const [runId, run] of hermesDispatchRuns.entries()) {
+    merged.set(runId, {
+      ...merged.get(runId),
+      ...run,
+    });
+  }
+
+  return [...merged.values()].sort((left, right) => right.updatedAt - left.updatedAt).slice(0, 20);
+}
+
+async function startHermesDispatchRun({ instruction, planOnly = false, useSamplePlan = false }) {
+  await fs.mkdir(hermesDispatchOutputRoot, { recursive: true });
+
+  const runId = `${new Date().toISOString().replace(/[:.]/g, "-")}-run-${slugify(instruction || "sample")}`;
+  const outputDir = join(hermesDispatchOutputRoot, runId);
+  await fs.mkdir(outputDir, { recursive: true });
+
+  const args = [hermesDispatchPrototypePath, "--output-dir", outputDir];
+  if (planOnly) args.push("--plan-only");
+  if (useSamplePlan) {
+    args.push("--plan-file", hermesDispatchSamplePlanPath);
+  } else {
+    args.push(instruction);
+  }
+
+  const runState = {
+    id: runId,
+    instruction: instruction || "样例计划演示",
+    mode: planOnly ? "plan-only" : "execute",
+    planner: useSamplePlan ? "sample" : "hermes",
+    status: "queued",
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    outputDir,
+    stdoutTail: "",
+    stderrTail: "",
+    error: null,
+  };
+  hermesDispatchRuns.set(runId, runState);
+
+  const child = spawn(process.execPath, args, {
+    cwd: repoRoot,
+    env: process.env,
+    stdio: ["ignore", "pipe", "pipe"],
+    shell: false,
+  });
+
+  runState.status = "running";
+  runState.updatedAt = Date.now();
+
+  child.stdout.on("data", chunk => {
+    runState.stdoutTail = tailText(`${runState.stdoutTail}${chunk.toString()}`);
+    runState.updatedAt = Date.now();
+  });
+
+  child.stderr.on("data", chunk => {
+    runState.stderrTail = tailText(`${runState.stderrTail}${chunk.toString()}`);
+    runState.updatedAt = Date.now();
+  });
+
+  child.on("error", error => {
+    runState.status = "failed";
+    runState.error = error.message;
+    runState.updatedAt = Date.now();
+  });
+
+  child.on("close", async (code) => {
+    const plan = await safeReadJson(join(outputDir, "plan.json"));
+    const summary = await safeReadJson(join(outputDir, "summary.json"));
+    const results = await safeReadJson(join(outputDir, "results.json"));
+
+    runState.status = summary
+      ? (summary.failed > 0 || code !== 0 ? "failed" : "completed")
+      : (code === 0 ? "planned" : "failed");
+    runState.updatedAt = Date.now();
+    runState.exitCode = code;
+    runState.plan = plan;
+    runState.summary = summary;
+    runState.results = results;
+    if (code !== 0 && !runState.error) {
+      runState.error = tailText(runState.stderrTail) || `dispatch process exited with code ${code}`;
+    }
+  });
+
+  return runState;
 }
 
 async function writeFileResponse(res, fileResult) {
@@ -1130,6 +1341,48 @@ const httpServer = createServer(async (req, res) => {
 
   if (req.method === "GET" && url.pathname === "/api/desktop-runtime") {
     writeJson(res, 200, getDesktopRuntimeSummary());
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/hermes-dispatch/status") {
+    const [availability, runs] = await Promise.all([
+      getHermesDispatchAvailability(),
+      listHermesDispatchRuns(),
+    ]);
+    writeJson(res, 200, {
+      ok: true,
+      availability,
+      runs,
+      prototypePath: hermesDispatchPrototypePath,
+    });
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/hermes-dispatch/run") {
+    try {
+      const { instruction, planOnly, useSamplePlan } = await readJson(req);
+      const normalizedInstruction = String(instruction || "").trim();
+      if (!useSamplePlan && !normalizedInstruction) {
+        writeJson(res, 400, { ok: false, error: "instruction 不能为空" });
+        return;
+      }
+
+      const availability = await getHermesDispatchAvailability();
+      if (!useSamplePlan && !availability.hermes.available) {
+        writeJson(res, 400, { ok: false, error: 'Planner command "hermes" is not available in PATH.' });
+        return;
+      }
+
+      const run = await startHermesDispatchRun({
+        instruction: normalizedInstruction,
+        planOnly: Boolean(planOnly),
+        useSamplePlan: Boolean(useSamplePlan),
+      });
+
+      writeJson(res, 200, { ok: true, run });
+    } catch (error) {
+      writeJson(res, 500, { ok: false, error: error instanceof Error ? error.message : String(error) });
+    }
     return;
   }
 

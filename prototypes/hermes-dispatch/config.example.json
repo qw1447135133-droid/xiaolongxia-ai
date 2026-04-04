@@ -1,0 +1,33 @@
+{
+  "planner": {
+    "command": "hermes",
+    "args": ["chat", "-q"],
+    "cwd": "."
+  },
+  "dispatch": {
+    "defaultWorkdir": ".",
+    "maxParallel": 1,
+    "allowSharedWorkdirParallel": false,
+    "outputRoot": "output/hermes-dispatch"
+  },
+  "executors": {
+    "codex": {
+      "command": "codex",
+      "args": ["exec", "--full-auto", "--skip-git-repo-check"],
+      "promptMode": "argument",
+      "cwd": "."
+    },
+    "claude": {
+      "command": "claude",
+      "args": ["--print", "--dangerously-skip-permissions"],
+      "promptMode": "argument",
+      "cwd": "."
+    },
+    "gemini": {
+      "command": "gemini",
+      "args": ["-p"],
+      "promptMode": "argument",
+      "cwd": "."
+    }
+  }
+}

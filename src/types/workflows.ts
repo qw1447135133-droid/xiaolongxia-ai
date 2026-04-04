@@ -1,4 +1,4 @@
-import type { BusinessEntityType } from "@/types/business-entities";
+import type { BusinessContentChannel, BusinessEntityType } from "@/types/business-entities";
 import type { AppTab } from "@/store/types";
 
 export type WorkflowTargetTab = AppTab;
@@ -12,6 +12,9 @@ export interface WorkflowContextSnapshot {
   deskNotes: number;
   contextPacks: number;
   plugins: number;
+  preferredContentChannel?: BusinessContentChannel;
+  riskyContentChannels?: BusinessContentChannel[];
+  manualApprovalRequired?: boolean;
 }
 
 export interface WorkflowTemplate {

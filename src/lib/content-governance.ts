@@ -1,4 +1,5 @@
 import type {
+  BusinessContentChannel,
   BusinessContentNextCycleRecommendation,
   BusinessContentPublishTarget,
   BusinessContentTask,
@@ -18,6 +19,19 @@ export type ContentTaskChannelGovernanceSnapshot = {
   preferredTarget: BusinessContentPublishTarget | null;
   riskyTargets: BusinessContentPublishTarget[];
   performance: ContentTaskChannelPerformance[];
+};
+
+export type ProjectContentChannelSummary = {
+  channel: BusinessContentChannel;
+  completed: number;
+  failed: number;
+  score: number;
+  taskCount: number;
+  primaryTaskCount: number;
+  riskyTaskCount: number;
+  queuedTaskIds: string[];
+  riskyTaskIds: string[];
+  lastPublishedAt: number | null;
 };
 
 function getPublishTargetKey(target: Pick<BusinessContentPublishTarget, "channel" | "accountLabel">) {
@@ -174,4 +188,97 @@ export function buildContentChannelGovernancePlan(
     changed: orderChanged || channelChanged,
     detail: detailParts.join("，"),
   };
+}
+
+export function getProjectContentChannelSummaries(
+  tasks: Array<Pick<BusinessContentTask, "id" | "channel" | "publishTargets" | "publishedResults" | "recommendedPrimaryChannel" | "riskyChannels">>,
+) {
+  const summaryMap = new Map<BusinessContentChannel, ProjectContentChannelSummary>();
+
+  for (const task of tasks) {
+    const touchedChannels = new Set<BusinessContentChannel>([
+      task.channel,
+      task.recommendedPrimaryChannel ?? task.channel,
+      ...task.publishTargets.map(target => target.channel),
+      ...task.publishedResults.map(result => result.channel),
+      ...task.riskyChannels,
+    ]);
+
+    for (const channel of touchedChannels) {
+      const current = summaryMap.get(channel) ?? {
+        channel,
+        completed: 0,
+        failed: 0,
+        score: 0,
+        taskCount: 0,
+        primaryTaskCount: 0,
+        riskyTaskCount: 0,
+        queuedTaskIds: [],
+        riskyTaskIds: [],
+        lastPublishedAt: null,
+      };
+
+      current.taskCount += 1;
+      if ((task.recommendedPrimaryChannel ?? task.channel) === channel) {
+        current.primaryTaskCount += 1;
+      }
+      if (task.riskyChannels.includes(channel)) {
+        current.riskyTaskCount += 1;
+        current.riskyTaskIds.push(task.id);
+      }
+      if (task.publishTargets.some(target => target.channel === channel)) {
+        current.queuedTaskIds.push(task.id);
+      }
+
+      summaryMap.set(channel, current);
+    }
+
+    for (const result of task.publishedResults) {
+      const current = summaryMap.get(result.channel) ?? {
+        channel: result.channel,
+        completed: 0,
+        failed: 0,
+        score: 0,
+        taskCount: 0,
+        primaryTaskCount: 0,
+        riskyTaskCount: 0,
+        queuedTaskIds: [],
+        riskyTaskIds: [],
+        lastPublishedAt: null,
+      };
+
+      if (result.status === "completed") {
+        current.completed += 1;
+      } else {
+        current.failed += 1;
+      }
+      current.score = current.completed - current.failed;
+      current.lastPublishedAt = current.lastPublishedAt
+        ? Math.max(current.lastPublishedAt, result.publishedAt)
+        : result.publishedAt;
+      summaryMap.set(result.channel, current);
+    }
+  }
+
+  return [...summaryMap.values()]
+    .map(item => ({
+      ...item,
+      queuedTaskIds: [...new Set(item.queuedTaskIds)],
+      riskyTaskIds: [...new Set(item.riskyTaskIds)],
+      score: item.completed - item.failed,
+    }))
+    .sort((left, right) => {
+      if (right.score !== left.score) return right.score - left.score;
+      if (right.primaryTaskCount !== left.primaryTaskCount) return right.primaryTaskCount - left.primaryTaskCount;
+      if (right.taskCount !== left.taskCount) return right.taskCount - left.taskCount;
+      return (right.lastPublishedAt ?? 0) - (left.lastPublishedAt ?? 0);
+    });
+}
+
+export function getProjectRiskyContentChannels(
+  tasks: Array<Pick<BusinessContentTask, "id" | "channel" | "publishTargets" | "publishedResults" | "recommendedPrimaryChannel" | "riskyChannels">>,
+) {
+  return getProjectContentChannelSummaries(tasks)
+    .filter(item => item.failed >= 2 && item.failed > item.completed)
+    .map(item => item.channel);
 }

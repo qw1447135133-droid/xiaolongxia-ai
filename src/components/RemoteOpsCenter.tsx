@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { reconnectWebSocket } from "@/hooks/useWebSocket";
+import { getProjectContentChannelSummaries } from "@/lib/content-governance";
 import { sendExecutionDispatch } from "@/lib/execution-dispatch";
 import { useStore } from "@/store";
 import {
@@ -76,6 +77,8 @@ export function RemoteOpsCenter() {
   const applyContentTaskGovernance = useStore(s => s.applyContentTaskGovernance);
   const continueContentTaskNextCycle = useStore(s => s.continueContentTaskNextCycle);
   const applyContentChannelGovernance = useStore(s => s.applyContentChannelGovernance);
+  const enforceManualApprovalForContentTasks = useStore(s => s.enforceManualApprovalForContentTasks);
+  const archiveWorkflowRun = useStore(s => s.archiveWorkflowRun);
   const setActiveExecutionRun = useStore(s => s.setActiveExecutionRun);
   const setTab = useStore(s => s.setTab);
   const setActiveControlCenterSection = useStore(s => s.setActiveControlCenterSection);
@@ -328,6 +331,10 @@ export function RemoteOpsCenter() {
       channelPerformance,
     };
   }, [contentOpsSummary, scopedContentTasks, scopedOperationLogs]);
+  const projectChannelBoard = useMemo(
+    () => getProjectContentChannelSummaries(scopedContentTasks).slice(0, 8),
+    [scopedContentTasks],
+  );
   const nextCycleQueue = useMemo(
     () =>
       scopedContentTasks
@@ -765,6 +772,131 @@ export function RemoteOpsCenter() {
       </div>
 
       <div className="control-center__panel">
+        <div className="control-center__panel-title">项目级渠道策略</div>
+        <div className="control-center__copy">
+          这里聚合当前项目所有内容任务的渠道表现，帮助你判断应该主推哪个渠道、哪些渠道需要整体降权。
+        </div>
+        {projectChannelBoard.length === 0 ? (
+          <div className="control-center__copy" style={{ marginTop: 12 }}>
+            当前还没有足够的内容发布数据来形成项目级渠道策略。
+          </div>
+        ) : (
+          <div className="control-center__dispatch-list" style={{ marginTop: 14 }}>
+            {projectChannelBoard.map(item => {
+              const tone = item.riskyTaskCount > 0
+                ? "warning"
+                : item.primaryTaskCount > 0 || item.completed > item.failed
+                  ? "ready"
+                  : "partial";
+              const scheduledTaskIds = item.queuedTaskIds.filter(taskId => contentTaskMap[taskId]?.status === "scheduled");
+
+              return (
+                <article key={item.channel} className="control-center__dispatch-card">
+                  <div className="control-center__approval-head">
+                    <div>
+                      <div className="control-center__panel-title">{item.channel}</div>
+                      <div className="control-center__copy">
+                        命中任务 {item.taskCount} · 主发任务 {item.primaryTaskCount} · 风险任务 {item.riskyTaskCount}
+                      </div>
+                    </div>
+                    <span className={`control-center__scenario-badge is-${tone}`}>
+                      {item.riskyTaskCount > 0 ? "需降权" : item.primaryTaskCount > 0 || item.completed > item.failed ? "建议主推" : "继续观察"}
+                    </span>
+                  </div>
+                  <div className="control-center__dispatch-meta">
+                    <span>成功 {item.completed}</span>
+                    <span>失败 {item.failed}</span>
+                    <span>净表现 {item.score >= 0 ? `+${item.score}` : item.score}</span>
+                  </div>
+                  <div className="control-center__dispatch-note">
+                    {item.riskyTaskCount > 0
+                      ? `当前有 ${item.riskyTaskCount} 条内容把 ${item.channel} 视为高风险渠道，建议先做批量治理。`
+                      : item.primaryTaskCount > 0 || item.completed > item.failed
+                        ? `${item.channel} 当前更适合作为项目级主推渠道，可优先保留在发布目标前列。`
+                        : `${item.channel} 目前缺少明显优势，建议继续观察，不急着做全局提权。`}
+                  </div>
+                  <div className="control-center__quick-actions">
+                    {item.riskyTaskIds.length > 0 ? (
+                      <button
+                        type="button"
+                        className="btn-ghost"
+                        onClick={() => {
+                          item.riskyTaskIds.forEach(contentTaskId => {
+                            applyContentChannelGovernance({
+                              contentTaskId,
+                              strategy: "drop_risky",
+                              detail: `从项目级渠道策略面板批量移除 ${item.channel} 这类高风险渠道。`,
+                              trigger: "manual",
+                            });
+                          });
+                          setActionFeedback({
+                            title: "已批量处理高风险渠道",
+                            detail: `${item.channel} 已从 ${item.riskyTaskIds.length} 条高风险内容任务中降级或移除。`,
+                            entitySection: "entities",
+                          });
+                          openControlCenterSection("entities");
+                        }}
+                      >
+                        批量降权高风险渠道
+                      </button>
+                    ) : null}
+                    {item.queuedTaskIds.length > 0 ? (
+                      <button
+                        type="button"
+                        className="btn-ghost"
+                        onClick={() => {
+                          item.queuedTaskIds.forEach(contentTaskId => {
+                            applyContentChannelGovernance({
+                              contentTaskId,
+                              strategy: "prioritize_primary",
+                              detail: `从项目级渠道策略面板同步 ${item.channel} 的最新推荐顺序。`,
+                              trigger: "manual",
+                            });
+                          });
+                          setActionFeedback({
+                            title: "已批量同步渠道顺序",
+                            detail: `系统已把 ${item.channel} 相关内容任务的发布目标顺序同步到最新治理结果。`,
+                            entitySection: "entities",
+                          });
+                          openControlCenterSection("entities");
+                        }}
+                      >
+                        批量同步目标顺序
+                      </button>
+                    ) : null}
+                    {scheduledTaskIds.length > 0 ? (
+                      <button
+                        type="button"
+                        className="btn-ghost"
+                        onClick={() => {
+                          const affected = enforceManualApprovalForContentTasks({
+                            contentTaskIds: scheduledTaskIds,
+                            detail: `项目级渠道策略已将 ${item.channel} 标记为高风险或低优先级，这些内容任务外发前必须重新人工确认。`,
+                            trigger: "manual",
+                          });
+                          if (affected === 0) return;
+                          setActionFeedback({
+                            title: "已切到仅人工确认后发",
+                            detail: `${affected} 条处于 scheduled 的内容任务已被重新置为待审批，后续外发必须先人工确认。`,
+                            entitySection: "remote",
+                          });
+                        }}
+                      >
+                        切到仅人工确认后发
+                      </button>
+                    ) : null}
+                    <button type="button" className="btn-ghost" onClick={() => openControlCenterSection("entities")}>
+                      查看内容实体
+                    </button>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      <div className="control-center__panel">
         <div className="control-center__panel-title">下一轮内容待办</div>
         <div className="control-center__dispatch-list">
           {nextCycleQueue.length === 0 ? (
@@ -978,6 +1110,7 @@ export function RemoteOpsCenter() {
                     : "已阻断";
               const itemKey = `${item.entityType}-${item.entityId}`;
               const isDispatching = dispatchingKey === itemKey;
+              const linkedContentTask = item.entityType === "contentTask" ? contentTaskMap[item.entityId] : null;
 
               return (
                 <article key={itemKey} className="control-center__dispatch-card">
@@ -1000,6 +1133,16 @@ export function RemoteOpsCenter() {
                     <span>下一动作: {item.nextAction}</span>
                     <span>{item.requiresApproval ? "需要审批" : item.canAutoDispatch ? "可自动派发" : "建议人工判断"}</span>
                   </div>
+                  {linkedContentTask ? (
+                    <div className="control-center__dispatch-meta">
+                      <span>推荐主发: {linkedContentTask.recommendedPrimaryChannel ?? linkedContentTask.channel}</span>
+                      <span>
+                        {linkedContentTask.riskyChannels.length > 0
+                          ? `风险渠道: ${linkedContentTask.riskyChannels.join(" / ")}`
+                          : "风险渠道: 无"}
+                      </span>
+                    </div>
+                  ) : null}
                   <div className="control-center__dispatch-note">
                     {item.dispatchBlockedReason ?? "满足量化和审批条件，允许从远程运营面板直接派发执行。"}
                   </div>
@@ -1252,7 +1395,17 @@ export function RemoteOpsCenter() {
                       type="button"
                       className="btn-ghost"
                       onClick={() => {
-                        setBusinessApprovalDecision({ entityType: item.entityType, entityId: item.entityId, status: "approved" });
+                        const approvalDetail = shouldPromoteToScheduled
+                          ? "审批已批准并继续发布准备，系统已把内容任务推进到 scheduled。"
+                          : shouldQueuePublishWorkflow
+                            ? "审批已批准并继续发布准备，系统将继续排队发布准备 workflow。"
+                            : "审批已批准，这条业务对象已进入可自动推进状态。";
+                        setBusinessApprovalDecision({
+                          entityType: item.entityType,
+                          entityId: item.entityId,
+                          status: "approved",
+                          note: approvalDetail,
+                        });
                         if (shouldPromoteToScheduled) {
                           updateBusinessContentTask(item.entityId, {
                             status: "scheduled",
@@ -1285,9 +1438,28 @@ export function RemoteOpsCenter() {
                       type="button"
                       className="btn-ghost"
                       onClick={() => {
-                        setBusinessApprovalDecision({ entityType: item.entityType, entityId: item.entityId, status: "rejected" });
+                        const rejectionDetail = linkedContentTask?.status === "scheduled"
+                          ? "审批已驳回并退回定稿，建议重新确认内容和渠道策略。"
+                          : "审批已驳回，建议继续打磨后重新提交。";
+                        setBusinessApprovalDecision({
+                          entityType: item.entityType,
+                          entityId: item.entityId,
+                          status: "rejected",
+                          note: rejectionDetail,
+                        });
+                        workflowRuns
+                          .filter(run =>
+                            run.entityType === "contentTask"
+                            && run.entityId === item.entityId
+                            && run.templateId === "content-publish-prep"
+                            && (run.status === "queued" || run.status === "staged" || run.status === "in-progress"),
+                          )
+                          .forEach(run => archiveWorkflowRun(run.id));
                         if (linkedContentTask?.status === "scheduled") {
-                          updateBusinessContentTask(item.entityId, { status: "review" });
+                          updateBusinessContentTask(item.entityId, {
+                            status: "review",
+                            lastOperationAt: Date.now(),
+                          });
                         }
                         queueAuditFocus({
                           entityType: item.entityType,
@@ -1310,7 +1482,20 @@ export function RemoteOpsCenter() {
                       type="button"
                       className="btn-ghost"
                       onClick={() => {
-                        setBusinessApprovalDecision({ entityType: item.entityType, entityId: item.entityId, status: "pending" });
+                        setBusinessApprovalDecision({
+                          entityType: item.entityType,
+                          entityId: item.entityId,
+                          status: "pending",
+                          note: "审批已重新打开，当前流程恢复为待人工确认状态。",
+                        });
+                        workflowRuns
+                          .filter(run =>
+                            run.entityType === "contentTask"
+                            && run.entityId === item.entityId
+                            && run.templateId === "content-publish-prep"
+                            && (run.status === "queued" || run.status === "staged" || run.status === "in-progress"),
+                          )
+                          .forEach(run => archiveWorkflowRun(run.id));
                         queueAuditFocus({
                           entityType: item.entityType,
                           entityId: item.entityId,

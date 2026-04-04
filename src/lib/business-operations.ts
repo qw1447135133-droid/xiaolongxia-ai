@@ -6,10 +6,12 @@ import {
   scoreTicket,
   type QuantDecision,
 } from "@/lib/business-quantification";
+import { getProjectRiskyContentChannels } from "@/lib/content-governance";
 import type { AutomationMode } from "@/store/types";
 import type {
   BusinessApprovalRecord,
   BusinessChannelSession,
+  BusinessContentChannel,
   BusinessContentTask,
   BusinessCustomer,
   BusinessEntityType,
@@ -79,6 +81,7 @@ export function buildBusinessAutomationQueue({
   const customerMap = Object.fromEntries(customers.map(item => [item.id, item] as const));
   const leadMap = Object.fromEntries(leads.map(item => [item.id, item] as const));
   const channelSessionMap = Object.fromEntries(channelSessions.map(item => [item.id, item] as const));
+  const projectRiskyChannels = new Set(getProjectRiskyContentChannels(contentTasks));
 
   const items: BusinessAutomationQueueItem[] = [];
 
@@ -134,7 +137,7 @@ export function buildBusinessAutomationQueue({
     const customer = contentTask.customerId ? customerMap[contentTask.customerId] ?? null : null;
     const lead = contentTask.leadId ? leadMap[contentTask.leadId] ?? null : null;
     const decision = scoreContentTask(contentTask, customer, lead);
-    const contentPlan = buildContentTaskAutomationPlan(contentTask, decision);
+    const contentPlan = buildContentTaskAutomationPlan(contentTask, decision, projectRiskyChannels);
     items.push(
       buildQueueItem({
         entityType: "contentTask",
@@ -143,7 +146,7 @@ export function buildBusinessAutomationQueue({
         subtitle: `内容任务 · ${contentTask.channel} · ${contentTask.status}`,
         decision,
         approval: findApprovalRecord(approvals, "contentTask", contentTask.id),
-        instruction: buildContentTaskInstruction(contentTask, customer, lead),
+        instruction: buildContentTaskInstruction(contentTask, customer, lead, projectRiskyChannels),
         nextAction: contentPlan.nextAction,
         requiresApproval: contentPlan.requiresApproval,
         canAutoDispatch: contentPlan.canAutoDispatch,
@@ -374,29 +377,54 @@ function buildDefaultNextAction(
 function buildContentTaskAutomationPlan(
   task: BusinessContentTask,
   decision: QuantDecision,
+  projectRiskyChannels: Set<BusinessContentChannel>,
 ): ContentTaskAutomationPlan {
+  const recommendedChannel = task.recommendedPrimaryChannel ?? task.channel;
+  const riskyTargets = task.publishTargets.filter(target => task.riskyChannels.includes(target.channel));
+  const hasRiskyPublishTargets = riskyTargets.length > 0;
+  const riskyChannelLabel = riskyTargets.map(target => `${target.channel}:${target.accountLabel}`).join("、");
+  const projectRiskTargets = task.publishTargets.filter(target => projectRiskyChannels.has(target.channel));
+  const hasProjectRiskTargets = projectRiskTargets.length > 0;
+  const projectRiskLabel = projectRiskTargets.map(target => `${target.channel}:${target.accountLabel}`).join("、");
+
   switch (task.status) {
     case "review":
       return {
-        nextAction: "进入人工审校，确认后可继续排期或发布准备",
+        nextAction: hasRiskyPublishTargets
+          ? `进入人工审校，并先确认渠道策略。建议主发 ${recommendedChannel}，高风险目标 ${riskyChannelLabel}`
+          : hasProjectRiskTargets
+            ? `进入人工审校，并优先避开项目级风险渠道 ${projectRiskLabel}`
+          : "进入人工审校，确认后可继续排期或发布准备",
         requiresApproval: true,
         canAutoDispatch: false,
       };
     case "scheduled":
       return {
-        nextAction: "生成发布准备包，外发前保留人工确认",
+        nextAction: hasRiskyPublishTargets
+          ? `先同步渠道治理，主发切到 ${recommendedChannel}，高风险目标 ${riskyChannelLabel} 仅建议人工确认后再外发`
+          : hasProjectRiskTargets
+            ? `当前项目里 ${projectRiskLabel} 表现持续偏弱，建议改走 ${recommendedChannel} 或仅人工确认后外发`
+          : `生成发布准备包，并优先围绕 ${recommendedChannel} 准备外发`,
         requiresApproval: true,
-        canAutoDispatch: decision.autoRunEligible,
+        canAutoDispatch: hasRiskyPublishTargets || hasProjectRiskTargets ? false : decision.autoRunEligible,
       };
     case "published":
       return {
-        nextAction: "回收发布结果并进入复盘 workflow",
+        nextAction: hasRiskyPublishTargets
+          ? `回收发布结果并复查渠道策略，当前仍需关注高风险目标 ${riskyChannelLabel}`
+          : hasProjectRiskTargets
+            ? `回收发布结果，并评估项目级风险渠道 ${projectRiskLabel} 是否还应继续使用`
+          : "回收发布结果并进入复盘 workflow",
         requiresApproval: false,
         canAutoDispatch: false,
       };
     default:
       return {
-        nextAction: "生成选题与草稿 workflow，补齐首版内容产物",
+        nextAction: hasRiskyPublishTargets
+          ? `生成选题与草稿 workflow，并优先围绕 ${recommendedChannel} 规划内容，避免直接沿用高风险目标 ${riskyChannelLabel}`
+          : hasProjectRiskTargets
+            ? `生成选题与草稿 workflow，并优先围绕 ${recommendedChannel} 规划，项目级风险渠道 ${projectRiskLabel} 暂不建议作为首发`
+          : `生成选题与草稿 workflow，补齐首版内容产物，并优先围绕 ${recommendedChannel} 规划`,
         requiresApproval: false,
         canAutoDispatch: decision.autoRunEligible && !decision.humanApprovalRequired,
       };
@@ -466,6 +494,7 @@ function buildContentTaskInstruction(
   task: BusinessContentTask,
   customer: BusinessCustomer | null,
   lead: BusinessLead | null,
+  projectRiskyChannels: Set<BusinessContentChannel>,
 ) {
   const publishTargets = task.publishTargets.length > 0
     ? task.publishTargets.map(target => `${target.channel}:${target.accountLabel}`).join("、")
@@ -473,6 +502,16 @@ function buildContentTaskInstruction(
   const scheduledFor = task.scheduledFor
     ? new Date(task.scheduledFor).toLocaleString("zh-CN", { hour12: false })
     : "未排期";
+  const channelGovernance = task.channelGovernance.length > 0
+    ? task.channelGovernance
+      .slice(0, 4)
+      .map(item => `${item.channel} ${item.completed}/${item.failed} ${item.recommendation}`)
+      .join("、")
+    : "暂无";
+  const projectRiskSummary = task.publishTargets
+    .filter(target => projectRiskyChannels.has(target.channel))
+    .map(target => `${target.channel}:${target.accountLabel}`)
+    .join("、");
 
   return [
     "请作为内容运营数字员工，推进以下内容任务。",
@@ -486,6 +525,11 @@ function buildContentTaskInstruction(
     `任务优先级: ${task.priority}`,
     `任务说明: ${task.brief}`,
     `最近草稿摘要: ${task.latestDraftSummary ?? "暂无"}`,
+    `最近复盘摘要: ${task.latestPostmortemSummary ?? "暂无"}`,
+    `推荐主发渠道: ${task.recommendedPrimaryChannel ?? task.channel}`,
+    `风险渠道: ${task.riskyChannels.join("、") || "无"}`,
+    `项目级风险渠道: ${projectRiskSummary || "无"}`,
+    `渠道治理摘要: ${channelGovernance}`,
     `关联客户: ${customer?.name ?? "未关联"}`,
     `关联线索: ${lead?.title ?? "未关联"}`,
     lead ? `线索阶段: ${lead.stage}` : "线索阶段: 无",

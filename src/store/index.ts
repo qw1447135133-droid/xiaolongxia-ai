@@ -46,6 +46,8 @@ import {
 } from "@/lib/business-entities";
 import {
   buildContentChannelGovernancePlan,
+  getProjectContentChannelSummaries,
+  getProjectRiskyContentChannels,
   getNextCycleActionDetail,
   getNextCycleStatusFromRecommendation,
 } from "@/lib/content-governance";
@@ -311,6 +313,11 @@ interface BusinessEntitiesSlice {
     detail?: string;
     trigger?: BusinessOperationRecord["trigger"];
   }) => void;
+  enforceManualApprovalForContentTasks: (payload: {
+    contentTaskIds: string[];
+    detail: string;
+    trigger?: BusinessOperationRecord["trigger"];
+  }) => number;
   launchContentTaskNextCycle: (payload: {
     contentTaskId: string;
     recommendation?: BusinessContentNextCycleRecommendation;
@@ -824,14 +831,27 @@ function getContentTaskWorkflowTemplateId(status: BusinessContentTask["status"])
 }
 
 function buildContentTaskWorkflowContext(
-  state: Pick<Store, "workspacePinnedPreviews" | "workspaceDeskNotes" | "workspaceSavedBundles" | "enabledPluginIds">,
+  state: Pick<Store, "workspacePinnedPreviews" | "workspaceDeskNotes" | "workspaceSavedBundles" | "enabledPluginIds" | "businessContentTasks">,
   task: BusinessContentTask,
 ): WorkflowContextSnapshot {
+  const scopedTasks = state.businessContentTasks.filter(item => matchProjectScope(item, task));
+  const projectRiskyChannels = getProjectRiskyContentChannels(scopedTasks);
+  const projectChannelBoard = getProjectContentChannelSummaries(scopedTasks);
+  const preferredContentChannel = task.recommendedPrimaryChannel
+    ?? projectChannelBoard[0]?.channel
+    ?? task.channel;
+  const taskNeedsManualApproval = task.status === "review"
+    || task.status === "scheduled"
+    || task.publishTargets.some(target => projectRiskyChannels.includes(target.channel));
+
   return {
     deskRefs: state.workspacePinnedPreviews.length,
     deskNotes: state.workspaceDeskNotes.filter(note => matchProjectScope(note, task)).length,
     contextPacks: state.workspaceSavedBundles.filter(bundle => matchProjectScope(bundle, task)).length,
     plugins: state.enabledPluginIds.length,
+    preferredContentChannel,
+    riskyContentChannels: projectRiskyChannels,
+    manualApprovalRequired: taskNeedsManualApproval,
   };
 }
 
@@ -865,6 +885,9 @@ function buildContentTaskWorkflowDraft(
     `Status: ${task.status}`,
     `Format: ${task.format}`,
     `Primary Channel: ${task.channel}`,
+    `Recommended Channel: ${context.preferredContentChannel ?? task.recommendedPrimaryChannel ?? task.channel}`,
+    `Project Risky Channels: ${context.riskyContentChannels?.join(", ") || "none"}`,
+    `Manual Approval Before Publish: ${context.manualApprovalRequired ? "required" : "not required"}`,
     `Goal: ${task.goal}`,
     `Publish Targets: ${publishTargets}`,
     `Scheduled For: ${scheduledFor}`,
@@ -1901,11 +1924,12 @@ export const useStore = create<Store>()(
                 status,
                 title: entityTitle,
                 detail:
-                  status === "approved"
+                  note?.trim()
+                  || (status === "approved"
                     ? "人工批准该业务对象进入自动执行链路。"
                     : status === "rejected"
                       ? "人工驳回该业务对象的自动执行请求。"
-                      : "重新打开审批，等待人工进一步确认。",
+                      : "重新打开审批，等待人工进一步确认。"),
                 projectId: scope.projectId,
                 rootPath: scope.rootPath,
                 createdAt: now,
@@ -2277,6 +2301,81 @@ export const useStore = create<Store>()(
             ...s.businessOperationLogs,
           ]),
         }));
+      },
+      enforceManualApprovalForContentTasks: ({
+        contentTaskIds,
+        detail,
+        trigger = "manual",
+      }) => {
+        const state = get();
+        const taskIdSet = new Set(contentTaskIds);
+        const tasks = state.businessContentTasks.filter(task => taskIdSet.has(task.id));
+        if (tasks.length === 0) return 0;
+
+        const now = Date.now();
+        const existingApprovals = new Map(
+          state.businessApprovals
+            .filter(item => item.entityType === "contentTask" && taskIdSet.has(item.entityId))
+            .map(item => [item.entityId, item] as const),
+        );
+
+        set(s => ({
+          businessApprovals: [
+            ...tasks.map((task, index) => {
+              const existing = existingApprovals.get(task.id);
+              const timestamp = now + index;
+              return existing
+                ? {
+                    ...existing,
+                    status: "pending" as const,
+                    note: detail,
+                    decidedAt: undefined,
+                    updatedAt: timestamp,
+                  }
+                : {
+                    id: `approval-${timestamp}-${Math.random().toString(36).slice(2, 7)}`,
+                    entityType: "contentTask" as const,
+                    entityId: task.id,
+                    status: "pending" as const,
+                    projectId: task.projectId,
+                    rootPath: task.rootPath,
+                    createdAt: timestamp,
+                    updatedAt: timestamp,
+                    requestedAt: timestamp,
+                    note: detail,
+                  };
+            }),
+            ...s.businessApprovals.filter(item => !(item.entityType === "contentTask" && taskIdSet.has(item.entityId))),
+          ].slice(0, 200),
+          businessContentTasks: s.businessContentTasks.map(task =>
+            taskIdSet.has(task.id)
+              ? {
+                  ...task,
+                  lastOperationAt: now,
+                  updatedAt: now,
+                }
+              : task,
+          ),
+          businessOperationLogs: capBusinessOperationLogs([
+            ...tasks.map((task, index) => ({
+              id: `biz-op-${now + index}-${Math.random().toString(36).slice(2, 7)}`,
+              entityType: "contentTask" as const,
+              entityId: task.id,
+              eventType: "approval" as const,
+              trigger,
+              status: "pending" as const,
+              title: task.title,
+              detail,
+              projectId: task.projectId,
+              rootPath: task.rootPath,
+              createdAt: now + index,
+              updatedAt: now + index,
+            })),
+            ...s.businessOperationLogs,
+          ]),
+        }));
+
+        return tasks.length;
       },
       seedBusinessEntitiesForProject: (scope) =>
         set(s => {

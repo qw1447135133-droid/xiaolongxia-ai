@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, type CSSProperties } from "react";
+import { useMemo, useState, type CSSProperties } from "react";
+import { getProjectContentChannelSummaries, getProjectRiskyContentChannels } from "@/lib/content-governance";
 import { getAvailableWorkflowTemplates } from "@/lib/workflow-runtime";
 import { sendExecutionDispatch } from "@/lib/execution-dispatch";
 import { useStore } from "@/store";
@@ -35,7 +36,10 @@ function statusTone(status: WorkflowRun["status"]) {
 }
 
 function buildContextLine(workflowRun: Pick<WorkflowRun, "context">) {
-  return `Desk refs: ${workflowRun.context.deskRefs}, desk notes: ${workflowRun.context.deskNotes}, context packs: ${workflowRun.context.contextPacks}, plugins: ${workflowRun.context.plugins}`;
+  const strategy = workflowRun.context.preferredContentChannel
+    ? `, preferred channel: ${workflowRun.context.preferredContentChannel}, risky: ${workflowRun.context.riskyContentChannels?.join("/") || "none"}, manual gate: ${workflowRun.context.manualApprovalRequired ? "yes" : "no"}`
+    : "";
+  return `Desk refs: ${workflowRun.context.deskRefs}, desk notes: ${workflowRun.context.deskNotes}, context packs: ${workflowRun.context.contextPacks}, plugins: ${workflowRun.context.plugins}${strategy}`;
 }
 
 function buildWorkflowDraft(title: string, contextLine: string, brief: string) {
@@ -52,10 +56,121 @@ function summarizeWorkflowDraft(draft: string) {
     .slice(0, 220);
 }
 
+function openApprovalQueue(setActiveControlCenterSection: (section: "remote") => void, setTab: (tab: "settings") => void) {
+  setActiveControlCenterSection("remote");
+  setTab("settings");
+}
+
+function getContentApprovalPresentation(
+  taskStatus: "draft" | "review" | "scheduled" | "published" | "archived",
+  approvalState?: "pending" | "approved" | "rejected",
+) {
+  if (approvalState === "approved") {
+    return {
+      label: "已批准",
+      color: "#22c55e",
+      note: taskStatus === "scheduled" ? "审批已通过，可继续发布准备或进入外发。" : "审批已通过，可继续推进当前内容流程。",
+    };
+  }
+
+  if (approvalState === "rejected") {
+    return {
+      label: "已驳回",
+      color: "#ef4444",
+      note: taskStatus === "scheduled" ? "审批已驳回，建议退回定稿或调整渠道策略后再提交。" : "审批已驳回，建议继续打磨内容后重新提交。",
+    };
+  }
+
+  if (approvalState === "pending") {
+    return {
+      label: "待审批",
+      color: "#f59e0b",
+      note: taskStatus === "scheduled" ? "当前发布前需要人工确认，审批通过后才能继续外发。" : "当前流程需要人工确认后再继续推进。",
+    };
+  }
+
+  if (taskStatus === "review" || taskStatus === "scheduled") {
+    return {
+      label: "需审批",
+      color: "#f59e0b",
+      note: taskStatus === "scheduled" ? "当前阶段通常需要审批，建议先进入审批队列。" : "当前处于审校阶段，建议先进入审批队列确认。",
+    };
+  }
+
+  return null;
+}
+
+function getWorkflowBusinessStageCopy(
+  workflowRun: Pick<WorkflowRun, "status" | "templateId" | "summary" | "context">,
+  approvalPresentation: ReturnType<typeof getContentApprovalPresentation>,
+) {
+  if (approvalPresentation?.label === "已批准") {
+    return workflowRun.templateId === "content-publish-prep"
+      ? "业务阶段: 审批已通过，可继续发布准备或进入外发。"
+      : "业务阶段: 审批已通过，可继续推进当前内容流程。";
+  }
+
+  if (approvalPresentation?.label === "已驳回") {
+    return workflowRun.templateId === "content-publish-prep"
+      ? "业务阶段: 审批已驳回，建议退回定稿并重新确认发布策略。"
+      : "业务阶段: 审批已驳回，建议继续打磨后再提交。";
+  }
+
+  if (approvalPresentation?.label === "待审批" || approvalPresentation?.label === "需审批") {
+    return workflowRun.templateId === "content-publish-prep"
+      ? "业务阶段: 发布前待人工确认，当前不建议直接外发。"
+      : "业务阶段: 当前内容流待人工确认后再继续推进。";
+  }
+
+  if (workflowRun.context.manualApprovalRequired) {
+    return "业务阶段: 当前流程存在人工 gate，推进前请先检查审批状态。";
+  }
+
+  return workflowRun.summary;
+}
+
+type WorkflowApprovalDecision = "approved" | "rejected" | "pending";
+
+type WorkflowActionFeedback = {
+  tone: string;
+  message: string;
+};
+
+function buildWorkflowApprovalFeedback(
+  taskStatus: "draft" | "review" | "scheduled" | "published" | "archived",
+  decision: WorkflowApprovalDecision,
+): WorkflowActionFeedback {
+  if (decision === "approved") {
+    return {
+      tone: "#22c55e",
+      message: taskStatus === "scheduled"
+        ? "已批准并继续发布准备，任务可进入外发前准备。"
+        : "已批准并继续推进，任务已进入下一步内容流程。",
+    };
+  }
+
+  if (decision === "rejected") {
+    return {
+      tone: "#ef4444",
+      message: taskStatus === "scheduled"
+        ? "已驳回并退回定稿，建议重新确认内容和渠道策略。"
+        : "已驳回当前内容，建议继续打磨后再提交审批。",
+    };
+  }
+
+  return {
+    tone: "#f59e0b",
+    message: "已重新打开审批，任务已回到待人工确认状态。",
+  };
+}
+
 export function WorkflowCenter() {
   const setCommandDraft = useStore(s => s.setCommandDraft);
   const setTab = useStore(s => s.setTab);
   const setActiveExecutionRun = useStore(s => s.setActiveExecutionRun);
+  const setActiveControlCenterSection = useStore(s => s.setActiveControlCenterSection);
+  const setBusinessApprovalDecision = useStore(s => s.setBusinessApprovalDecision);
+  const updateBusinessContentTask = useStore(s => s.updateBusinessContentTask);
   const queueWorkflowRun = useStore(s => s.queueWorkflowRun);
   const queueContentTaskWorkflowRun = useStore(s => s.queueContentTaskWorkflowRun);
   const restageWorkflowRun = useStore(s => s.restageWorkflowRun);
@@ -64,6 +179,7 @@ export function WorkflowCenter() {
   const archiveWorkflowRun = useStore(s => s.archiveWorkflowRun);
   const removeWorkflowRun = useStore(s => s.removeWorkflowRun);
   const recordBusinessOperation = useStore(s => s.recordBusinessOperation);
+  const businessApprovals = useStore(s => s.businessApprovals);
   const workflowRuns = useStore(s => s.workflowRuns);
   const businessContentTasks = useStore(s => s.businessContentTasks);
   const workspacePinnedPreviews = useStore(s => s.workspacePinnedPreviews);
@@ -73,6 +189,7 @@ export function WorkflowCenter() {
   const activeSessionId = useStore(s => s.activeSessionId);
   const enabledPluginIds = useStore(s => s.enabledPluginIds);
   const activeTeamOperatingTemplateId = useStore(s => s.activeTeamOperatingTemplateId);
+  const [workflowActionFeedback, setWorkflowActionFeedback] = useState<Record<string, WorkflowActionFeedback>>({});
 
   const activeSession = useMemo(
     () => chatSessions.find(session => session.id === activeSessionId) ?? null,
@@ -92,6 +209,32 @@ export function WorkflowCenter() {
     () => filterByProjectScope(businessContentTasks, activeSession ?? {}),
     [activeSession, businessContentTasks],
   );
+  const contentTaskMap = useMemo(
+    () => new Map(scopedContentTasks.map(task => [task.id, task] as const)),
+    [scopedContentTasks],
+  );
+  const scopedApprovals = useMemo(
+    () => filterByProjectScope(businessApprovals, activeSession ?? {}),
+    [activeSession, businessApprovals],
+  );
+  const contentApprovalMap = useMemo(
+    () =>
+      new Map(
+        scopedApprovals
+          .filter(item => item.entityType === "contentTask")
+          .map(item => [item.entityId, item.status] as const),
+      ),
+    [scopedApprovals],
+  );
+  const projectChannelBoard = useMemo(
+    () => getProjectContentChannelSummaries(scopedContentTasks),
+    [scopedContentTasks],
+  );
+  const projectRiskyChannels = useMemo(
+    () => getProjectRiskyContentChannels(scopedContentTasks),
+    [scopedContentTasks],
+  );
+  const preferredContentChannel = projectChannelBoard[0]?.channel;
 
   const workflowContext = useMemo(
     () => ({
@@ -99,8 +242,26 @@ export function WorkflowCenter() {
       deskNotes: scopedDeskNotes.length,
       contextPacks: scopedSavedBundles.length,
       plugins: enabledPluginIds.length,
+      preferredContentChannel,
+      riskyContentChannels: projectRiskyChannels,
+      manualApprovalRequired: scopedContentTasks.some(task => {
+        const approvalState = contentApprovalMap.get(task.id);
+        return task.status === "review"
+          || task.status === "scheduled"
+          || approvalState === "pending"
+          || task.riskyChannels.some(channel => projectRiskyChannels.includes(channel));
+      }),
     }),
-    [enabledPluginIds.length, scopedDeskNotes.length, scopedSavedBundles.length, workspacePinnedPreviews.length],
+    [
+      contentApprovalMap,
+      enabledPluginIds.length,
+      preferredContentChannel,
+      projectRiskyChannels,
+      scopedContentTasks,
+      scopedDeskNotes.length,
+      scopedSavedBundles.length,
+      workspacePinnedPreviews.length,
+    ],
   );
 
   const workflowTemplates = useMemo(
@@ -239,6 +400,73 @@ export function WorkflowCenter() {
         executionRunId,
         workflowRunId: workflowRun.id,
       });
+    }
+  };
+
+  const applyWorkflowApprovalDecision = (
+    workflowRun: WorkflowRun,
+    decision: WorkflowApprovalDecision,
+  ) => {
+    if (workflowRun.entityType !== "contentTask" || !workflowRun.entityId) return;
+
+    const linkedContentTask = contentTaskMap.get(workflowRun.entityId);
+    if (!linkedContentTask) return;
+    const feedback = buildWorkflowApprovalFeedback(linkedContentTask.status, decision);
+
+    setBusinessApprovalDecision({
+      entityType: "contentTask",
+      entityId: workflowRun.entityId,
+      status: decision,
+      note: feedback.message,
+    });
+
+    setWorkflowActionFeedback(current => ({
+      ...current,
+      [workflowRun.id]: feedback,
+    }));
+
+    if (decision === "approved") {
+      const shouldPromoteToScheduled = linkedContentTask.status === "review";
+      const shouldQueuePublishWorkflow = linkedContentTask.status === "scheduled" || shouldPromoteToScheduled;
+
+      if (shouldPromoteToScheduled) {
+        updateBusinessContentTask(workflowRun.entityId, {
+          status: "scheduled",
+          lastOperationAt: Date.now(),
+        });
+      }
+
+      if (shouldQueuePublishWorkflow) {
+        queueContentTaskWorkflowRun(workflowRun.entityId);
+      }
+      return;
+    }
+
+    if (decision === "rejected" && linkedContentTask.status === "scheduled") {
+      workflowRuns
+        .filter(run =>
+          run.entityType === "contentTask"
+          && run.entityId === workflowRun.entityId
+          && run.templateId === "content-publish-prep"
+          && (run.status === "queued" || run.status === "staged" || run.status === "in-progress"),
+        )
+        .forEach(run => archiveWorkflowRun(run.id));
+      updateBusinessContentTask(workflowRun.entityId, {
+        status: "review",
+        lastOperationAt: Date.now(),
+      });
+      return;
+    }
+
+    if (decision === "pending") {
+      workflowRuns
+        .filter(run =>
+          run.entityType === "contentTask"
+          && run.entityId === workflowRun.entityId
+          && run.templateId === "content-publish-prep"
+          && (run.status === "queued" || run.status === "staged" || run.status === "in-progress"),
+        )
+        .forEach(run => archiveWorkflowRun(run.id));
     }
   };
 
@@ -409,7 +637,7 @@ export function WorkflowCenter() {
             </div>
           </div>
           <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
-            Scoped tasks {contentTasksNeedingWorkflow.length}
+            Scoped tasks {contentTasksNeedingWorkflow.length}{workflowContext.manualApprovalRequired ? " · 含需审批内容" : ""}
           </div>
         </div>
 
@@ -420,17 +648,23 @@ export function WorkflowCenter() {
         ) : (
           <div style={{ display: "grid", gap: 10, marginTop: 14 }}>
             {contentTasksNeedingWorkflow.map(task => (
-              <article
-                key={task.id}
-                style={{
-                  display: "grid",
-                  gap: 10,
-                  padding: 14,
-                  borderRadius: 18,
-                  border: "1px solid rgba(192, 132, 252, 0.24)",
-                  background: "linear-gradient(180deg, rgba(192, 132, 252, 0.12), rgba(255,255,255,0.02) 72%)",
-                }}
-              >
+              (() => {
+                const approvalState = contentApprovalMap.get(task.id);
+                const approvalPresentation = getContentApprovalPresentation(task.status, approvalState);
+                const needsManualGate = Boolean(approvalPresentation);
+
+                return (
+                  <article
+                    key={task.id}
+                    style={{
+                      display: "grid",
+                      gap: 10,
+                      padding: 14,
+                      borderRadius: 18,
+                      border: "1px solid rgba(192, 132, 252, 0.24)",
+                      background: "linear-gradient(180deg, rgba(192, 132, 252, 0.12), rgba(255,255,255,0.02) 72%)",
+                    }}
+                  >
                 <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
                   <div>
                     <div style={{ fontSize: 15, fontWeight: 700 }}>{task.title}</div>
@@ -438,7 +672,10 @@ export function WorkflowCenter() {
                       {task.goal}
                     </div>
                   </div>
-                  <span style={badgeStyle("#c084fc")}>{task.status}</span>
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                    <span style={badgeStyle("#c084fc")}>{task.status}</span>
+                    {approvalPresentation ? <span style={badgeStyle(approvalPresentation.color)}>{approvalPresentation.label}</span> : null}
+                  </div>
                 </div>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
                   <span style={badgeStyle("#60a5fa")}>{task.format}</span>
@@ -469,6 +706,11 @@ export function WorkflowCenter() {
                     ).join(" / ")}
                   </div>
                 ) : null}
+                {approvalPresentation ? (
+                  <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.7 }}>
+                    Approval: {approvalPresentation.note}
+                  </div>
+                ) : null}
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                   <button
                     type="button"
@@ -481,13 +723,24 @@ export function WorkflowCenter() {
                   >
                     {task.lastWorkflowRunId ? "Queue next workflow" : "Create workflow"}
                   </button>
+                  {needsManualGate ? (
+                    <button
+                      type="button"
+                      className="btn-ghost"
+                      onClick={() => openApprovalQueue(setActiveControlCenterSection, setTab)}
+                    >
+                      Go Approval Queue
+                    </button>
+                  ) : null}
                   {task.lastExecutionRunId ? (
                     <button type="button" className="btn-ghost" onClick={() => setTab("dashboard")}>
                       Review execution chain
                     </button>
                   ) : null}
                 </div>
-              </article>
+                  </article>
+                );
+              })()
             ))}
           </div>
         )}
@@ -501,11 +754,14 @@ export function WorkflowCenter() {
               <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 4 }}>
                 Runs waiting to be staged, launched, or completed from the desktop shell.
               </div>
-            </div>
-            <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
-              Project {activeSession ? getSessionProjectLabel(activeSession) : "General"} · refs {workflowContext.deskRefs} · notes {workflowContext.deskNotes} · packs {workflowContext.contextPacks} · plugins {workflowContext.plugins}
-            </div>
           </div>
+          <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
+            Project {activeSession ? getSessionProjectLabel(activeSession) : "General"} · refs {workflowContext.deskRefs} · notes {workflowContext.deskNotes} · packs {workflowContext.contextPacks} · plugins {workflowContext.plugins}
+            {workflowContext.preferredContentChannel ? ` · channel ${workflowContext.preferredContentChannel}` : ""}
+            {workflowContext.riskyContentChannels?.length ? ` · risky ${workflowContext.riskyContentChannels.join("/")}` : ""}
+            {workflowContext.manualApprovalRequired ? " · approvals on" : ""}
+          </div>
+        </div>
 
           {activeRuns.length === 0 && (
             <div style={emptyPanelStyle}>
@@ -516,6 +772,15 @@ export function WorkflowCenter() {
           <div style={{ display: "grid", gap: 12, marginTop: activeRuns.length > 0 ? 14 : 0 }}>
             {activeRuns.map(workflowRun => {
               const tone = statusTone(workflowRun.status);
+              const linkedContentTask = workflowRun.entityType === "contentTask" && workflowRun.entityId
+                ? contentTaskMap.get(workflowRun.entityId)
+                : null;
+              const approvalState = linkedContentTask ? contentApprovalMap.get(linkedContentTask.id) : undefined;
+              const approvalPresentation = linkedContentTask
+                ? getContentApprovalPresentation(linkedContentTask.status, approvalState)
+                : null;
+              const needsManualGate = Boolean(workflowRun.context.manualApprovalRequired || approvalPresentation);
+              const businessStageCopy = getWorkflowBusinessStageCopy(workflowRun, approvalPresentation);
 
               return (
                 <article
@@ -534,10 +799,17 @@ export function WorkflowCenter() {
                     <div>
                       <div style={{ fontSize: 15, fontWeight: 700 }}>{workflowRun.title}</div>
                       <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 4, lineHeight: 1.75 }}>
-                        {workflowRun.summary}
+                        {businessStageCopy}
                       </div>
                     </div>
-                    <span style={badgeStyle(tone.color)}>{tone.label}</span>
+                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                      <span style={badgeStyle(tone.color)}>{tone.label}</span>
+                      {approvalPresentation ? (
+                        <span style={badgeStyle(approvalPresentation.color)}>{approvalPresentation.label}</span>
+                      ) : needsManualGate ? (
+                        <span style={badgeStyle("#f59e0b")}>发布前需审批</span>
+                      ) : null}
+                    </div>
                   </div>
 
                   <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
@@ -562,6 +834,12 @@ export function WorkflowCenter() {
                     <WorkflowNote label="Updated" value={formatTimestamp(workflowRun.updatedAt)} />
                     <WorkflowNote label="Launches" value={String(workflowRun.launchCount)} />
                     <WorkflowNote label="Context" value={`${workflowRun.context.deskRefs}/${workflowRun.context.deskNotes}/${workflowRun.context.contextPacks}/${workflowRun.context.plugins}`} />
+                    {workflowRun.context.preferredContentChannel ? (
+                      <WorkflowNote
+                        label="Channel"
+                        value={`${workflowRun.context.preferredContentChannel}${workflowRun.context.riskyContentChannels?.length ? ` · risk ${workflowRun.context.riskyContentChannels.join("/")}` : ""}${workflowRun.context.manualApprovalRequired ? " · gate" : ""}`}
+                      />
+                    ) : null}
                   </div>
 
                   <div
@@ -578,6 +856,26 @@ export function WorkflowCenter() {
                   >
                     {workflowRun.brief}
                   </div>
+                  {approvalPresentation ? (
+                    <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.75 }}>
+                      Approval: {approvalPresentation.note}
+                    </div>
+                  ) : null}
+                  {workflowActionFeedback[workflowRun.id] ? (
+                    <div
+                      style={{
+                        fontSize: 12,
+                        lineHeight: 1.75,
+                        color: workflowActionFeedback[workflowRun.id]!.tone,
+                        padding: "10px 12px",
+                        borderRadius: 12,
+                        border: `1px solid ${workflowActionFeedback[workflowRun.id]!.tone}33`,
+                        background: `${workflowActionFeedback[workflowRun.id]!.tone}14`,
+                      }}
+                    >
+                      {workflowActionFeedback[workflowRun.id]!.message}
+                    </div>
+                  ) : null}
 
                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                     <button type="button" className="btn-ghost" onClick={() => restageRun(workflowRun)}>
@@ -593,6 +891,42 @@ export function WorkflowCenter() {
                     >
                       Complete
                     </button>
+                    {approvalPresentation?.label !== "已批准" && linkedContentTask ? (
+                      <button
+                        type="button"
+                        className="btn-ghost"
+                        onClick={() => applyWorkflowApprovalDecision(workflowRun, "approved")}
+                      >
+                        {linkedContentTask.status === "scheduled" ? "批准并继续发布" : "批准并继续"}
+                      </button>
+                    ) : null}
+                    {approvalPresentation && approvalPresentation.label !== "已驳回" && linkedContentTask ? (
+                      <button
+                        type="button"
+                        className="btn-ghost"
+                        onClick={() => applyWorkflowApprovalDecision(workflowRun, "rejected")}
+                      >
+                        {linkedContentTask.status === "scheduled" ? "驳回并退回定稿" : "驳回"}
+                      </button>
+                    ) : null}
+                    {approvalPresentation && approvalPresentation.label !== "待审批" && linkedContentTask ? (
+                      <button
+                        type="button"
+                        className="btn-ghost"
+                        onClick={() => applyWorkflowApprovalDecision(workflowRun, "pending")}
+                      >
+                        重新打开审批
+                      </button>
+                    ) : null}
+                    {needsManualGate ? (
+                      <button
+                        type="button"
+                        className="btn-ghost"
+                        onClick={() => openApprovalQueue(setActiveControlCenterSection, setTab)}
+                      >
+                        Open Approvals
+                      </button>
+                    ) : null}
                     <button type="button" className="btn-ghost" onClick={() => removeWorkflowRun(workflowRun.id)}>
                       Remove
                     </button>
@@ -618,6 +952,14 @@ export function WorkflowCenter() {
           <div style={{ display: "grid", gap: 10, marginTop: historyRuns.length > 0 ? 14 : 0 }}>
             {historyRuns.map(workflowRun => {
               const tone = statusTone(workflowRun.status);
+              const linkedContentTask = workflowRun.entityType === "contentTask" && workflowRun.entityId
+                ? contentTaskMap.get(workflowRun.entityId)
+                : null;
+              const approvalState = linkedContentTask ? contentApprovalMap.get(linkedContentTask.id) : undefined;
+              const approvalPresentation = linkedContentTask
+                ? getContentApprovalPresentation(linkedContentTask.status, approvalState)
+                : null;
+              const businessStageCopy = getWorkflowBusinessStageCopy(workflowRun, approvalPresentation);
 
               return (
                 <article
@@ -639,17 +981,76 @@ export function WorkflowCenter() {
                         {formatTimestamp(workflowRun.updatedAt)} · launched {workflowRun.launchCount} time(s)
                       </div>
                     </div>
-                    <span style={badgeStyle(tone.color)}>{tone.label}</span>
+                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                      <span style={badgeStyle(tone.color)}>{tone.label}</span>
+                      {approvalPresentation ? <span style={badgeStyle(approvalPresentation.color)}>{approvalPresentation.label}</span> : null}
+                    </div>
                   </div>
 
                   <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.75 }}>
-                    {workflowRun.summary}
+                    {businessStageCopy}
                   </div>
+                  {approvalPresentation ? (
+                    <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.75 }}>
+                      Approval: {approvalPresentation.note}
+                    </div>
+                  ) : null}
+                  {workflowActionFeedback[workflowRun.id] ? (
+                    <div
+                      style={{
+                        fontSize: 12,
+                        lineHeight: 1.75,
+                        color: workflowActionFeedback[workflowRun.id]!.tone,
+                        padding: "10px 12px",
+                        borderRadius: 12,
+                        border: `1px solid ${workflowActionFeedback[workflowRun.id]!.tone}33`,
+                        background: `${workflowActionFeedback[workflowRun.id]!.tone}14`,
+                      }}
+                    >
+                      {workflowActionFeedback[workflowRun.id]!.message}
+                    </div>
+                  ) : null}
 
                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                     <button type="button" className="btn-ghost" onClick={() => restageRun(workflowRun)}>
                       Reuse
                     </button>
+                    {approvalPresentation?.label !== "已批准" && linkedContentTask ? (
+                      <button
+                        type="button"
+                        className="btn-ghost"
+                        onClick={() => applyWorkflowApprovalDecision(workflowRun, "approved")}
+                      >
+                        {linkedContentTask.status === "scheduled" ? "批准并继续发布" : "批准并继续"}
+                      </button>
+                    ) : null}
+                    {approvalPresentation && approvalPresentation.label !== "已驳回" && linkedContentTask ? (
+                      <button
+                        type="button"
+                        className="btn-ghost"
+                        onClick={() => applyWorkflowApprovalDecision(workflowRun, "rejected")}
+                      >
+                        {linkedContentTask.status === "scheduled" ? "驳回并退回定稿" : "驳回"}
+                      </button>
+                    ) : null}
+                    {approvalPresentation && approvalPresentation.label !== "待审批" && linkedContentTask ? (
+                      <button
+                        type="button"
+                        className="btn-ghost"
+                        onClick={() => applyWorkflowApprovalDecision(workflowRun, "pending")}
+                      >
+                        重新打开审批
+                      </button>
+                    ) : null}
+                    {approvalPresentation ? (
+                      <button
+                        type="button"
+                        className="btn-ghost"
+                        onClick={() => openApprovalQueue(setActiveControlCenterSection, setTab)}
+                      >
+                        Open Approvals
+                      </button>
+                    ) : null}
                     <button type="button" className="btn-ghost" onClick={() => archiveWorkflowRun(workflowRun.id)}>
                       Archive
                     </button>

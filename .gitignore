@@ -4,3 +4,4 @@ dist/
 .next/
 *.log
 /apps/web/dist-electron
+output/hermes-dispatch/

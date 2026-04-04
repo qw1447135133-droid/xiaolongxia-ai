@@ -675,6 +675,7 @@ function DesktopChatWorkspace() {
     ? TEAM_OPERATING_SURFACES[activeTeamOperatingTemplateId]
     : null;
   const chatStarters = activeSurface?.chatStarters ?? CHAT_STARTERS;
+  const [desktopApprovalFeedback, setDesktopApprovalFeedback] = useState<string | null>(null);
   const activeSession = useMemo(
     () => chatSessions.find(session => session.id === activeSessionId) ?? null,
     [activeSessionId, chatSessions],
@@ -840,6 +841,17 @@ function DesktopChatWorkspace() {
       && item.decision.autoRunEligible;
 
     if (!canAutoDispatch) {
+      const blockedReason =
+        wsStatus !== "connected"
+          ? "远程通道还没连上"
+          : automationPaused
+            ? "自动化当前已暂停"
+            : automationMode === "manual"
+              ? "当前仍是人工模式"
+              : !remoteSupervisorEnabled
+                ? "远程值守当前关闭"
+                : "量化结果仍建议先观察";
+      setDesktopApprovalFeedback(`已批准 ${item.title}，但这次没有自动派发，因为${blockedReason}。`);
       return;
     }
 
@@ -866,7 +878,13 @@ function DesktopChatWorkspace() {
 
     if (ok && executionRunId) {
       setActiveExecutionRun(executionRunId);
+      setActiveControlCenterSection("execution");
+      setTab("settings");
+      setDesktopApprovalFeedback(`已批准 ${item.title}，并已直接送入执行链路。`);
+      return;
     }
+
+    setDesktopApprovalFeedback(`已批准 ${item.title}，但派发链路没有成功建立。`);
   };
 
   const rejectRailItem = (item: BusinessAutomationQueueItem) => {
@@ -875,6 +893,7 @@ function DesktopChatWorkspace() {
       entityId: item.entityId,
       status: "rejected",
     });
+    setDesktopApprovalFeedback(`已驳回 ${item.title}，审计记录会保留这次处理。`);
   };
 
   return (
@@ -929,6 +948,12 @@ function DesktopChatWorkspace() {
               <strong>{automationPaused ? "已暂停" : automationMode === "manual" ? "人工" : automationMode === "supervised" ? "监督" : "自治"}</strong>
             </article>
           </div>
+          {desktopApprovalFeedback ? (
+            <div className="desktop-workspace-shell__rail-inline-panel">
+              <div className="desktop-workspace-shell__rail-inline-label">刚刚处理</div>
+              <div className="desktop-workspace-shell__rail-copy">{desktopApprovalFeedback}</div>
+            </div>
+          ) : null}
           {railApprovalQueue.length > 0 ? (
             <div className="desktop-workspace-shell__rail-stack">
               {railApprovalQueue.map(item => (

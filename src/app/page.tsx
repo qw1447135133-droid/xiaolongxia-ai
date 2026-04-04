@@ -645,6 +645,8 @@ function DesktopChatWorkspace() {
   const setActiveChatSession = useStore(s => s.setActiveChatSession);
   const setActiveControlCenterSection = useStore(s => s.setActiveControlCenterSection);
   const setAutomationPaused = useStore(s => s.setAutomationPaused);
+  const setBusinessApprovalDecision = useStore(s => s.setBusinessApprovalDecision);
+  const recordBusinessOperation = useStore(s => s.recordBusinessOperation);
   const clearDesktopInputSession = useStore(s => s.clearDesktopInputSession);
   const tasks = useStore(s => s.tasks);
   const workflowRuns = useStore(s => s.workflowRuns);
@@ -655,9 +657,20 @@ function DesktopChatWorkspace() {
   const activeExecutionRunId = useStore(s => s.activeExecutionRunId);
   const desktopInputSession = useStore(s => s.desktopInputSession);
   const setActiveExecutionRun = useStore(s => s.setActiveExecutionRun);
+  const businessApprovals = useStore(s => s.businessApprovals);
+  const businessOperationLogs = useStore(s => s.businessOperationLogs);
+  const businessCustomers = useStore(s => s.businessCustomers);
+  const businessLeads = useStore(s => s.businessLeads);
+  const businessTickets = useStore(s => s.businessTickets);
+  const businessContentTasks = useStore(s => s.businessContentTasks);
+  const businessChannelSessions = useStore(s => s.businessChannelSessions);
   const chatSessions = useStore(s => s.chatSessions);
   const activeSessionId = useStore(s => s.activeSessionId);
   const activeTeamOperatingTemplateId = useStore(s => s.activeTeamOperatingTemplateId);
+  const wsStatus = useStore(s => s.wsStatus);
+  const automationPaused = useStore(s => s.automationPaused);
+  const automationMode = useStore(s => s.automationMode);
+  const remoteSupervisorEnabled = useStore(s => s.remoteSupervisorEnabled);
   const activeSurface = activeTeamOperatingTemplateId
     ? TEAM_OPERATING_SURFACES[activeTeamOperatingTemplateId]
     : null;
@@ -687,6 +700,55 @@ function DesktopChatWorkspace() {
     .slice(0, 3);
   const canTakeOver = desktopInputSession.state === "manual-required" && Boolean(desktopInputSession.resumeInstruction);
   const latestEvent = activeRun?.events[activeRun.events.length - 1] ?? null;
+  const scopedApprovals = useMemo(
+    () => filterByProjectScope(businessApprovals, activeSession ?? {}),
+    [activeSession, businessApprovals],
+  );
+  const scopedOperationLogs = useMemo(
+    () => filterByProjectScope(businessOperationLogs, activeSession ?? {}),
+    [activeSession, businessOperationLogs],
+  );
+  const scopedCustomers = useMemo(
+    () => filterByProjectScope(businessCustomers, activeSession ?? {}),
+    [activeSession, businessCustomers],
+  );
+  const scopedLeads = useMemo(
+    () => filterByProjectScope(businessLeads, activeSession ?? {}),
+    [activeSession, businessLeads],
+  );
+  const scopedTickets = useMemo(
+    () => filterByProjectScope(businessTickets, activeSession ?? {}),
+    [activeSession, businessTickets],
+  );
+  const scopedContentTasks = useMemo(
+    () => filterByProjectScope(businessContentTasks, activeSession ?? {}),
+    [activeSession, businessContentTasks],
+  );
+  const scopedChannelSessions = useMemo(
+    () => filterByProjectScope(businessChannelSessions, activeSession ?? {}),
+    [activeSession, businessChannelSessions],
+  );
+  const railApprovalQueue = useMemo(
+    () =>
+      buildBusinessAutomationQueue({
+        approvals: scopedApprovals,
+        customers: scopedCustomers,
+        leads: scopedLeads,
+        tickets: scopedTickets,
+        contentTasks: scopedContentTasks,
+        channelSessions: scopedChannelSessions,
+      }).filter(item => item.approvalState === "pending").slice(0, 2),
+    [
+      scopedApprovals,
+      scopedChannelSessions,
+      scopedContentTasks,
+      scopedCustomers,
+      scopedLeads,
+      scopedTickets,
+    ],
+  );
+  const pendingApprovalCount = scopedApprovals.filter(item => item.status === "pending").length;
+  const latestOperation = scopedOperationLogs[0] ?? null;
 
   const openExecutionRun = (runId: string) => {
     setActiveExecutionRun(runId);
@@ -763,6 +825,58 @@ function DesktopChatWorkspace() {
     setTab("tasks");
   };
 
+  const approveRailItem = (item: BusinessAutomationQueueItem) => {
+    setBusinessApprovalDecision({
+      entityType: item.entityType,
+      entityId: item.entityId,
+      status: "approved",
+    });
+
+    const canAutoDispatch =
+      wsStatus === "connected"
+      && !automationPaused
+      && automationMode !== "manual"
+      && remoteSupervisorEnabled
+      && item.decision.autoRunEligible;
+
+    if (!canAutoDispatch) {
+      return;
+    }
+
+    const { ok, executionRunId } = sendExecutionDispatch({
+      instruction: item.instruction,
+      source: "remote-ops",
+      includeUserMessage: true,
+      taskDescription: item.taskDescription,
+      includeActiveProjectMemory: true,
+    });
+
+    recordBusinessOperation({
+      entityType: item.entityType,
+      entityId: item.entityId,
+      eventType: "dispatch",
+      trigger: "manual",
+      status: ok ? "sent" : "blocked",
+      title: item.title,
+      detail: ok
+        ? "人工在 Electron 聊天工作台批准后立即派发了该业务对象。"
+        : "人工在 Electron 聊天工作台批准了该业务对象，但发送链路未成功建立。",
+      executionRunId: ok ? executionRunId : undefined,
+    });
+
+    if (ok && executionRunId) {
+      setActiveExecutionRun(executionRunId);
+    }
+  };
+
+  const rejectRailItem = (item: BusinessAutomationQueueItem) => {
+    setBusinessApprovalDecision({
+      entityType: item.entityType,
+      entityId: item.entityId,
+      status: "rejected",
+    });
+  };
+
   return (
     <div className="desktop-workspace-shell__chat-layout">
       <section className="desktop-workspace-shell__chat-main">
@@ -797,6 +911,66 @@ function DesktopChatWorkspace() {
               打开工作流中心
             </button>
           </div>
+        </section>
+
+        <section className="desktop-workspace-shell__rail-card">
+          <div className="desktop-workspace-shell__section-eyebrow">审批与值守</div>
+          <div className="desktop-workspace-shell__rail-stats">
+            <article className="desktop-workspace-shell__summary-card">
+              <span>待审批</span>
+              <strong>{pendingApprovalCount}</strong>
+            </article>
+            <article className="desktop-workspace-shell__summary-card">
+              <span>值守</span>
+              <strong>{remoteSupervisorEnabled ? "已开启" : "已关闭"}</strong>
+            </article>
+            <article className="desktop-workspace-shell__summary-card">
+              <span>模式</span>
+              <strong>{automationPaused ? "已暂停" : automationMode === "manual" ? "人工" : automationMode === "supervised" ? "监督" : "自治"}</strong>
+            </article>
+          </div>
+          {railApprovalQueue.length > 0 ? (
+            <div className="desktop-workspace-shell__rail-stack">
+              {railApprovalQueue.map(item => (
+                <article key={`${item.entityType}-${item.entityId}`} className="desktop-workspace-shell__rail-list-item">
+                  <div className="desktop-workspace-shell__rail-run">
+                    <strong>{item.title}</strong>
+                    <div className="desktop-workspace-shell__rail-copy">{item.subtitle}</div>
+                    <div className="desktop-workspace-shell__rail-copy">{item.summary}</div>
+                  </div>
+                  <div className="desktop-workspace-shell__rail-actions is-inline">
+                    <button type="button" className="desktop-workspace-shell__hero-action" onClick={() => approveRailItem(item)}>
+                      批准
+                    </button>
+                    <button type="button" className="desktop-workspace-shell__hero-action" onClick={() => rejectRailItem(item)}>
+                      驳回
+                    </button>
+                  </div>
+                </article>
+              ))}
+            </div>
+          ) : (
+            <div className="desktop-workspace-shell__rail-copy">
+              当前项目没有等待人工确认的业务对象，可以直接盯执行和桌面接管状态。
+            </div>
+          )}
+          {latestOperation ? (
+            <div className="desktop-workspace-shell__rail-inline-panel">
+              <div className="desktop-workspace-shell__rail-inline-label">最近审计动作</div>
+              <strong>{latestOperation.title}</strong>
+              <div className="desktop-workspace-shell__rail-copy">{latestOperation.detail}</div>
+              <div className="desktop-workspace-shell__rail-actions is-inline">
+                <button type="button" className="desktop-workspace-shell__hero-action" onClick={() => openControlSection("remote")}>
+                  打开远程值守
+                </button>
+                {latestOperation.executionRunId ? (
+                  <button type="button" className="desktop-workspace-shell__hero-action" onClick={() => openExecutionRun(latestOperation.executionRunId!)}>
+                    查看对应执行
+                  </button>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
         </section>
 
         {activeRun ? (

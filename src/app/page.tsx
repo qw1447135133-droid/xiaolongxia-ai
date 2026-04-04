@@ -699,6 +699,74 @@ function DesktopChatWorkspace() {
   const workflowQueue = workflowRuns
     .filter(run => run.status === "queued" || run.status === "staged" || run.status === "in-progress")
     .slice(0, 3);
+  const pendingWorkbenchQueue = useMemo(() => {
+    const executionItems = recentRuns
+      .filter(run => run.id !== activeRun?.id)
+      .map(run => ({
+        kind: "execution" as const,
+        id: run.id,
+        title: run.instruction,
+        updatedAt: run.updatedAt,
+        meta: [
+          getMobileExecutionLabel(run.status),
+          `${run.events.length} 条轨迹`,
+          run.verificationStatus ? `验证 ${getVerificationLabel(run.verificationStatus)}` : null,
+        ].filter(Boolean) as string[],
+        summary: null as string | null,
+        primaryLabel: "查看轨迹",
+        onPrimary: () => openExecutionRun(run.id),
+        secondaryLabel: "回到聊天",
+        onSecondary: () => handoffToChat(run.sessionId),
+      }));
+
+    const workflowItems = workflowQueue.map(run => ({
+      kind: "workflow" as const,
+      id: run.id,
+      title: run.title,
+      updatedAt: run.updatedAt,
+      meta: [
+        getWorkflowStatusLabel(run.status),
+        `${run.launchCount} 次启动`,
+        run.nextTab === "tasks" ? "聊天页继续" : "工作区继续",
+      ],
+      summary: run.summary,
+      primaryLabel: run.status === "in-progress" ? "标记完成" : run.status === "queued" || run.status === "staged" ? "启动" : "回填草稿",
+      onPrimary: () => {
+        if (run.status === "in-progress") {
+          completeWorkflowRun(run.id);
+          return;
+        }
+        if (run.status === "queued" || run.status === "staged") {
+          startWorkflowRun(run.id);
+          setCommandDraft(run.draft);
+          setTab(run.nextTab);
+          return;
+        }
+        restageWorkflowRun(run.id);
+        setCommandDraft(run.draft);
+        setTab(run.nextTab);
+      },
+      secondaryLabel: "回填草稿",
+      onSecondary: () => {
+        restageWorkflowRun(run.id);
+        setCommandDraft(run.draft);
+        setTab(run.nextTab);
+      },
+    }));
+
+    return [...executionItems, ...workflowItems]
+      .sort((left, right) => right.updatedAt - left.updatedAt)
+      .slice(0, 4);
+  }, [
+    activeRun?.id,
+    completeWorkflowRun,
+    recentRuns,
+    restageWorkflowRun,
+    setCommandDraft,
+    setTab,
+    startWorkflowRun,
+    workflowQueue,
+  ]);
   const canTakeOver = desktopInputSession.state === "manual-required" && Boolean(desktopInputSession.resumeInstruction);
   const latestEvent = activeRun?.events[activeRun.events.length - 1] ?? null;
   const activeRunTimeline = activeRun ? activeRun.events.slice(-3) : [];
@@ -1082,83 +1150,32 @@ function DesktopChatWorkspace() {
           </section>
         ) : null}
 
-        {recentRuns.length > 1 ? (
+        {pendingWorkbenchQueue.length > 0 ? (
           <section className="desktop-workspace-shell__rail-card">
-            <div className="desktop-workspace-shell__section-eyebrow">最近执行队列</div>
+            <div className="desktop-workspace-shell__section-eyebrow">待处理队列</div>
             <div className="desktop-workspace-shell__rail-stack">
-              {recentRuns.map(run => (
-                <button
-                  key={run.id}
-                  type="button"
-                  className={`desktop-workspace-shell__rail-list-item ${activeRun?.id === run.id ? "is-active" : ""}`}
-                  onClick={() => openExecutionRun(run.id)}
-                >
+              {pendingWorkbenchQueue.map(item => (
+                <article key={`${item.kind}-${item.id}`} className="desktop-workspace-shell__rail-list-item">
                   <div className="desktop-workspace-shell__rail-run">
-                    <strong>{run.instruction}</strong>
+                    <strong>{item.title}</strong>
                     <div className="desktop-workspace-shell__rail-run-meta">
-                      <span>{getMobileExecutionLabel(run.status)}</span>
-                      <span>{timeAgo(run.updatedAt)}</span>
-                      <span>{run.events.length} 条轨迹</span>
-                      {run.verificationStatus ? <span>验证 {getVerificationLabel(run.verificationStatus)}</span> : null}
+                      <span>{item.kind === "execution" ? "执行" : "工作流"}</span>
+                      {item.meta.map(label => (
+                        <span key={label}>{label}</span>
+                      ))}
+                      <span>{timeAgo(item.updatedAt)}</span>
                     </div>
-                  </div>
-                </button>
-              ))}
-            </div>
-          </section>
-        ) : null}
-
-        {workflowQueue.length > 0 ? (
-          <section className="desktop-workspace-shell__rail-card">
-            <div className="desktop-workspace-shell__section-eyebrow">工作流队列</div>
-            <div className="desktop-workspace-shell__rail-stack">
-              {workflowQueue.map(run => (
-                <article key={run.id} className="desktop-workspace-shell__rail-list-item">
-                  <div className="desktop-workspace-shell__rail-run">
-                    <strong>{run.title}</strong>
-                    <div className="desktop-workspace-shell__rail-run-meta">
-                      <span>{getWorkflowStatusLabel(run.status)}</span>
-                      <span>{run.launchCount} 次启动</span>
-                      <span>{timeAgo(run.updatedAt)}</span>
-                    </div>
-                    <div className="desktop-workspace-shell__rail-copy">{run.summary}</div>
+                    {item.summary ? (
+                      <div className="desktop-workspace-shell__rail-copy">{item.summary}</div>
+                    ) : null}
                   </div>
                   <div className="desktop-workspace-shell__rail-actions is-inline">
-                    {run.status !== "in-progress" ? (
-                      <button
-                        type="button"
-                        className="desktop-workspace-shell__hero-action"
-                        onClick={() => {
-                          restageWorkflowRun(run.id);
-                          setCommandDraft(run.draft);
-                          setTab(run.nextTab);
-                        }}
-                      >
-                        回填草稿
-                      </button>
-                    ) : null}
-                    {run.status === "queued" || run.status === "staged" ? (
-                      <button
-                        type="button"
-                        className="desktop-workspace-shell__hero-action"
-                        onClick={() => {
-                          startWorkflowRun(run.id);
-                          setCommandDraft(run.draft);
-                          setTab(run.nextTab);
-                        }}
-                      >
-                        启动
-                      </button>
-                    ) : null}
-                    {run.status === "in-progress" ? (
-                      <button
-                        type="button"
-                        className="desktop-workspace-shell__hero-action"
-                        onClick={() => completeWorkflowRun(run.id)}
-                      >
-                        标记完成
-                      </button>
-                    ) : null}
+                    <button type="button" className="desktop-workspace-shell__hero-action" onClick={item.onPrimary}>
+                      {item.primaryLabel}
+                    </button>
+                    <button type="button" className="desktop-workspace-shell__hero-action" onClick={item.onSecondary}>
+                      {item.secondaryLabel}
+                    </button>
                   </div>
                 </article>
               ))}

@@ -44,12 +44,19 @@ import {
   getNextLeadStage,
   getNextTicketStatus,
 } from "@/lib/business-entities";
+import {
+  buildContentChannelGovernancePlan,
+  getNextCycleActionDetail,
+  getNextCycleStatusFromRecommendation,
+} from "@/lib/content-governance";
 import { getWorkflowTemplateById } from "@/lib/workflow-runtime";
 import { buildProjectContext, getProjectScopeKey, matchProjectScope } from "@/lib/project-context";
 import { PLUGIN_PACKS } from "@/lib/plugin-runtime";
 import type {
   BusinessApprovalRecord,
   BusinessChannelSession,
+  BusinessContentChannel,
+  BusinessContentChannelGovernance,
   BusinessContentTask,
   BusinessContentNextCycleRecommendation,
   BusinessContentPublishResult,
@@ -286,6 +293,30 @@ interface BusinessEntitiesSlice {
     externalRef?: string;
     failureReason?: string;
   }) => void;
+  applyContentTaskGovernance: (payload: {
+    contentTaskId: string;
+    recommendation: BusinessContentNextCycleRecommendation;
+    status?: BusinessContentTask["status"];
+    detail: string;
+    trigger?: BusinessOperationRecord["trigger"];
+    queueWorkflow?: boolean;
+  }) => void;
+  continueContentTaskNextCycle: (payload: {
+    contentTaskId: string;
+    trigger?: BusinessOperationRecord["trigger"];
+  }) => string | null;
+  applyContentChannelGovernance: (payload: {
+    contentTaskId: string;
+    strategy?: "prioritize_primary" | "drop_risky";
+    detail?: string;
+    trigger?: BusinessOperationRecord["trigger"];
+  }) => void;
+  launchContentTaskNextCycle: (payload: {
+    contentTaskId: string;
+    recommendation?: BusinessContentNextCycleRecommendation;
+    detail?: string;
+    trigger?: BusinessOperationRecord["trigger"];
+  }) => string | null;
   seedBusinessEntitiesForProject: (scope?: { projectId?: string | null; rootPath?: string | null }) => void;
   clearBusinessEntitiesForProject: (scope?: { projectId?: string | null; rootPath?: string | null }) => void;
 }
@@ -872,6 +903,108 @@ function mergePublishedResults(
   ].slice(0, 24);
 }
 
+function resolveContentChannelGovernance(
+  task: Pick<BusinessContentTask, "channel" | "publishTargets" | "publishedResults">,
+): Pick<BusinessContentTask, "channelGovernance" | "recommendedPrimaryChannel" | "riskyChannels"> {
+  const governanceMap = new Map<BusinessContentChannel, BusinessContentChannelGovernance>();
+  const touchedChannels = new Set<BusinessContentChannel>([
+    task.channel,
+    ...task.publishTargets.map(target => target.channel),
+    ...task.publishedResults.map(result => result.channel),
+  ]);
+
+  for (const channel of touchedChannels) {
+    governanceMap.set(channel, {
+      channel,
+      completed: 0,
+      failed: 0,
+      recommendation: "secondary",
+    });
+  }
+
+  const sortedResults = [...task.publishedResults].sort((left, right) => right.publishedAt - left.publishedAt);
+  for (const result of sortedResults) {
+    const current = governanceMap.get(result.channel) ?? {
+      channel: result.channel,
+      completed: 0,
+      failed: 0,
+      recommendation: "secondary" as const,
+    };
+    if (result.status === "completed") {
+      current.completed += 1;
+    } else {
+      current.failed += 1;
+      if (!current.lastFailureReason && result.failureReason) {
+        current.lastFailureReason = result.failureReason;
+      }
+    }
+    if (!current.lastPublishedAt) {
+      current.lastPublishedAt = result.publishedAt;
+    }
+    governanceMap.set(result.channel, current);
+  }
+
+  const channelGovernance = Array.from(governanceMap.values())
+    .map(item => {
+      const recommendation: BusinessContentChannelGovernance["recommendation"] = item.failed >= 2 && item.failed > item.completed
+        ? "risky"
+        : item.completed > 0 && item.completed >= item.failed
+          ? "primary"
+          : "secondary";
+      return {
+        ...item,
+        recommendation,
+      };
+    })
+    .sort((left, right) => {
+      const leftScore = left.completed * 2 - left.failed;
+      const rightScore = right.completed * 2 - right.failed;
+      if (rightScore !== leftScore) return rightScore - leftScore;
+      return (right.lastPublishedAt ?? 0) - (left.lastPublishedAt ?? 0);
+    });
+
+  const riskyChannels = channelGovernance
+    .filter(item => item.recommendation === "risky")
+    .map(item => item.channel);
+
+  const recommendedPrimaryChannel = channelGovernance.find(item => item.recommendation === "primary")?.channel
+    ?? task.publishTargets.find(target => !riskyChannels.includes(target.channel))?.channel
+    ?? task.publishTargets[0]?.channel
+    ?? task.channel;
+
+  return {
+    channelGovernance,
+    recommendedPrimaryChannel,
+    riskyChannels,
+  };
+}
+
+function hasActiveContentWorkflowRun(
+  workflowRuns: WorkflowRun[],
+  contentTaskId: string,
+  templateId?: WorkflowRun["templateId"],
+) {
+  return workflowRuns.some(run =>
+    run.entityType === "contentTask"
+    && run.entityId === contentTaskId
+    && (!templateId || run.templateId === templateId)
+    && (run.status === "queued" || run.status === "staged" || run.status === "in-progress"),
+  );
+}
+
+function findActiveContentWorkflowRun(
+  workflowRuns: WorkflowRun[],
+  contentTaskId: string,
+  templateId?: WorkflowRun["templateId"],
+) {
+  return workflowRuns.find(run =>
+    run.entityType === "contentTask"
+    && run.entityId === contentTaskId
+    && (!templateId || run.templateId === templateId)
+    && (run.status === "queued" || run.status === "staged" || run.status === "in-progress"),
+  ) ?? null;
+}
+
 function resolveContentTaskStatusAfterWorkflow(
   task: BusinessContentTask,
   workflowRun: Pick<WorkflowRun, "templateId">,
@@ -931,12 +1064,19 @@ function hasActiveContentPostmortemRun(
   workflowRuns: WorkflowRun[],
   contentTaskId: string,
 ) {
-  return workflowRuns.some(run =>
-    run.entityType === "contentTask"
-    && run.entityId === contentTaskId
-    && run.templateId === "content-postmortem"
-    && (run.status === "queued" || run.status === "staged" || run.status === "in-progress"),
-  );
+  return hasActiveContentWorkflowRun(workflowRuns, contentTaskId, "content-postmortem");
+}
+
+function getContentFailureStreak(task: BusinessContentTask) {
+  let streak = 0;
+  const sortedResults = [...task.publishedResults].sort((left, right) => right.publishedAt - left.publishedAt);
+
+  for (const result of sortedResults) {
+    if (result.status !== "failed") break;
+    streak += 1;
+  }
+
+  return streak;
 }
 
 function buildSessionActivationState(
@@ -1507,6 +1647,14 @@ export const useStore = create<Store>()(
         const templateId = getContentTaskWorkflowTemplateId(contentTask.status);
         const template = getWorkflowTemplateById(templateId, state.enabledPluginIds);
         if (!template) return null;
+        const activeWorkflowRun = findActiveContentWorkflowRun(state.workflowRuns, contentTaskId, templateId);
+        if (activeWorkflowRun) {
+          get().updateBusinessContentTask(contentTask.id, {
+            lastWorkflowRunId: activeWorkflowRun.id,
+            lastOperationAt: Date.now(),
+          });
+          return activeWorkflowRun.id;
+        }
 
         const workflowContext = buildContentTaskWorkflowContext(state, contentTask);
         const draft = buildContentTaskWorkflowDraft(contentTask, template, workflowContext);
@@ -1615,18 +1763,23 @@ export const useStore = create<Store>()(
         set(s => {
           const now = Date.now();
           const scope = resolveBusinessScope(s);
+          const baseTask = {
+            id: `content-${now}-${Math.random().toString(36).slice(2, 7)}`,
+            projectId: scope.projectId,
+            rootPath: scope.rootPath,
+            createdAt: now,
+            updatedAt: now,
+            ownerAgentId: "writer" as const,
+            publishedLinks: [],
+            publishedResults: [],
+            ...payload,
+          };
+          const channelStrategy = resolveContentChannelGovernance(baseTask);
           return {
             businessContentTasks: [
               {
-                id: `content-${now}-${Math.random().toString(36).slice(2, 7)}`,
-                projectId: scope.projectId,
-                rootPath: scope.rootPath,
-                createdAt: now,
-                updatedAt: now,
-                ownerAgentId: "writer",
-                publishedLinks: [],
-                publishedResults: [],
-                ...payload,
+                ...baseTask,
+                ...channelStrategy,
               },
               ...s.businessContentTasks,
             ],
@@ -1636,11 +1789,19 @@ export const useStore = create<Store>()(
         set(s => ({
           businessContentTasks: s.businessContentTasks.map(item =>
             item.id === id
-              ? {
-                  ...item,
-                  ...updates,
-                  updatedAt: Date.now(),
-                }
+              ? (() => {
+                  const nextTask = {
+                    ...item,
+                    ...updates,
+                    updatedAt: Date.now(),
+                  };
+                  return "channel" in updates || "publishTargets" in updates || "publishedResults" in updates
+                    ? {
+                        ...nextTask,
+                        ...resolveContentChannelGovernance(nextTask),
+                      }
+                    : nextTask;
+                })()
               : item,
           ),
         })),
@@ -1850,6 +2011,12 @@ export const useStore = create<Store>()(
             ...(workflowRunId ? { workflowRunId } : {}),
             ...(failureReason ? { failureReason } : {}),
           };
+          const nextPublishedResults = mergePublishedResults(contentTask.publishedResults, nextPublishResult);
+          const channelStrategy = resolveContentChannelGovernance({
+            channel: contentTask.channel,
+            publishTargets: contentTask.publishTargets,
+            publishedResults: nextPublishedResults,
+          });
 
           return {
             businessContentTasks: s.businessContentTasks.map(task =>
@@ -1857,8 +2024,10 @@ export const useStore = create<Store>()(
                 ? {
                     ...task,
                     status: status === "completed" ? "published" : task.status,
+                    channel: channelStrategy.recommendedPrimaryChannel ?? task.channel,
                     publishedLinks: nextLinks,
-                    publishedResults: mergePublishedResults(task.publishedResults, nextPublishResult),
+                    publishedResults: nextPublishedResults,
+                    ...channelStrategy,
                     lastExecutionRunId: executionRunId ?? task.lastExecutionRunId,
                     lastWorkflowRunId: workflowRunId ?? task.lastWorkflowRunId,
                     lastOperationAt: now,
@@ -1893,6 +2062,221 @@ export const useStore = create<Store>()(
         if (shouldQueuePostmortem) {
           get().queueContentTaskWorkflowRun(contentTaskId);
         }
+
+        const latestTask = get().businessContentTasks.find(task => task.id === contentTaskId) ?? null;
+        if (status === "failed" && latestTask && getContentFailureStreak(latestTask) >= 2) {
+          get().applyContentChannelGovernance({
+            contentTaskId,
+            strategy: "prioritize_primary",
+            detail: "连续发布失败后已自动重排发布目标，并将高风险渠道后移。",
+            trigger: "auto",
+          });
+          get().applyContentTaskGovernance({
+            contentTaskId,
+            recommendation: "rewrite",
+            status: "review",
+            detail: "连续发布失败后已自动回退到 review，建议先改写并重新确认内容后再外发。",
+            trigger: "auto",
+            queueWorkflow: !hasActiveContentWorkflowRun(get().workflowRuns, contentTaskId, "content-final-review"),
+          });
+        }
+      },
+      applyContentTaskGovernance: ({
+        contentTaskId,
+        recommendation,
+        status,
+        detail,
+        trigger = "manual",
+        queueWorkflow = false,
+      }) => {
+        const state = get();
+        const task = state.businessContentTasks.find(item => item.id === contentTaskId) ?? null;
+        if (!task) return;
+
+        const now = Date.now();
+        set(s => ({
+          businessContentTasks: s.businessContentTasks.map(item =>
+            item.id === contentTaskId
+              ? {
+                  ...item,
+                  status: status ?? item.status,
+                  nextCycleRecommendation: recommendation,
+                  lastOperationAt: now,
+                  updatedAt: now,
+                }
+              : item,
+          ),
+          businessOperationLogs: capBusinessOperationLogs([
+            {
+              id: `biz-op-${now}-${Math.random().toString(36).slice(2, 7)}`,
+              entityType: "contentTask",
+              entityId: contentTaskId,
+              eventType: "governance",
+              trigger,
+              status: "blocked",
+              title: task.title,
+              detail,
+              projectId: task.projectId,
+              rootPath: task.rootPath,
+              createdAt: now,
+              updatedAt: now,
+            },
+            ...s.businessOperationLogs,
+          ]),
+        }));
+
+        if (queueWorkflow) {
+          get().queueContentTaskWorkflowRun(contentTaskId);
+        }
+      },
+      continueContentTaskNextCycle: ({
+        contentTaskId,
+        trigger = "manual",
+      }) => {
+        const state = get();
+        const task = state.businessContentTasks.find(item => item.id === contentTaskId) ?? null;
+        if (!task) return null;
+
+        const nextStatus = getNextCycleStatusFromRecommendation(task.nextCycleRecommendation);
+        const nextTemplateId = getContentTaskWorkflowTemplateId(nextStatus);
+        const activeRun = findActiveContentWorkflowRun(state.workflowRuns, contentTaskId, nextTemplateId);
+        const channelGovernancePlan = buildContentChannelGovernancePlan(task);
+        const nextChannel = channelGovernancePlan?.channel ?? task.channel;
+        const nextPublishTargets = channelGovernancePlan?.publishTargets ?? task.publishTargets;
+        const nextChannelStrategy = resolveContentChannelGovernance({
+          channel: nextChannel,
+          publishTargets: nextPublishTargets,
+          publishedResults: task.publishedResults,
+        });
+        const now = Date.now();
+
+        set(s => ({
+          businessContentTasks: s.businessContentTasks.map(item =>
+            item.id === contentTaskId
+              ? {
+                  ...item,
+                  status: nextStatus,
+                  channel: nextChannel,
+                  publishTargets: nextPublishTargets,
+                  ...nextChannelStrategy,
+                  lastOperationAt: now,
+                  updatedAt: now,
+                }
+              : item,
+          ),
+          businessOperationLogs: capBusinessOperationLogs([
+            {
+              id: `biz-op-${now}-${Math.random().toString(36).slice(2, 7)}`,
+              entityType: "contentTask",
+              entityId: contentTaskId,
+              eventType: "governance",
+              trigger,
+              status: activeRun ? "approved" : "pending",
+              title: task.title,
+              detail: channelGovernancePlan
+                ? `已按下一轮建议推进到 ${nextStatus}。${getNextCycleActionDetail(task.nextCycleRecommendation)} ${channelGovernancePlan.detail}。`
+                : `已按下一轮建议推进到 ${nextStatus}。${getNextCycleActionDetail(task.nextCycleRecommendation)}`,
+              projectId: task.projectId,
+              rootPath: task.rootPath,
+              createdAt: now,
+              updatedAt: now,
+            },
+            ...s.businessOperationLogs,
+          ]),
+        }));
+
+        if (activeRun) {
+          return activeRun.id;
+        }
+
+        return get().queueContentTaskWorkflowRun(contentTaskId);
+      },
+      launchContentTaskNextCycle: ({
+        contentTaskId,
+        recommendation,
+        detail,
+        trigger = "manual",
+      }) => {
+        const task = get().businessContentTasks.find(item => item.id === contentTaskId) ?? null;
+        if (!task) return null;
+
+        if (recommendation && recommendation !== task.nextCycleRecommendation) {
+          get().applyContentTaskGovernance({
+            contentTaskId,
+            recommendation,
+            status: getNextCycleStatusFromRecommendation(recommendation),
+            detail: detail ?? `已更新下一轮建议为 ${recommendation}。${getNextCycleActionDetail(recommendation)}`,
+            trigger,
+          });
+        }
+
+        return get().continueContentTaskNextCycle({ contentTaskId, trigger });
+      },
+      applyContentChannelGovernance: ({
+        contentTaskId,
+        strategy = "prioritize_primary",
+        detail,
+        trigger = "manual",
+      }) => {
+        const state = get();
+        const task = state.businessContentTasks.find(item => item.id === contentTaskId) ?? null;
+        if (!task) return;
+
+        const recommendedPrimaryChannel = task.recommendedPrimaryChannel
+          ?? task.channelGovernance.find(item => item.recommendation === "primary")?.channel
+          ?? task.channel;
+        const riskyChannels = new Set(task.riskyChannels);
+        const prioritizedTargets = [...task.publishTargets].sort((left, right) => {
+          const leftScore = (left.channel === recommendedPrimaryChannel ? 2 : 0) - (riskyChannels.has(left.channel) ? 1 : 0);
+          const rightScore = (right.channel === recommendedPrimaryChannel ? 2 : 0) - (riskyChannels.has(right.channel) ? 1 : 0);
+          return rightScore - leftScore;
+        });
+        const nextTargets = strategy === "drop_risky"
+          ? prioritizedTargets.filter(target => !riskyChannels.has(target.channel))
+          : prioritizedTargets;
+        const fallbackTargets = nextTargets.length > 0 ? nextTargets : prioritizedTargets;
+        const nextTask = {
+          ...task,
+          channel: recommendedPrimaryChannel,
+          publishTargets: fallbackTargets,
+        };
+        const channelStrategy = resolveContentChannelGovernance(nextTask);
+        const now = Date.now();
+
+        set(s => ({
+          businessContentTasks: s.businessContentTasks.map(item =>
+            item.id === contentTaskId
+              ? {
+                  ...item,
+                  ...nextTask,
+                  ...channelStrategy,
+                  lastOperationAt: now,
+                  updatedAt: now,
+                }
+              : item,
+          ),
+          businessOperationLogs: capBusinessOperationLogs([
+            {
+              id: `biz-op-${now}-${Math.random().toString(36).slice(2, 7)}`,
+              entityType: "contentTask",
+              entityId: contentTaskId,
+              eventType: "governance",
+              trigger,
+              status: "approved",
+              title: task.title,
+              detail: detail ?? (
+                strategy === "drop_risky"
+                  ? `已移除高风险渠道，并将主发渠道切换到 ${recommendedPrimaryChannel}。`
+                  : `已将推荐主发渠道切换到 ${recommendedPrimaryChannel}，并把高风险渠道后移。`
+              ),
+              projectId: task.projectId,
+              rootPath: task.rootPath,
+              createdAt: now,
+              updatedAt: now,
+            },
+            ...s.businessOperationLogs,
+          ]),
+        }));
       },
       seedBusinessEntitiesForProject: (scope) =>
         set(s => {

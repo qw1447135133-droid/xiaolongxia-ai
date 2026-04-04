@@ -48,6 +48,7 @@ export function BusinessEntitiesCenter() {
   const advanceBusinessContentTaskStatus = useStore(s => s.advanceBusinessContentTaskStatus);
   const advanceBusinessChannelSessionStatus = useStore(s => s.advanceBusinessChannelSessionStatus);
   const queueContentTaskWorkflowRun = useStore(s => s.queueContentTaskWorkflowRun);
+  const applyContentChannelGovernance = useStore(s => s.applyContentChannelGovernance);
   const seedBusinessEntitiesForProject = useStore(s => s.seedBusinessEntitiesForProject);
   const clearBusinessEntitiesForProject = useStore(s => s.clearBusinessEntitiesForProject);
   const setActiveExecutionRun = useStore(s => s.setActiveExecutionRun);
@@ -550,6 +551,19 @@ export function BusinessEntitiesCenter() {
                 {task.nextCycleRecommendation ? (
                   <div className="control-center__entity-note">下一轮建议: {getNextCycleLabel(task.nextCycleRecommendation)}</div>
                 ) : null}
+                {task.recommendedPrimaryChannel || task.riskyChannels.length > 0 ? (
+                  <div className="control-center__entity-note">
+                    渠道策略: 主发 {task.recommendedPrimaryChannel ?? task.channel}
+                    {task.riskyChannels.length > 0 ? ` · 风险 ${task.riskyChannels.join(" / ")}` : " · 暂无高风险渠道"}
+                  </div>
+                ) : null}
+                {task.channelGovernance.length > 0 ? (
+                  <div className="control-center__entity-note">
+                    渠道表现: {task.channelGovernance.slice(0, 3).map(item =>
+                      `${item.channel} ${item.completed}/${item.failed} ${getChannelGovernanceLabel(item.recommendation)}`,
+                    ).join(" / ")}
+                  </div>
+                ) : null}
                 {task.publishedLinks.length > 0 ? (
                   <div className="control-center__entity-note">已发布链接: {task.publishedLinks.join(" / ")}</div>
                 ) : null}
@@ -579,6 +593,15 @@ export function BusinessEntitiesCenter() {
                   >
                     {task.lastWorkflowRunId ? "继续 workflow" : "创建 workflow"}
                   </button>
+                  {task.channelGovernance.length > 0 ? (
+                    <button
+                      type="button"
+                      className="btn-ghost"
+                      onClick={() => applyContentChannelGovernance({ contentTaskId: task.id })}
+                    >
+                      应用渠道治理
+                    </button>
+                  ) : null}
                   {task.lastExecutionRunId ? (
                     <button type="button" className="btn-ghost" onClick={() => focusExecutionRun(task.lastExecutionRunId)}>
                       查看执行链
@@ -756,6 +779,10 @@ function getOperationLabel(operation: BusinessOperationRecord) {
     return "发布处理中";
   }
 
+  if (operation.eventType === "governance") {
+    return "治理动作";
+  }
+
   if (operation.status === "sent") {
     return "已派发";
   }
@@ -793,5 +820,16 @@ function getNextCycleLabel(value: "reuse" | "retry" | "rewrite") {
       return "待重发";
     default:
       return "待改写";
+  }
+}
+
+function getChannelGovernanceLabel(value: "primary" | "secondary" | "risky") {
+  switch (value) {
+    case "primary":
+      return "主发";
+    case "risky":
+      return "风险";
+    default:
+      return "观察";
   }
 }

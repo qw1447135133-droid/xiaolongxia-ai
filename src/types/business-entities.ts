@@ -3,13 +3,14 @@ import type { AgentId } from "@/store/types";
 export type BusinessPriority = "low" | "normal" | "high" | "urgent";
 export type BusinessEntityType = "customer" | "lead" | "ticket" | "contentTask" | "channelSession";
 export type BusinessContentFormat = "post" | "thread" | "article" | "script" | "campaign";
+export type BusinessContentChannel = "x" | "telegram" | "line" | "feishu" | "wecom" | "blog";
 export type BusinessContentPublishTarget = {
-  channel: "x" | "telegram" | "line" | "feishu" | "wecom" | "blog";
+  channel: BusinessContentChannel;
   accountLabel: string;
 };
 export type BusinessContentPublishResult = {
   id: string;
-  channel: "x" | "telegram" | "line" | "feishu" | "wecom" | "blog";
+  channel: BusinessContentChannel;
   accountLabel: string;
   status: "completed" | "failed";
   publishedAt: number;
@@ -21,6 +22,15 @@ export type BusinessContentPublishResult = {
   failureReason?: string;
 };
 export type BusinessContentNextCycleRecommendation = "reuse" | "retry" | "rewrite";
+export type BusinessContentChannelRecommendation = "primary" | "secondary" | "risky";
+export type BusinessContentChannelGovernance = {
+  channel: BusinessContentChannel;
+  completed: number;
+  failed: number;
+  recommendation: BusinessContentChannelRecommendation;
+  lastPublishedAt?: number;
+  lastFailureReason?: string;
+};
 
 export interface BusinessScopedEntity {
   id: string;
@@ -64,7 +74,7 @@ export interface BusinessContentTask extends BusinessScopedEntity {
   title: string;
   customerId: string | null;
   leadId: string | null;
-  channel: "x" | "telegram" | "line" | "feishu" | "wecom" | "blog";
+  channel: BusinessContentChannel;
   format: BusinessContentFormat;
   goal: string;
   publishTargets: BusinessContentPublishTarget[];
@@ -76,6 +86,9 @@ export interface BusinessContentTask extends BusinessScopedEntity {
   latestDraftSummary?: string;
   latestPostmortemSummary?: string;
   nextCycleRecommendation?: BusinessContentNextCycleRecommendation;
+  channelGovernance: BusinessContentChannelGovernance[];
+  recommendedPrimaryChannel?: BusinessContentChannel;
+  riskyChannels: BusinessContentChannel[];
   publishedLinks: string[];
   publishedResults: BusinessContentPublishResult[];
   lastExecutionRunId?: string;
@@ -105,7 +118,7 @@ export interface BusinessApprovalRecord extends BusinessScopedEntity {
 export interface BusinessOperationRecord extends BusinessScopedEntity {
   entityType: BusinessEntityType;
   entityId: string;
-  eventType: "approval" | "dispatch" | "workflow" | "publish";
+  eventType: "approval" | "dispatch" | "workflow" | "publish" | "governance";
   trigger: "manual" | "auto";
   status: "pending" | "approved" | "rejected" | "sent" | "blocked" | "completed" | "failed";
   title: string;

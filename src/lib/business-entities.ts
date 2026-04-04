@@ -137,6 +137,8 @@ export function createDemoBusinessDataset(scope: { projectId: string | null; roo
       status: "draft",
       priority: "normal",
       ownerAgentId: "writer",
+      channelGovernance: [],
+      riskyChannels: [],
       publishedLinks: [],
       publishedResults: [],
       brief: "围绕远程监督、自动化客服和值守模式写一版可转销售线索的介绍内容。",

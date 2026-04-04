@@ -73,6 +73,9 @@ export function RemoteOpsCenter() {
   const queueContentTaskWorkflowRun = useStore(s => s.queueContentTaskWorkflowRun);
   const recordBusinessOperation = useStore(s => s.recordBusinessOperation);
   const recordContentPublishResult = useStore(s => s.recordContentPublishResult);
+  const applyContentTaskGovernance = useStore(s => s.applyContentTaskGovernance);
+  const continueContentTaskNextCycle = useStore(s => s.continueContentTaskNextCycle);
+  const applyContentChannelGovernance = useStore(s => s.applyContentChannelGovernance);
   const setActiveExecutionRun = useStore(s => s.setActiveExecutionRun);
   const setTab = useStore(s => s.setTab);
   const setActiveControlCenterSection = useStore(s => s.setActiveControlCenterSection);
@@ -342,6 +345,7 @@ export function RemoteOpsCenter() {
       detail: string;
       entityId?: string;
       action: "workflow" | "entities";
+      remediation?: "queue_postmortem" | "governance_rewrite" | "channel_governance";
     }> = [];
 
     for (const task of scopedContentTasks) {
@@ -361,6 +365,7 @@ export function RemoteOpsCenter() {
           detail: `${task.title} 最近一次成功发布后仍未形成复盘摘要，建议尽快进入发布复盘 workflow。`,
           entityId: task.id,
           action: "workflow",
+          remediation: "queue_postmortem",
         });
       }
 
@@ -377,6 +382,19 @@ export function RemoteOpsCenter() {
           detail: `${task.title} 最近连续 ${recentFailures.length} 次发布失败，建议暂停直接外发，先回到改写或人工接管。`,
           entityId: task.id,
           action: "entities",
+          remediation: "governance_rewrite",
+        });
+      }
+
+      if (task.riskyChannels.length > 0 && task.publishTargets.some(target => task.riskyChannels.includes(target.channel))) {
+        alerts.push({
+          id: `channel-governance-${task.id}`,
+          severity: "warning",
+          title: "内容任务命中了高风险渠道",
+          detail: `${task.title} 当前建议主发 ${task.recommendedPrimaryChannel ?? task.channel}，风险渠道 ${task.riskyChannels.join(" / ")}，建议先按治理策略重排发布目标。`,
+          entityId: task.id,
+          action: "entities",
+          remediation: "channel_governance",
         });
       }
     }
@@ -675,6 +693,70 @@ export function RemoteOpsCenter() {
                       处理这条内容
                     </button>
                   ) : null}
+                  {alert.entityId && alert.remediation === "queue_postmortem" ? (
+                    <button
+                      type="button"
+                      className="btn-ghost"
+                      onClick={() => {
+                        const workflowRunId = queueContentTaskWorkflowRun(alert.entityId!);
+                        if (!workflowRunId) return;
+                        setActionFeedback({
+                          title: "已排队发布复盘",
+                          detail: "系统已为这条逾期未复盘的内容任务补排一条发布复盘 workflow。",
+                          entitySection: "workflow",
+                        });
+                        openControlCenterSection("workflow");
+                      }}
+                    >
+                      自动排队复盘
+                    </button>
+                  ) : null}
+                  {alert.entityId && alert.remediation === "governance_rewrite" ? (
+                    <button
+                      type="button"
+                      className="btn-ghost"
+                      onClick={() => {
+                        applyContentTaskGovernance({
+                          contentTaskId: alert.entityId!,
+                          recommendation: "rewrite",
+                          status: "review",
+                          detail: "从内容运营告警面板手动触发治理动作，已回退到 review 并建议改写。",
+                          trigger: "manual",
+                          queueWorkflow: true,
+                        });
+                        setActionFeedback({
+                          title: "治理动作已应用",
+                          detail: "内容任务已回退到 review，并自动排队了一条后续 workflow。",
+                          entitySection: "workflow",
+                        });
+                        openControlCenterSection("workflow");
+                      }}
+                    >
+                      应用治理动作
+                    </button>
+                  ) : null}
+                  {alert.entityId && alert.remediation === "channel_governance" ? (
+                    <button
+                      type="button"
+                      className="btn-ghost"
+                      onClick={() => {
+                        applyContentChannelGovernance({
+                          contentTaskId: alert.entityId!,
+                          strategy: "prioritize_primary",
+                          detail: "从内容运营告警面板应用渠道治理，已按推荐主发渠道重排目标并后移高风险渠道。",
+                          trigger: "manual",
+                        });
+                        setActionFeedback({
+                          title: "渠道治理已应用",
+                          detail: "内容任务的发布目标已按推荐主发渠道重排，高风险渠道已后移。",
+                          entitySection: "entities",
+                        });
+                        openControlCenterSection("entities");
+                      }}
+                    >
+                      应用渠道治理
+                    </button>
+                  ) : null}
                 </div>
               </article>
             ))
@@ -705,6 +787,10 @@ export function RemoteOpsCenter() {
                   {task.latestPostmortemSummary ?? "复盘已完成，但还没有写出摘要。"}
                 </div>
                 <div className="control-center__dispatch-note">
+                  渠道策略: 主发 {task.recommendedPrimaryChannel ?? task.channel}
+                  {task.riskyChannels.length > 0 ? ` · 风险 ${task.riskyChannels.join(" / ")}` : " · 暂无高风险渠道"}
+                </div>
+                <div className="control-center__dispatch-note">
                   最近发布结果: {task.publishedResults[0]
                     ? `${task.publishedResults[0].channel}:${task.publishedResults[0].accountLabel} · ${task.publishedResults[0].status}${task.publishedResults[0].externalId ? ` · ${task.publishedResults[0].externalId}` : ""}`
                     : "暂无"}
@@ -714,15 +800,11 @@ export function RemoteOpsCenter() {
                     type="button"
                     className="btn-ghost"
                     onClick={() => {
-                      updateBusinessContentTask(task.id, {
-                        status: "draft",
-                        lastOperationAt: Date.now(),
-                      });
-                      const workflowRunId = queueContentTaskWorkflowRun(task.id);
+                      const workflowRunId = continueContentTaskNextCycle({ contentTaskId: task.id, trigger: "manual" });
                       if (!workflowRunId) return;
                       setActionFeedback({
                         title: "已进入下一轮内容周期",
-                        detail: `系统已按“${getNextCycleRecommendationLabel(task.nextCycleRecommendation!)}”建议，把内容任务回到 draft 并排队新一轮 workflow。`,
+                        detail: `系统已按“${getNextCycleRecommendationLabel(task.nextCycleRecommendation!)}”建议推进内容任务，并沿用当前渠道治理策略接续下一轮 workflow。`,
                         entitySection: "workflow",
                       });
                       openControlCenterSection("workflow");
@@ -730,6 +812,28 @@ export function RemoteOpsCenter() {
                   >
                     进入下一轮 workflow
                   </button>
+                  {task.channelGovernance.length > 0 ? (
+                    <button
+                      type="button"
+                      className="btn-ghost"
+                      onClick={() => {
+                        applyContentChannelGovernance({
+                          contentTaskId: task.id,
+                          strategy: "prioritize_primary",
+                          detail: "从下一轮内容队列应用渠道治理，已按推荐主发渠道重排本轮发布目标。",
+                          trigger: "manual",
+                        });
+                        setActionFeedback({
+                          title: "已应用本轮渠道策略",
+                          detail: "推荐主发渠道已同步到内容任务，下一轮 workflow 会沿用新的目标排序。",
+                          entitySection: "entities",
+                        });
+                        openControlCenterSection("entities");
+                      }}
+                    >
+                      同步渠道策略
+                    </button>
+                  ) : null}
                   <button type="button" className="btn-ghost" onClick={() => openControlCenterSection("entities")}>
                     查看内容实体
                   </button>
@@ -1409,6 +1513,8 @@ function getAuditEventLabel(eventType: BusinessOperationRecord["eventType"]) {
       return "Workflow";
     case "publish":
       return "发布回写";
+    case "governance":
+      return "治理动作";
     default:
       return "派发";
   }

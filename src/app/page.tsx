@@ -774,7 +774,10 @@ function DesktopChatWorkspace() {
     [activeSession, businessApprovals],
   );
   const scopedOperationLogs = useMemo(
-    () => filterByProjectScope(businessOperationLogs, activeSession ?? {}),
+    () =>
+      [...filterByProjectScope(businessOperationLogs, activeSession ?? {})].sort(
+        (left, right) => right.updatedAt - left.updatedAt,
+      ),
     [activeSession, businessOperationLogs],
   );
   const scopedCustomers = useMemo(
@@ -1377,7 +1380,10 @@ function DashboardTab({ onOpenTab }: { onOpenTab: (tab: AppTab) => void }) {
     [activeSession, chatSessions],
   );
   const scopedExecutionRuns = useMemo(
-    () => executionRuns.filter(run => getRunProjectScopeKey(run, chatSessions) === currentProjectKey),
+    () =>
+      executionRuns
+        .filter(run => getRunProjectScopeKey(run, chatSessions) === currentProjectKey)
+        .sort((left, right) => right.updatedAt - left.updatedAt),
     [chatSessions, currentProjectKey, executionRuns],
   );
 
@@ -1426,6 +1432,8 @@ function DashboardTab({ onOpenTab }: { onOpenTab: (tab: AppTab) => void }) {
       scopedTickets,
     ],
   );
+  const pendingApprovalsCount = mobileApprovalQueue.length;
+  const activeRunCount = scopedExecutionRuns.filter(run => run.status === "analyzing" || run.status === "running").length;
   const latestRun = scopedExecutionRuns[0] ?? null;
   const latestOperation = scopedOperationLogs[0] ?? null;
   const deskContextCount = workspacePinnedPreviews.length + scopedDeskNotes.length + scopedProjectMemories.length;
@@ -1526,9 +1534,9 @@ function DashboardTab({ onOpenTab }: { onOpenTab: (tab: AppTab) => void }) {
   };
 
   return (
-    <div className="ios-home">
-      <div className="ios-home__workspace">
-        <div className="ios-home__main">
+    <div className="ios-home ios-home--desktop">
+      <div className="ios-home__workspace ios-home__desktop-layout">
+        <div className="ios-home__main ios-home__desktop-main">
           <section className="ios-home__hero">
             <div className="ios-home__eyebrow">A ChatGPT-like command center</div>
             <h1 className="ios-home__title">今天想让小龙虾团队帮你完成什么？</h1>
@@ -1686,12 +1694,12 @@ function DashboardTab({ onOpenTab }: { onOpenTab: (tab: AppTab) => void }) {
           </section>
         </div>
 
-        <aside className="ios-home__rail">
-          <MobileSupervisionPanel
-            approvalCount={scopedApprovals.filter(item => item.status === "pending").length}
-            activeRunCount={scopedExecutionRuns.filter(run => run.status === "analyzing" || run.status === "running").length}
-            latestRun={scopedExecutionRuns[0] ?? null}
-            latestOperation={scopedOperationLogs[0] ?? null}
+        <aside className="ios-home__rail ios-home__desktop-rail">
+          <DashboardSupervisionRail
+            approvalCount={pendingApprovalsCount}
+            activeRunCount={activeRunCount}
+            latestRun={latestRun}
+            latestOperation={latestOperation}
             approvalItems={mobileApprovalQueue.slice(0, 3)}
             automationPaused={automationPaused}
             automationMode={automationMode}
@@ -1803,17 +1811,13 @@ function DashboardTab({ onOpenTab }: { onOpenTab: (tab: AppTab) => void }) {
             </div>
           </section>
 
-          <section className="ios-home__rail-panel ios-home__rail-panel--compact">
-            <div className="ios-home__eyebrow">Execution Snapshot</div>
-            <ExecutionCenter compact />
-          </section>
         </aside>
       </div>
     </div>
   );
 }
 
-function MobileSupervisionPanel({
+function DashboardSupervisionRail({
   approvalCount,
   activeRunCount,
   latestRun,

@@ -100,6 +100,7 @@ export interface NativeInstalledApplication {
 
 declare global {
   interface Window {
+    __XLX_ELECTRON__?: boolean;
     electronAPI?: {
       isElectron: boolean;
       getWsPort: () => Promise<number>;

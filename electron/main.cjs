@@ -1393,7 +1393,8 @@ function createMainWindow() {
   });
 
   const productionIndex = path.join(process.resourcesPath, 'app.asar.unpacked', 'out', 'index.html');
-  const url = process.env.NEXT_DEV_URL || 'http://localhost:3000';
+  const baseUrl = process.env.NEXT_DEV_URL || 'http://localhost:3000';
+  const url = `${baseUrl.replace(/\/$/, '')}/electron?desktop-client=electron`;
 
   log('[main] Loading target:', isDev() ? url : productionIndex);
   log('[main] __dirname:', __dirname);

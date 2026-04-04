@@ -189,6 +189,7 @@ async function cleanRepoProcesses() {
   const escapedRoot = projectRoot.replace(/'/g, "''");
   const escapedElectronBinary = path.join(projectRoot, "node_modules", "electron", "dist", "electron.exe").replace(/'/g, "''");
   const command = [
+    `$ErrorActionPreference = 'SilentlyContinue'`,
     `$repoRoot = '${escapedRoot}'`,
     `$electronBinary = '${escapedElectronBinary}'`,
     `$currentPid = ${process.pid}`,
@@ -212,6 +213,7 @@ async function cleanRepoProcesses() {
     `    Write-Output ("stopped " + $target.Name + " #" + $target.ProcessId)`,
     `  } catch {}`,
     `}`,
+    `exit 0`,
   ].join("\n");
 
   const output = await execForText("powershell", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command]);

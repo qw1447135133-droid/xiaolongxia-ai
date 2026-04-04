@@ -3500,6 +3500,45 @@ body::after {
   gap: 10px;
 }
 
+.desktop-workspace-shell__rail-actions.is-inline {
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+}
+
+.desktop-workspace-shell__rail-stack {
+  display: grid;
+  gap: 10px;
+}
+
+.desktop-workspace-shell__rail-list-item,
+.desktop-workspace-shell__rail-inline-panel {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border-radius: 16px;
+  border: 1px solid var(--desktop-shell-border);
+  background: rgba(248, 250, 252, 0.52);
+}
+
+.desktop-workspace-shell__rail-list-item {
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  color: var(--desktop-shell-text);
+}
+
+.desktop-workspace-shell__rail-list-item.is-active {
+  border-color: var(--desktop-shell-border-strong);
+  background: rgba(239, 246, 255, 0.96);
+}
+
+.desktop-workspace-shell__rail-inline-label {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--desktop-shell-muted);
+}
+
 .desktop-workspace-shell__rail-run {
   display: grid;
   gap: 8px;
@@ -3698,6 +3737,11 @@ body.runtime-electron .desktop-workspace-shell__rail-card.is-danger {
 
 body.runtime-electron .desktop-workspace-shell__rail-card.is-warning {
   background: linear-gradient(180deg, rgba(120, 53, 15, 0.28), rgba(15, 23, 42, 0.94));
+}
+
+body.runtime-electron .desktop-workspace-shell__rail-list-item,
+body.runtime-electron .desktop-workspace-shell__rail-inline-panel {
+  background: rgba(30, 41, 59, 0.88);
 }
 
 body.runtime-electron .desktop-workspace-shell__rail-run-meta span,

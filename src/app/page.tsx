@@ -43,6 +43,7 @@ import { AGENT_META, getTeamOperatingTemplate, TEAM_OPERATING_SURFACES } from "@
 import type { AppTab, ControlCenterSectionId } from "@/store/types";
 import { sendExecutionDispatch } from "@/lib/execution-dispatch";
 import { detectElectronRuntimeWindow } from "@/lib/electron-runtime";
+import { runExecutionVerification } from "@/lib/execution-verification";
 
 const NAV_ITEMS: Array<{ id: AppTab; label: string; eyebrow: string }> = [
   { id: "dashboard", label: "首页", eyebrow: "Home" },
@@ -643,20 +644,49 @@ function DesktopChatWorkspace() {
   const setCommandDraft = useStore(s => s.setCommandDraft);
   const setActiveChatSession = useStore(s => s.setActiveChatSession);
   const setActiveControlCenterSection = useStore(s => s.setActiveControlCenterSection);
+  const setAutomationPaused = useStore(s => s.setAutomationPaused);
+  const clearDesktopInputSession = useStore(s => s.clearDesktopInputSession);
   const tasks = useStore(s => s.tasks);
   const workflowRuns = useStore(s => s.workflowRuns);
+  const restageWorkflowRun = useStore(s => s.restageWorkflowRun);
+  const startWorkflowRun = useStore(s => s.startWorkflowRun);
+  const completeWorkflowRun = useStore(s => s.completeWorkflowRun);
   const executionRuns = useStore(s => s.executionRuns);
+  const activeExecutionRunId = useStore(s => s.activeExecutionRunId);
   const desktopInputSession = useStore(s => s.desktopInputSession);
   const setActiveExecutionRun = useStore(s => s.setActiveExecutionRun);
+  const chatSessions = useStore(s => s.chatSessions);
+  const activeSessionId = useStore(s => s.activeSessionId);
   const activeTeamOperatingTemplateId = useStore(s => s.activeTeamOperatingTemplateId);
   const activeSurface = activeTeamOperatingTemplateId
     ? TEAM_OPERATING_SURFACES[activeTeamOperatingTemplateId]
     : null;
   const chatStarters = activeSurface?.chatStarters ?? CHAT_STARTERS;
-  const runningExecutions = executionRuns.filter(run => run.status === "analyzing" || run.status === "running").length;
-  const recentRun = executionRuns[0] ?? null;
-  const recentFailedRun = executionRuns.find(run => run.status === "failed") ?? null;
+  const activeSession = useMemo(
+    () => chatSessions.find(session => session.id === activeSessionId) ?? null,
+    [activeSessionId, chatSessions],
+  );
+  const currentProjectKey = useMemo(
+    () => (activeSession ? getRunProjectScopeKey(activeSession, chatSessions) : "project:general"),
+    [activeSession, chatSessions],
+  );
+  const scopedExecutionRuns = useMemo(
+    () =>
+      executionRuns
+        .filter(run => getRunProjectScopeKey(run, chatSessions) === currentProjectKey)
+        .sort((left, right) => right.updatedAt - left.updatedAt),
+    [chatSessions, currentProjectKey, executionRuns],
+  );
+  const runningExecutions = scopedExecutionRuns.filter(run => run.status === "analyzing" || run.status === "running").length;
+  const recentRuns = scopedExecutionRuns.slice(0, 3);
+  const activeRun = scopedExecutionRuns.find(run => run.id === activeExecutionRunId) ?? scopedExecutionRuns[0] ?? null;
+  const recentRun = scopedExecutionRuns[0] ?? null;
+  const recentFailedRun = scopedExecutionRuns.find(run => run.status === "failed") ?? null;
+  const workflowQueue = workflowRuns
+    .filter(run => run.status === "queued" || run.status === "staged" || run.status === "in-progress")
+    .slice(0, 3);
   const canTakeOver = desktopInputSession.state === "manual-required" && Boolean(desktopInputSession.resumeInstruction);
+  const latestEvent = activeRun?.events[activeRun.events.length - 1] ?? null;
 
   const openExecutionRun = (runId: string) => {
     setActiveExecutionRun(runId);
@@ -668,6 +698,11 @@ function DesktopChatWorkspace() {
     if (sessionId) {
       setActiveChatSession(sessionId);
     }
+  };
+
+  const openControlSection = (section: ControlCenterSectionId) => {
+    setActiveControlCenterSection(section);
+    setTab("settings");
   };
 
   const handoffToChat = (sessionId?: string | null) => {
@@ -701,6 +736,33 @@ function DesktopChatWorkspace() {
     }
   };
 
+  const continueAfterTakeover = () => {
+    if (!desktopInputSession.resumeInstruction) return;
+
+    focusChatSession(desktopInputSession.sessionId);
+    const { ok, executionRunId } = sendExecutionDispatch({
+      instruction: desktopInputSession.resumeInstruction,
+      source: "chat",
+      includeUserMessage: false,
+      includeActiveProjectMemory: true,
+      sessionId: desktopInputSession.sessionId,
+      taskDescription: "验证完成后继续执行",
+    });
+
+    if (ok) {
+      setAutomationPaused(false);
+      clearDesktopInputSession();
+      if (executionRunId) {
+        setActiveExecutionRun(executionRunId);
+        setActiveControlCenterSection("execution");
+        setTab("settings");
+        return;
+      }
+    }
+
+    setTab("tasks");
+  };
+
   return (
     <div className="desktop-workspace-shell__chat-layout">
       <section className="desktop-workspace-shell__chat-main">
@@ -709,7 +771,7 @@ function DesktopChatWorkspace() {
 
       <aside className="desktop-workspace-shell__chat-rail">
         <section className="desktop-workspace-shell__rail-card">
-          <div className="desktop-workspace-shell__section-eyebrow">对话状态</div>
+          <div className="desktop-workspace-shell__section-eyebrow">执行总览</div>
           <div className="desktop-workspace-shell__rail-stats">
             <article className="desktop-workspace-shell__summary-card">
               <span>消息数</span>
@@ -721,29 +783,140 @@ function DesktopChatWorkspace() {
             </article>
             <article className="desktop-workspace-shell__summary-card">
               <span>工作流</span>
-              <strong>{workflowRuns.length}</strong>
+              <strong>{workflowQueue.length}</strong>
             </article>
+          </div>
+          <div className="desktop-workspace-shell__rail-copy">
+            当前项目: {activeSession ? getSessionProjectLabel(activeSession) : "General"}
+          </div>
+          <div className="desktop-workspace-shell__rail-actions">
+            <button type="button" className="desktop-workspace-shell__hero-action" onClick={() => openControlSection("execution")}>
+              打开执行中心
+            </button>
+            <button type="button" className="desktop-workspace-shell__hero-action" onClick={() => openControlSection("workflow")}>
+              打开工作流中心
+            </button>
           </div>
         </section>
 
-        {recentRun ? (
+        {activeRun ? (
           <section className="desktop-workspace-shell__rail-card">
-            <div className="desktop-workspace-shell__section-eyebrow">最近执行</div>
+            <div className="desktop-workspace-shell__section-eyebrow">当前执行</div>
             <div className="desktop-workspace-shell__rail-run">
-              <strong>{recentRun.instruction}</strong>
+              <strong>{activeRun.instruction}</strong>
               <div className="desktop-workspace-shell__rail-run-meta">
-                <span>{getMobileExecutionLabel(recentRun.status)}</span>
-                <span>{timeAgo(recentRun.updatedAt)}</span>
-                <span>{recentRun.events.length} 条轨迹</span>
+                <span>{getMobileExecutionLabel(activeRun.status)}</span>
+                <span>{timeAgo(activeRun.updatedAt)}</span>
+                <span>{activeRun.events.length} 条轨迹</span>
+                <span>{activeRun.completedTasks}/{activeRun.totalTasks || 0} 已完成</span>
+                {activeRun.verificationStatus ? (
+                  <span>验证 {getVerificationLabel(activeRun.verificationStatus)}</span>
+                ) : null}
               </div>
             </div>
+            {latestEvent ? (
+              <div className="desktop-workspace-shell__rail-inline-panel">
+                <div className="desktop-workspace-shell__rail-inline-label">最新节点</div>
+                <strong>{latestEvent.title}</strong>
+                {latestEvent.detail ? (
+                  <div className="desktop-workspace-shell__rail-copy">{latestEvent.detail}</div>
+                ) : null}
+              </div>
+            ) : null}
             <div className="desktop-workspace-shell__rail-actions">
-              <button type="button" className="desktop-workspace-shell__hero-action" onClick={() => openExecutionRun(recentRun.id)}>
+              <button type="button" className="desktop-workspace-shell__hero-action is-primary" onClick={() => openExecutionRun(activeRun.id)}>
                 查看轨迹
               </button>
-              <button type="button" className="desktop-workspace-shell__hero-action" onClick={() => handoffToChat(recentRun.sessionId)}>
+              <button type="button" className="desktop-workspace-shell__hero-action" onClick={() => void runExecutionVerification(activeRun.id)}>
+                重新验证
+              </button>
+              <button type="button" className="desktop-workspace-shell__hero-action" onClick={() => handoffToChat(activeRun.sessionId)}>
                 去聊天接管
               </button>
+            </div>
+          </section>
+        ) : null}
+
+        {recentRuns.length > 1 ? (
+          <section className="desktop-workspace-shell__rail-card">
+            <div className="desktop-workspace-shell__section-eyebrow">最近执行队列</div>
+            <div className="desktop-workspace-shell__rail-stack">
+              {recentRuns.map(run => (
+                <button
+                  key={run.id}
+                  type="button"
+                  className={`desktop-workspace-shell__rail-list-item ${activeRun?.id === run.id ? "is-active" : ""}`}
+                  onClick={() => openExecutionRun(run.id)}
+                >
+                  <div className="desktop-workspace-shell__rail-run">
+                    <strong>{run.instruction}</strong>
+                    <div className="desktop-workspace-shell__rail-run-meta">
+                      <span>{getMobileExecutionLabel(run.status)}</span>
+                      <span>{timeAgo(run.updatedAt)}</span>
+                      <span>{run.events.length} 条轨迹</span>
+                      {run.verificationStatus ? <span>验证 {getVerificationLabel(run.verificationStatus)}</span> : null}
+                    </div>
+                  </div>
+                </button>
+              ))}
+            </div>
+          </section>
+        ) : null}
+
+        {workflowQueue.length > 0 ? (
+          <section className="desktop-workspace-shell__rail-card">
+            <div className="desktop-workspace-shell__section-eyebrow">工作流队列</div>
+            <div className="desktop-workspace-shell__rail-stack">
+              {workflowQueue.map(run => (
+                <article key={run.id} className="desktop-workspace-shell__rail-list-item">
+                  <div className="desktop-workspace-shell__rail-run">
+                    <strong>{run.title}</strong>
+                    <div className="desktop-workspace-shell__rail-run-meta">
+                      <span>{getWorkflowStatusLabel(run.status)}</span>
+                      <span>{run.launchCount} 次启动</span>
+                      <span>{timeAgo(run.updatedAt)}</span>
+                    </div>
+                    <div className="desktop-workspace-shell__rail-copy">{run.summary}</div>
+                  </div>
+                  <div className="desktop-workspace-shell__rail-actions is-inline">
+                    {run.status !== "in-progress" ? (
+                      <button
+                        type="button"
+                        className="desktop-workspace-shell__hero-action"
+                        onClick={() => {
+                          restageWorkflowRun(run.id);
+                          setCommandDraft(run.draft);
+                          setTab(run.nextTab);
+                        }}
+                      >
+                        回填草稿
+                      </button>
+                    ) : null}
+                    {run.status === "queued" || run.status === "staged" ? (
+                      <button
+                        type="button"
+                        className="desktop-workspace-shell__hero-action"
+                        onClick={() => {
+                          startWorkflowRun(run.id);
+                          setCommandDraft(run.draft);
+                          setTab(run.nextTab);
+                        }}
+                      >
+                        启动
+                      </button>
+                    ) : null}
+                    {run.status === "in-progress" ? (
+                      <button
+                        type="button"
+                        className="desktop-workspace-shell__hero-action"
+                        onClick={() => completeWorkflowRun(run.id)}
+                      >
+                        标记完成
+                      </button>
+                    ) : null}
+                  </div>
+                </article>
+              ))}
             </div>
           </section>
         ) : null}
@@ -761,6 +934,9 @@ function DesktopChatWorkspace() {
               <button type="button" className="desktop-workspace-shell__hero-action" onClick={() => retryRun(recentFailedRun)}>
                 一键重试
               </button>
+              <button type="button" className="desktop-workspace-shell__hero-action" onClick={() => openExecutionRun(recentFailedRun.id)}>
+                看失败轨迹
+              </button>
               <button type="button" className="desktop-workspace-shell__hero-action" onClick={() => handoffToChat(recentFailedRun.sessionId)}>
                 回到聊天接管
               </button>
@@ -774,6 +950,11 @@ function DesktopChatWorkspace() {
             <div className="desktop-workspace-shell__rail-copy">
               {desktopInputSession.message || "当前桌面交互需要你人工确认后再继续。"}
             </div>
+            <div className="desktop-workspace-shell__rail-run-meta">
+              {desktopInputSession.lastAction ? <span>动作 {desktopInputSession.lastAction}</span> : null}
+              {desktopInputSession.target ? <span>目标 {desktopInputSession.target}</span> : null}
+              {desktopInputSession.lastIntent ? <span>意图已记录</span> : null}
+            </div>
             <div className="desktop-workspace-shell__rail-actions">
               <button
                 type="button"
@@ -781,6 +962,13 @@ function DesktopChatWorkspace() {
                 onClick={() => handoffToChat(desktopInputSession.sessionId)}
               >
                 回到聊天接管
+              </button>
+              <button
+                type="button"
+                className="desktop-workspace-shell__hero-action"
+                onClick={continueAfterTakeover}
+              >
+                验证完成继续
               </button>
               {desktopInputSession.executionRunId ? (
                 <button
@@ -791,9 +979,34 @@ function DesktopChatWorkspace() {
                   看当前执行
                 </button>
               ) : null}
+              <button
+                type="button"
+                className="desktop-workspace-shell__hero-action"
+                onClick={clearDesktopInputSession}
+              >
+                清空接管
+              </button>
             </div>
           </section>
         ) : null}
+
+        <section className="desktop-workspace-shell__rail-card">
+          <div className="desktop-workspace-shell__section-eyebrow">桌面诊断</div>
+          <div className="desktop-workspace-shell__rail-copy">
+            当下一个动作依赖本机程序、截图定位或人工验证时，从这里直接跳到对应控制面板，不再在聊天页里来回找入口。
+          </div>
+          <div className="desktop-workspace-shell__rail-actions is-inline">
+            <button type="button" className="desktop-workspace-shell__hero-action" onClick={() => openControlSection("desktop")}>
+              桌面程序中心
+            </button>
+            <button type="button" className="desktop-workspace-shell__hero-action" onClick={() => openControlSection("execution")}>
+              执行追踪
+            </button>
+            <button type="button" className="desktop-workspace-shell__hero-action" onClick={() => openControlSection("artifacts")}>
+              产物面板
+            </button>
+          </div>
+        </section>
 
         <section className="desktop-workspace-shell__rail-card">
           <div className="desktop-workspace-shell__section-eyebrow">推荐起手式</div>
@@ -1662,6 +1875,40 @@ function getMobileExecutionLabel(status: ReturnType<typeof useStore.getState>["e
       return "已完成";
     case "failed":
       return "已失败";
+    default:
+      return status;
+  }
+}
+
+function getVerificationLabel(status: NonNullable<ReturnType<typeof useStore.getState>["executionRuns"][number]["verificationStatus"]>) {
+  switch (status) {
+    case "idle":
+      return "待验证";
+    case "running":
+      return "验证中";
+    case "passed":
+      return "通过";
+    case "failed":
+      return "失败";
+    case "skipped":
+      return "跳过";
+    default:
+      return status;
+  }
+}
+
+function getWorkflowStatusLabel(status: ReturnType<typeof useStore.getState>["workflowRuns"][number]["status"]) {
+  switch (status) {
+    case "queued":
+      return "待排队";
+    case "staged":
+      return "已暂存";
+    case "in-progress":
+      return "进行中";
+    case "completed":
+      return "已完成";
+    case "archived":
+      return "已归档";
     default:
       return status;
   }

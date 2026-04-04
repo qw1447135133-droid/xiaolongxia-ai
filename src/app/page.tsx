@@ -30,7 +30,6 @@ import { DesktopRuntimeBridge } from "@/components/DesktopRuntimeBridge";
 import { ExecutionVerificationBridge } from "@/components/ExecutionVerificationBridge";
 import { ControlCenter } from "@/components/ControlCenter";
 import { ExecutionCenter } from "@/components/ExecutionCenter";
-import { PluginContributionPanel } from "@/components/PluginContributionPanel";
 import { ProjectHubCard } from "@/components/ProjectHubCard";
 import { WorkspaceDesk } from "@/components/WorkspaceDesk";
 import {
@@ -1427,286 +1426,388 @@ function DashboardTab({ onOpenTab }: { onOpenTab: (tab: AppTab) => void }) {
       scopedTickets,
     ],
   );
+  const latestRun = scopedExecutionRuns[0] ?? null;
+  const latestOperation = scopedOperationLogs[0] ?? null;
+  const deskContextCount = workspacePinnedPreviews.length + scopedDeskNotes.length + scopedProjectMemories.length;
+  const supervisionModeLabel = automationPaused
+    ? "已暂停"
+    : automationMode === "manual"
+      ? "人工"
+      : automationMode === "supervised"
+        ? "监督"
+        : "自治";
+  const [homeRailFeedback, setHomeRailFeedback] = useState<string | null>(null);
+
+  const approveDashboardItem = (item: BusinessAutomationQueueItem) => {
+    setBusinessApprovalDecision({
+      entityType: item.entityType,
+      entityId: item.entityId,
+      status: "approved",
+    });
+
+    const canAutoDispatch =
+      wsStatus === "connected"
+      && !automationPaused
+      && automationMode !== "manual"
+      && remoteSupervisorEnabled
+      && item.decision.autoRunEligible;
+
+    if (!canAutoDispatch) {
+      const blockedReason =
+        wsStatus !== "connected"
+          ? "远程通道还没连上"
+          : automationPaused
+            ? "自动化当前已暂停"
+            : automationMode === "manual"
+              ? "当前仍是人工模式"
+              : !remoteSupervisorEnabled
+                ? "远程值守当前关闭"
+                : "量化结果仍建议先观察";
+
+      setHomeRailFeedback(`已批准 ${item.title}，但这次没有自动派发，因为${blockedReason}。`);
+      return;
+    }
+
+    const { ok, executionRunId } = sendExecutionDispatch({
+      instruction: item.instruction,
+      source: "remote-ops",
+      includeUserMessage: true,
+      taskDescription: item.taskDescription,
+      includeActiveProjectMemory: true,
+    });
+
+    recordBusinessOperation({
+      entityType: item.entityType,
+      entityId: item.entityId,
+      eventType: "dispatch",
+      trigger: "manual",
+      status: ok ? "sent" : "blocked",
+      title: item.title,
+      detail: ok
+        ? "人工在桌面首页监督侧轨批准后立即派发了该业务对象。"
+        : "人工在桌面首页监督侧轨批准了该业务对象，但发送链路未成功建立。",
+      executionRunId: ok ? executionRunId : undefined,
+    });
+
+    if (ok && executionRunId) {
+      setActiveExecutionRun(executionRunId);
+      setHomeRailFeedback(`已批准 ${item.title}，并已直接送入执行链路。`);
+      return;
+    }
+
+    setHomeRailFeedback(`已批准 ${item.title}，但派发链路没有成功建立。`);
+  };
+
+  const rejectDashboardItem = (item: BusinessAutomationQueueItem) => {
+    setBusinessApprovalDecision({
+      entityType: item.entityType,
+      entityId: item.entityId,
+      status: "rejected",
+    });
+    setHomeRailFeedback(`已驳回 ${item.title}，审计记录会保留这次处理。`);
+  };
+
+  const retryLatestExecution = (run: NonNullable<typeof latestRun>) => {
+    const { ok, executionRunId } = sendExecutionDispatch({
+      instruction: run.instruction,
+      source: run.source,
+      includeUserMessage: true,
+      taskDescription: `[重试执行] ${run.instruction}`,
+      includeActiveProjectMemory: true,
+    });
+
+    if (ok && executionRunId) {
+      setActiveExecutionRun(executionRunId);
+      setHomeRailFeedback("已重新发起这条执行指令。");
+      return;
+    }
+
+    setHomeRailFeedback("重试已发起，但发送链路没有成功建立。");
+  };
 
   return (
     <div className="ios-home">
-      <section className="ios-home__hero">
-        <div className="ios-home__eyebrow">A ChatGPT-like command center</div>
-        <h1 className="ios-home__title">今天想让小龙虾团队帮你完成什么？</h1>
-        <p className="ios-home__copy">
-          主界面只保留一个清晰的对话入口，其他工具和状态都收进侧栏。你可以像用 ChatGPT 一样先说目标，再从工作区、会议、控制台继续深挖。
-        </p>
-        <p className="ios-home__copy" style={{ marginTop: 6 }}>
-          当前项目: {activeSession ? getSessionProjectLabel(activeSession) : "General"}
-        </p>
-        {activeTemplate && activeSurface ? (
-          <div
-            style={{
-              display: "flex",
-              gap: 10,
-              alignItems: "center",
-              flexWrap: "wrap",
-              marginTop: 14,
+      <div className="ios-home__workspace">
+        <div className="ios-home__main">
+          <section className="ios-home__hero">
+            <div className="ios-home__eyebrow">A ChatGPT-like command center</div>
+            <h1 className="ios-home__title">今天想让小龙虾团队帮你完成什么？</h1>
+            <p className="ios-home__copy">
+              主界面只保留一个清晰的对话入口，其他工具和状态都收进侧栏。你可以像用 ChatGPT 一样先说目标，再从工作区、会议、控制台继续深挖。
+            </p>
+            <p className="ios-home__copy" style={{ marginTop: 6 }}>
+              当前项目: {activeSession ? getSessionProjectLabel(activeSession) : "General"}
+            </p>
+            {activeTemplate && activeSurface ? (
+              <div
+                style={{
+                  display: "flex",
+                  gap: 10,
+                  alignItems: "center",
+                  flexWrap: "wrap",
+                  marginTop: 14,
+                }}
+              >
+                <span
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    padding: "6px 12px",
+                    borderRadius: 999,
+                    border: "1px solid rgba(var(--accent-rgb), 0.24)",
+                    background: "rgba(var(--accent-rgb), 0.08)",
+                    color: "var(--accent)",
+                    fontSize: 12,
+                    fontWeight: 700,
+                  }}
+                >
+                  当前团队模式 · {activeTemplate.label}
+                </span>
+                <span style={{ color: "var(--text-muted)", fontSize: 12, lineHeight: 1.7 }}>
+                  {activeSurface.statusCopy}
+                </span>
+              </div>
+            ) : null}
+
+            <div className="ios-home__composer">
+              <CommandInput
+                variant="panel"
+                title="像 ChatGPT 一样开始"
+                hint="直接提问、下发任务，或把工作区上下文塞进来。主页只负责开始，深入工作去左侧功能区。"
+              />
+            </div>
+
+            <div className="ios-home__prompt-row">
+              {homePrompts.map(prompt => (
+                <button
+                  key={prompt}
+                  type="button"
+                  className="ios-home__prompt"
+                  onClick={() => {
+                    const { setCommandDraft, setTab } = useStore.getState();
+                    setCommandDraft(prompt);
+                    setTab("tasks");
+                  }}
+                >
+                  {prompt}
+                </button>
+              ))}
+            </div>
+          </section>
+
+          <section className="ios-home__focus-section">
+            <div className="ios-home__focus-head">
+              <div>
+                <div className="ios-home__eyebrow">Continue Working</div>
+                <div className="ios-home__copy" style={{ margin: 0 }}>
+                  首页只保留最值得继续推进的入口，其余状态交给右侧监督侧轨。
+                </div>
+              </div>
+            </div>
+
+            <div className="ios-home__grid ios-home__grid--compact">
+              {businessFocusCards.slice(0, 2).map(card => (
+                <ActionCard
+                  key={card.id}
+                  eyebrow={card.eyebrow}
+                  title={card.title}
+                  copy={card.copy}
+                  actionLabel={card.actionLabel}
+                  onClick={() => {
+                    if (card.tab === "settings" && card.controlCenterSectionId) {
+                      openControlCenterSection(card.controlCenterSectionId);
+                      return;
+                    }
+                    onOpenTab(card.tab);
+                  }}
+                />
+              ))}
+              {activeTemplate && activeSurface
+                ? activeSurface.quickActions.slice(0, 2).map(action => (
+                  <ActionCard
+                    key={action.id}
+                    eyebrow={action.eyebrow}
+                    title={action.title}
+                    copy={action.copy}
+                    actionLabel={action.actionLabel}
+                    onClick={() => {
+                      if (action.tab === "settings" && action.controlCenterSectionId) {
+                        openControlCenterSection(action.controlCenterSectionId);
+                        return;
+                      }
+                      onOpenTab(action.tab);
+                    }}
+                  />
+                ))
+                : null}
+            </div>
+          </section>
+
+          <section className="ios-home__focus-section">
+            <div className="ios-home__focus-head">
+              <div>
+                <div className="ios-home__eyebrow">Core Surfaces</div>
+                <div className="ios-home__copy" style={{ margin: 0 }}>
+                  需要深入处理时，从这里切到具体工作面，不在首页堆更多仪表盘。
+                </div>
+              </div>
+            </div>
+
+            <div className="ios-home__grid ios-home__grid--compact">
+              <ActionCard
+                eyebrow="Chat"
+                title="进入对话页"
+                copy="把输入框固定到底部，中间专心看对话，就像 ChatGPT 主聊天页。"
+                actionLabel="打开聊天"
+                onClick={() => onOpenTab("tasks")}
+              />
+              <ActionCard
+                eyebrow="Desk"
+                title="打开工作区"
+                copy="文件预览、上下文包、Desk Notes 都还在，但不再抢占主聊天空间。"
+                actionLabel="进入工作区"
+                onClick={() => onOpenTab("workspace")}
+              />
+              <ActionCard
+                eyebrow="Meet"
+                title="发起团队会议"
+                copy="当任务需要多角色辩论时，直接切到会议页，不打断聊天页心智。"
+                actionLabel="打开会议"
+                onClick={() => onOpenTab("meeting")}
+              />
+              <ActionCard
+                eyebrow="Control"
+                title="配置与扩展"
+                copy="模型、插件、技能、工作流模板都放进控制台，侧边统一收纳。"
+                actionLabel="打开控制台"
+                onClick={() => onOpenTab("settings")}
+              />
+            </div>
+          </section>
+        </div>
+
+        <aside className="ios-home__rail">
+          <MobileSupervisionPanel
+            approvalCount={scopedApprovals.filter(item => item.status === "pending").length}
+            activeRunCount={scopedExecutionRuns.filter(run => run.status === "analyzing" || run.status === "running").length}
+            latestRun={scopedExecutionRuns[0] ?? null}
+            latestOperation={scopedOperationLogs[0] ?? null}
+            approvalItems={mobileApprovalQueue.slice(0, 3)}
+            automationPaused={automationPaused}
+            automationMode={automationMode}
+            remoteSupervisorEnabled={remoteSupervisorEnabled}
+            onApproveItem={(item) => {
+              setBusinessApprovalDecision({
+                entityType: item.entityType,
+                entityId: item.entityId,
+                status: "approved",
+              });
+
+              const canAutoDispatch =
+                wsStatus === "connected"
+                && !automationPaused
+                && automationMode !== "manual"
+                && remoteSupervisorEnabled
+                && item.decision.autoRunEligible;
+
+              if (!canAutoDispatch) {
+                const blockedReason =
+                  wsStatus !== "connected"
+                    ? "远程通道还没连上"
+                    : automationPaused
+                      ? "自动化当前已暂停"
+                      : automationMode === "manual"
+                        ? "当前仍是人工模式"
+                        : !remoteSupervisorEnabled
+                          ? "远程值守当前关闭"
+                          : "量化结果仍建议先观察";
+
+                return {
+                  message: `已批准 ${item.title}，但这次没有自动派发，因为${blockedReason}。`,
+                };
+              }
+
+              const { ok, executionRunId } = sendExecutionDispatch({
+                instruction: item.instruction,
+                source: "remote-ops",
+                includeUserMessage: true,
+                taskDescription: item.taskDescription,
+                includeActiveProjectMemory: true,
+              });
+
+              recordBusinessOperation({
+                entityType: item.entityType,
+                entityId: item.entityId,
+                eventType: "dispatch",
+                trigger: "manual",
+                status: ok ? "sent" : "blocked",
+                title: item.title,
+                detail: ok
+                  ? "人工在移动监督面板批准后立即派发了该业务对象。"
+                  : "人工在移动监督面板批准了该业务对象，但发送链路未成功建立。",
+                executionRunId: ok ? executionRunId : undefined,
+              });
+
+              if (ok && executionRunId) {
+                setActiveExecutionRun(executionRunId);
+                return {
+                  message: `已批准 ${item.title}，并已直接送入执行链路。`,
+                  executionRunId,
+                };
+              }
+
+              return {
+                message: `已批准 ${item.title}，但派发链路没有成功建立。`,
+              };
             }}
-          >
-            <span
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                padding: "6px 12px",
-                borderRadius: 999,
-                border: "1px solid rgba(var(--accent-rgb), 0.24)",
-                background: "rgba(var(--accent-rgb), 0.08)",
-                color: "var(--accent)",
-                fontSize: 12,
-                fontWeight: 700,
-              }}
-            >
-              当前团队模式 · {activeTemplate.label}
-            </span>
-            <span style={{ color: "var(--text-muted)", fontSize: 12, lineHeight: 1.7 }}>
-              {activeSurface.statusCopy}
-            </span>
-          </div>
-        ) : null}
+            onRejectItem={(item) => setBusinessApprovalDecision({
+              entityType: item.entityType,
+              entityId: item.entityId,
+              status: "rejected",
+            })}
+            onToggleAutomationPaused={() => setAutomationPaused(!automationPaused)}
+            onToggleRemoteSupervisor={() => setRemoteSupervisorEnabled(!remoteSupervisorEnabled)}
+            onOpenRemoteOps={() => openControlCenterSection("remote")}
+            onOpenExecution={() => openControlCenterSection("execution")}
+            onOpenChat={() => onOpenTab("tasks")}
+            onRetryExecution={(run) => {
+              const { ok, executionRunId } = sendExecutionDispatch({
+                instruction: run.instruction,
+                source: run.source,
+                includeUserMessage: true,
+                taskDescription: `[重试执行] ${run.instruction}`,
+                includeActiveProjectMemory: true,
+              });
 
-        <div className="ios-home__composer">
-          <CommandInput
-            variant="panel"
-            title="像 ChatGPT 一样开始"
-            hint="直接提问、下发任务，或把工作区上下文塞进来。主页只负责开始，深入工作去左侧功能区。"
+              if (ok && executionRunId) {
+                setActiveExecutionRun(executionRunId);
+                return {
+                  message: "已重新发起这条执行指令。",
+                  executionRunId,
+                };
+              }
+
+              return {
+                message: "重试已发起，但发送链路没有成功建立。",
+              };
+            }}
           />
-        </div>
 
-        <div className="ios-home__prompt-row">
-          {homePrompts.map(prompt => (
-            <button
-              key={prompt}
-              type="button"
-              className="ios-home__prompt"
-              onClick={() => {
-                const { setCommandDraft, setTab } = useStore.getState();
-                setCommandDraft(prompt);
-                setTab("tasks");
-              }}
-            >
-              {prompt}
-            </button>
-          ))}
-        </div>
-      </section>
-
-      <MobileSupervisionPanel
-        approvalCount={scopedApprovals.filter(item => item.status === "pending").length}
-        activeRunCount={scopedExecutionRuns.filter(run => run.status === "analyzing" || run.status === "running").length}
-        latestRun={scopedExecutionRuns[0] ?? null}
-        latestOperation={scopedOperationLogs[0] ?? null}
-        approvalItems={mobileApprovalQueue.slice(0, 3)}
-        automationPaused={automationPaused}
-        automationMode={automationMode}
-        remoteSupervisorEnabled={remoteSupervisorEnabled}
-        onApproveItem={(item) => {
-          setBusinessApprovalDecision({
-            entityType: item.entityType,
-            entityId: item.entityId,
-            status: "approved",
-          });
-
-          const canAutoDispatch =
-            wsStatus === "connected"
-            && !automationPaused
-            && automationMode !== "manual"
-            && remoteSupervisorEnabled
-            && item.decision.autoRunEligible;
-
-          if (!canAutoDispatch) {
-            const blockedReason =
-              wsStatus !== "connected"
-                ? "远程通道还没连上"
-                : automationPaused
-                  ? "自动化当前已暂停"
-                  : automationMode === "manual"
-                    ? "当前仍是人工模式"
-                    : !remoteSupervisorEnabled
-                      ? "远程值守当前关闭"
-                      : "量化结果仍建议先观察";
-
-            return {
-              message: `已批准 ${item.title}，但这次没有自动派发，因为${blockedReason}。`,
-            };
-          }
-
-          const { ok, executionRunId } = sendExecutionDispatch({
-            instruction: item.instruction,
-            source: "remote-ops",
-            includeUserMessage: true,
-            taskDescription: item.taskDescription,
-            includeActiveProjectMemory: true,
-          });
-
-          recordBusinessOperation({
-            entityType: item.entityType,
-            entityId: item.entityId,
-            eventType: "dispatch",
-            trigger: "manual",
-            status: ok ? "sent" : "blocked",
-            title: item.title,
-            detail: ok
-              ? "人工在移动监督面板批准后立即派发了该业务对象。"
-              : "人工在移动监督面板批准了该业务对象，但发送链路未成功建立。",
-            executionRunId: ok ? executionRunId : undefined,
-          });
-
-          if (ok && executionRunId) {
-            setActiveExecutionRun(executionRunId);
-            return {
-              message: `已批准 ${item.title}，并已直接送入执行链路。`,
-              executionRunId,
-            };
-          }
-
-          return {
-            message: `已批准 ${item.title}，但派发链路没有成功建立。`,
-          };
-        }}
-        onRejectItem={(item) => setBusinessApprovalDecision({
-          entityType: item.entityType,
-          entityId: item.entityId,
-          status: "rejected",
-        })}
-        onToggleAutomationPaused={() => setAutomationPaused(!automationPaused)}
-        onToggleRemoteSupervisor={() => setRemoteSupervisorEnabled(!remoteSupervisorEnabled)}
-        onOpenRemoteOps={() => openControlCenterSection("remote")}
-        onOpenExecution={() => openControlCenterSection("execution")}
-        onOpenChat={() => onOpenTab("tasks")}
-        onRetryExecution={(run) => {
-          const { ok, executionRunId } = sendExecutionDispatch({
-            instruction: run.instruction,
-            source: run.source,
-            includeUserMessage: true,
-            taskDescription: `[重试执行] ${run.instruction}`,
-            includeActiveProjectMemory: true,
-          });
-
-          if (ok && executionRunId) {
-            setActiveExecutionRun(executionRunId);
-            return {
-              message: "已重新发起这条执行指令。",
-              executionRunId,
-            };
-          }
-
-          return {
-            message: "重试已发起，但发送链路没有成功建立。",
-          };
-        }}
-      />
-
-      <section className="ios-home__status">
-        <ProjectHubCard />
-        <StatusCard label="运行中角色" value={String(runningCount)} hint="团队当前正在处理的任务数量" />
-        <StatusCard label="已完成回复" value={String(completedCount)} hint="本轮会话里已经产出的有效结果" />
-        <StatusCard label="工作流 Run" value={String(workflowRuns.length)} hint="可复用的编排入口与历史记录" />
-        <StatusCard label="Desk 上下文" value={`${workspacePinnedPreviews.length + scopedDeskNotes.length + scopedProjectMemories.length}`} hint="当前项目下的固定引用、异步笔记和项目记忆总量" />
-      </section>
-
-      {businessFocusCards.length > 0 ? (
-        <section style={{ display: "grid", gap: 12 }}>
-          <div style={{ display: "grid", gap: 4 }}>
-            <div className="ios-home__eyebrow">Business Focus</div>
-            <div className="ios-home__copy" style={{ margin: 0 }}>
-              {activeTemplate ? `${activeTemplate.label} 当前更应该盯这些业务对象。` : "当前项目下最值得关注的业务对象。"}
+          <section className="ios-home__rail-panel">
+            <ProjectHubCard compact />
+            <div className="ios-home__rail-metrics">
+              <StatusCard label="运行中角色" value={String(runningCount)} hint="团队当前正在处理的任务数量" />
+              <StatusCard label="已完成回复" value={String(completedCount)} hint="本轮会话里已经产出的有效结果" />
+              <StatusCard label="工作流 Run" value={String(workflowRuns.length)} hint="可复用的编排入口与历史记录" />
+              <StatusCard label="Desk 上下文" value={`${workspacePinnedPreviews.length + scopedDeskNotes.length + scopedProjectMemories.length}`} hint="当前项目下的固定引用、异步笔记和项目记忆总量" />
             </div>
-          </div>
+          </section>
 
-          <div className="ios-home__grid">
-            {businessFocusCards.map(card => (
-              <ActionCard
-                key={card.id}
-                eyebrow={card.eyebrow}
-                title={card.title}
-                copy={card.copy}
-                actionLabel={card.actionLabel}
-                onClick={() => {
-                  if (card.tab === "settings" && card.controlCenterSectionId) {
-                    openControlCenterSection(card.controlCenterSectionId);
-                    return;
-                  }
-                  onOpenTab(card.tab);
-                }}
-              />
-            ))}
-          </div>
-        </section>
-      ) : null}
-
-      {activeTemplate && activeSurface ? (
-        <section style={{ display: "grid", gap: 12 }}>
-          <div style={{ display: "grid", gap: 4 }}>
-            <div className="ios-home__eyebrow">Recommended Flow</div>
-            <div className="ios-home__copy" style={{ margin: 0 }}>
-              {activeTemplate.label} 下，建议优先使用下面这些入口推进工作。
-            </div>
-          </div>
-
-          <div className="ios-home__grid">
-            {activeSurface.quickActions.map(action => (
-              <ActionCard
-                key={action.id}
-                eyebrow={action.eyebrow}
-                title={action.title}
-                copy={action.copy}
-                actionLabel={action.actionLabel}
-                onClick={() => {
-                  if (action.tab === "settings" && action.controlCenterSectionId) {
-                    openControlCenterSection(action.controlCenterSectionId);
-                    return;
-                  }
-                  onOpenTab(action.tab);
-                }}
-              />
-            ))}
-          </div>
-        </section>
-      ) : null}
-
-      <section className="ios-home__grid">
-        <ActionCard
-          eyebrow="Chat"
-          title="进入对话页"
-          copy="把输入框固定到底部，中间专心看对话，就像 ChatGPT 主聊天页。"
-          actionLabel="打开聊天"
-          onClick={() => onOpenTab("tasks")}
-        />
-        <ActionCard
-          eyebrow="Desk"
-          title="打开工作区"
-          copy="文件预览、上下文包、Desk Notes 都还在，但不再抢占主聊天空间。"
-          actionLabel="进入工作区"
-          onClick={() => onOpenTab("workspace")}
-        />
-        <ActionCard
-          eyebrow="Meet"
-          title="发起团队会议"
-          copy="当任务需要多角色辩论时，直接切到会议页，不打断聊天页心智。"
-          actionLabel="打开会议"
-          onClick={() => onOpenTab("meeting")}
-        />
-        <ActionCard
-          eyebrow="Control"
-          title="配置与扩展"
-          copy="模型、插件、技能、工作流模板都放进控制台，侧边统一收纳。"
-          actionLabel="打开控制台"
-          onClick={() => onOpenTab("settings")}
-        />
-      </section>
-
-      <div className="ios-home__plugins">
-        <PluginContributionPanel />
-      </div>
-
-      <div className="ios-home__plugins">
-        <ExecutionCenter compact />
+          <section className="ios-home__rail-panel ios-home__rail-panel--compact">
+            <div className="ios-home__eyebrow">Execution Snapshot</div>
+            <ExecutionCenter compact />
+          </section>
+        </aside>
       </div>
     </div>
   );

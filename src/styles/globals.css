@@ -2859,6 +2859,40 @@ body::after {
   text-align: center;
 }
 
+.ios-home__workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(320px, 0.9fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.ios-home__main,
+.ios-home__rail {
+  display: grid;
+  gap: 18px;
+  min-width: 0;
+}
+
+.ios-home__focus-section,
+.ios-home__rail-panel {
+  border-radius: 32px;
+  border: 1px solid rgba(255,255,255,0.72);
+  background: rgba(255,255,255,0.52);
+  backdrop-filter: blur(26px);
+  box-shadow: var(--shadow);
+  padding: 24px;
+}
+
+.ios-home__rail-panel--compact {
+  padding: 18px;
+}
+
+.ios-home__focus-head {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+
 .ios-home__title {
   max-width: 780px;
   font-size: clamp(34px, 4.2vw, 62px);
@@ -2951,6 +2985,10 @@ body::after {
   gap: 14px;
 }
 
+.ios-home__grid--compact {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
 .ios-home__action-card {
   display: grid;
   gap: 10px;
@@ -2964,6 +3002,13 @@ body::after {
 
 .ios-home__plugins {
   padding: 24px;
+}
+
+.ios-home__rail-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 14px;
 }
 
 .ios-chat-page {
@@ -5411,6 +5456,10 @@ body.runtime-electron .desktop-workspace-shell__rail-prompt:hover {
     gap: 16px;
   }
 
+  .ios-home__workspace {
+    grid-template-columns: 1fr;
+  }
+
   .ios-home__status,
   .ios-home__grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -5461,6 +5510,8 @@ body.runtime-electron .desktop-workspace-shell__rail-prompt:hover {
   .ios-home__prompt-row,
   .ios-home__status,
   .ios-home__grid,
+  .ios-home__grid--compact,
+  .ios-home__rail-metrics,
   .ios-chat-page__empty-actions,
   .ios-home__mobile-supervision-grid {
     grid-template-columns: 1fr;

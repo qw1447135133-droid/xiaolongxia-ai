@@ -21,7 +21,7 @@ type WsMessage =
   | { type: "pong" }
   | { type: "desktop_launch_request"; requestId: string; payload: NativeAppLaunchPayload; executionRunId?: string; taskId?: string; sessionId?: string }
   | { type: "desktop_input_request"; requestId: string; payload: DesktopInputControlPayload; executionRunId?: string; taskId?: string; sessionId?: string }
-  | { type: "desktop_capture_request"; requestId: string; payload?: DesktopScreenshotPayload }
+  | { type: "desktop_capture_request"; requestId: string; payload?: DesktopScreenshotPayload; executionRunId?: string; sessionId?: string }
   | { type: "desktop_installed_apps_request"; requestId: string; payload?: { forceRefresh?: boolean } }
   | { type: "agent_status"; agentId: AgentId; status: AgentStatus; currentTask?: string; executionRunId?: string }
   | { type: "task_add"; task: Task; executionRunId?: string }
@@ -61,13 +61,14 @@ function getStore() {
 
 function syncSettingsToSocket() {
   if (_ws?.readyState !== WebSocket.OPEN) return;
-  const { providers, agentConfigs, platformConfigs, userNickname, desktopProgramSettings } = getStore();
+  const { providers, agentConfigs, platformConfigs, userNickname, desktopProgramSettings, hermesDispatchSettings } = getStore();
   _ws.send(JSON.stringify({
     type: "settings_sync",
     providers,
     agentConfigs,
     userNickname,
     desktopProgramSettings,
+    hermesDispatchSettings,
     runtime: {
       isElectron: Boolean(window.electronAPI?.isElectron),
       canLaunchNativeApplications: Boolean(window.electronAPI?.launchNativeApplication),
@@ -164,6 +165,76 @@ function buildDesktopVerificationResumeInstruction(meta: {
     .join("\n");
 }
 
+function appendDesktopExecutionEvent(meta: {
+  executionRunId?: string;
+  sessionId?: string;
+  title: string;
+  detail: string;
+  type?: "system" | "error";
+}) {
+  if (!meta.executionRunId) return;
+  const store = getStore();
+  store.updateExecutionRun({
+    id: meta.executionRunId,
+    sessionId: meta.sessionId,
+    timestamp: Date.now(),
+    event: {
+      id: `evt-desktop-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      type: meta.type ?? "system",
+      title: meta.title,
+      detail: meta.detail,
+      timestamp: Date.now(),
+    },
+  });
+}
+
+function updateExecutionRecovery(meta: {
+  executionRunId?: string;
+  sessionId?: string;
+  status?: ExecutionRunStatus;
+  recoveryState: "none" | "retryable" | "manual-required" | "blocked";
+  lastFailureReason?: string;
+  lastRecoveryHint?: string;
+}) {
+  if (!meta.executionRunId) return;
+  const store = getStore();
+  store.updateExecutionRun({
+    id: meta.executionRunId,
+    sessionId: meta.sessionId,
+    ...(meta.status ? { status: meta.status } : {}),
+    recoveryState: meta.recoveryState,
+    lastFailureReason: meta.lastFailureReason,
+    lastRecoveryHint: meta.lastRecoveryHint,
+    timestamp: Date.now(),
+  });
+}
+
+function recordDesktopBusinessOperation(meta: {
+  executionRunId?: string;
+  title: string;
+  detail: string;
+  status: "completed" | "failed" | "blocked";
+  failureReason?: string;
+}) {
+  if (!meta.executionRunId) return;
+  const store = getStore();
+  const linkedRun = store.executionRuns.find(run => run.id === meta.executionRunId) ?? null;
+  if (!linkedRun || linkedRun.entityType !== "contentTask" || !linkedRun.entityId) return;
+
+  store.recordBusinessOperation({
+    entityType: "contentTask",
+    entityId: linkedRun.entityId,
+    eventType: "desktop",
+    trigger: "auto",
+    status: meta.status,
+    title: meta.title,
+    detail: meta.detail,
+    executionRunId: linkedRun.id,
+    workflowRunId: linkedRun.workflowRunId,
+    failureReason: meta.failureReason,
+  });
+}
+
 async function handleDesktopInputRequest(msg: Extract<WsMessage, { type: "desktop_input_request" }>) {
   const {
     desktopProgramSettings,
@@ -193,11 +264,35 @@ async function handleDesktopInputRequest(msg: Extract<WsMessage, { type: "deskto
     executionRunId: msg.executionRunId,
     taskId: msg.taskId,
     resumeInstruction: undefined,
+    retryStrategy: undefined,
+    retrySuggestions: undefined,
+    cursor: undefined,
     message: "数字员工正在接管鼠标键盘。",
   });
 
   if (!window.electronAPI?.controlDesktopInput) {
     const error = "当前客户端不是 Electron 桌面运行态，无法执行鼠标键盘接管。";
+    appendDesktopExecutionEvent({
+      executionRunId: msg.executionRunId,
+      sessionId: msg.sessionId,
+      title: "桌面接管失败",
+      detail: error,
+      type: "error",
+    });
+    recordDesktopBusinessOperation({
+      executionRunId: msg.executionRunId,
+      title: "桌面接管失败",
+      detail: error,
+      status: "failed",
+      failureReason: error,
+    });
+    updateExecutionRecovery({
+      executionRunId: msg.executionRunId,
+      sessionId: msg.sessionId,
+      recoveryState: "blocked",
+      lastFailureReason: error,
+      lastRecoveryHint: "当前运行环境没有桌面接管能力，请切回 Electron 桌面端或回到聊天接管。",
+    });
     setDesktopInputSession({
       state: "error",
       source: "agent",
@@ -207,6 +302,9 @@ async function handleDesktopInputRequest(msg: Extract<WsMessage, { type: "deskto
       sessionId: msg.sessionId,
       executionRunId: msg.executionRunId,
       taskId: msg.taskId,
+      retryStrategy: undefined,
+      retrySuggestions: undefined,
+      cursor: undefined,
       message: error,
     });
     sendResult({ ok: false, error });
@@ -239,6 +337,9 @@ async function handleDesktopInputRequest(msg: Extract<WsMessage, { type: "deskto
     if (result.manualRequired) {
       setAutomationPaused(true);
     }
+    const resultDetail = result.manualRequired
+      ? `${result.message} 已切到人工验证，目标 ${msg.payload.target || "当前桌面"}。`
+      : `${result.message}${retrySuggestionMessage}`;
     setDesktopInputSession({
       state: result.manualRequired ? "manual-required" : "executed",
       source: "agent",
@@ -249,13 +350,63 @@ async function handleDesktopInputRequest(msg: Extract<WsMessage, { type: "deskto
       executionRunId: msg.executionRunId,
       taskId: msg.taskId,
       resumeInstruction,
+      retryStrategy: result.retryStrategy,
+      retrySuggestions: result.retrySuggestions,
+      cursor: result.cursor,
       message: result.manualRequired
         ? `${result.message} 已自动暂停自动化，待人工完成后可一键继续。`
-        : `${result.message}${retrySuggestionMessage}`,
+        : resultDetail,
+    });
+    appendDesktopExecutionEvent({
+      executionRunId: msg.executionRunId,
+      sessionId: msg.sessionId,
+      title: result.manualRequired ? "桌面接管转人工" : "桌面接管完成",
+      detail: result.manualRequired
+        ? `${resultDetail} 已生成人工续跑提示。`
+        : resultDetail,
+    });
+    recordDesktopBusinessOperation({
+      executionRunId: msg.executionRunId,
+      title: result.manualRequired ? "桌面接管转人工" : "桌面接管完成",
+      detail: result.manualRequired
+        ? `${resultDetail} 已生成人工续跑提示。`
+        : resultDetail,
+      status: result.manualRequired ? "blocked" : "completed",
+      failureReason: result.manualRequired ? "manual-verification-required" : undefined,
+    });
+    updateExecutionRecovery({
+      executionRunId: msg.executionRunId,
+      sessionId: msg.sessionId,
+      recoveryState: result.manualRequired ? "manual-required" : "none",
+      lastFailureReason: result.manualRequired ? "manual-verification-required" : undefined,
+      lastRecoveryHint: result.manualRequired
+        ? "桌面验证完成后可一键继续执行，或回到聊天手动接管。"
+        : undefined,
     });
     sendResult({ ok: true, result });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    appendDesktopExecutionEvent({
+      executionRunId: msg.executionRunId,
+      sessionId: msg.sessionId,
+      title: "桌面接管失败",
+      detail: message,
+      type: "error",
+    });
+    recordDesktopBusinessOperation({
+      executionRunId: msg.executionRunId,
+      title: "桌面接管失败",
+      detail: message,
+      status: "failed",
+      failureReason: message,
+    });
+    updateExecutionRecovery({
+      executionRunId: msg.executionRunId,
+      sessionId: msg.sessionId,
+      recoveryState: "retryable",
+      lastFailureReason: message,
+      lastRecoveryHint: "可优先尝试偏移重试，仍失败时回到聊天接管。",
+    });
     setDesktopInputSession({
       state: "error",
       source: "agent",
@@ -265,6 +416,9 @@ async function handleDesktopInputRequest(msg: Extract<WsMessage, { type: "deskto
       sessionId: msg.sessionId,
       executionRunId: msg.executionRunId,
       taskId: msg.taskId,
+      retryStrategy: undefined,
+      retrySuggestions: undefined,
+      cursor: undefined,
       message,
     });
     sendResult({ ok: false, error: message });
@@ -289,21 +443,53 @@ async function handleDesktopCaptureRequest(msg: Extract<WsMessage, { type: "desk
     focusDesktopControlPanel();
   }
 
+  appendDesktopExecutionEvent({
+    executionRunId: msg.executionRunId,
+    sessionId: msg.sessionId,
+    title: "开始抓取桌面截图",
+    detail: `目标 ${msg.payload?.target || "当前桌面"} · 用途 ${msg.payload?.intent || "桌面观察"}`,
+  });
+
   setDesktopScreenshot({
     status: "capturing",
     source: "agent",
     target: msg.payload?.target,
     intent: msg.payload?.intent,
+    sessionId: msg.sessionId,
+    executionRunId: msg.executionRunId,
     message: "数字员工正在抓取当前桌面截图。",
   });
 
   if (!window.electronAPI?.captureDesktopScreenshot) {
     const error = "当前客户端不是 Electron 桌面运行态，无法抓取桌面截图。";
+    appendDesktopExecutionEvent({
+      executionRunId: msg.executionRunId,
+      sessionId: msg.sessionId,
+      title: "桌面截图失败",
+      detail: error,
+      type: "error",
+    });
+    recordDesktopBusinessOperation({
+      executionRunId: msg.executionRunId,
+      title: "桌面截图失败",
+      detail: error,
+      status: "failed",
+      failureReason: error,
+    });
+    updateExecutionRecovery({
+      executionRunId: msg.executionRunId,
+      sessionId: msg.sessionId,
+      recoveryState: "blocked",
+      lastFailureReason: error,
+      lastRecoveryHint: "当前运行环境没有桌面截图能力，请切回 Electron 桌面端。",
+    });
     setDesktopScreenshot({
       status: "error",
       source: "agent",
       target: msg.payload?.target,
       intent: msg.payload?.intent,
+      sessionId: msg.sessionId,
+      executionRunId: msg.executionRunId,
       message: error,
     });
     sendResult({ ok: false, error });
@@ -312,25 +498,68 @@ async function handleDesktopCaptureRequest(msg: Extract<WsMessage, { type: "desk
 
   try {
     const result = await window.electronAPI.captureDesktopScreenshot(msg.payload);
+    const captureDetail = `已抓取桌面截图 ${result.width}x${result.height} · 目标 ${msg.payload?.target || "当前桌面"} · 用途 ${msg.payload?.intent || "桌面观察"}`;
     setDesktopScreenshot({
       status: "ready",
       source: "agent",
       target: msg.payload?.target,
       intent: msg.payload?.intent,
+      sessionId: msg.sessionId,
+      executionRunId: msg.executionRunId,
       imageDataUrl: result.dataUrl,
       width: result.width,
       height: result.height,
       format: result.format,
       message: result.message,
     });
+    appendDesktopExecutionEvent({
+      executionRunId: msg.executionRunId,
+      sessionId: msg.sessionId,
+      title: "桌面截图已就绪",
+      detail: captureDetail,
+    });
+    recordDesktopBusinessOperation({
+      executionRunId: msg.executionRunId,
+      title: "桌面截图已就绪",
+      detail: captureDetail,
+      status: "completed",
+    });
+    updateExecutionRecovery({
+      executionRunId: msg.executionRunId,
+      sessionId: msg.sessionId,
+      recoveryState: "none",
+    });
     sendResult({ ok: true, result });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    appendDesktopExecutionEvent({
+      executionRunId: msg.executionRunId,
+      sessionId: msg.sessionId,
+      title: "桌面截图失败",
+      detail: message,
+      type: "error",
+    });
+    recordDesktopBusinessOperation({
+      executionRunId: msg.executionRunId,
+      title: "桌面截图失败",
+      detail: message,
+      status: "failed",
+      failureReason: message,
+    });
+    updateExecutionRecovery({
+      executionRunId: msg.executionRunId,
+      sessionId: msg.sessionId,
+      recoveryState: "retryable",
+      lastFailureReason: message,
+      lastRecoveryHint: "可重新抓图确认当前界面，必要时回到聊天接管。",
+    });
     setDesktopScreenshot({
       status: "error",
       source: "agent",
       target: msg.payload?.target,
       intent: msg.payload?.intent,
+      sessionId: msg.sessionId,
+      executionRunId: msg.executionRunId,
       message,
     });
     sendResult({ ok: false, error: message });
@@ -402,6 +631,20 @@ function handleMessage(msg: WsMessage) {
         failedTasks: msg.failedTasks,
         completedAt: msg.completedAt,
         timestamp: msg.timestamp,
+        recoveryState:
+          msg.status === "completed"
+            ? "none"
+            : msg.status === "failed"
+              ? "retryable"
+              : undefined,
+        lastFailureReason:
+          msg.status === "failed" && msg.event?.type === "error"
+            ? msg.event.detail
+            : undefined,
+        lastRecoveryHint:
+          msg.status === "failed"
+            ? "可查看轨迹后重试，或回到聊天接管。"
+            : undefined,
         event: msg.event,
       });
       break;

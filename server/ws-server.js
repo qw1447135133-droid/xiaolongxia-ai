@@ -1,9 +1,10 @@
 import { WebSocketServer, WebSocket } from "ws";
 import { createServer } from "http";
-import { promises as fs, readFileSync, existsSync } from "fs";
+import { promises as fs, readFileSync, existsSync, readdirSync, statSync } from "fs";
 import { fileURLToPath } from "url";
-import { dirname, join } from "path";
+import { basename, dirname, join } from "path";
 import { spawn } from "child_process";
+import os from "os";
 import Anthropic from "@anthropic-ai/sdk";
 
 // ── 加载 .env.local（强制覆盖系统环境变量）──
@@ -48,6 +49,44 @@ process.on("unhandledRejection", (reason) => {
 
 const PORT = Number(process.env.WS_PORT || 3001);
 const clients = new Set();
+const DEFAULT_HERMES_TOOL_COMMANDS = {
+  planner: "codex",
+  codex: "codex",
+  claude: "claude",
+  gemini: "gemini",
+};
+const HERMES_TOOL_COMMAND_ENV_KEYS = {
+  planner: "HERMES_PLANNER_COMMAND",
+  codex: "HERMES_CODEX_COMMAND",
+  claude: "HERMES_CLAUDE_COMMAND",
+  gemini: "HERMES_GEMINI_COMMAND",
+};
+const DEFAULT_HERMES_DISPATCH_SETTINGS = {
+  activePlannerProfileId: "default",
+  plannerProfiles: [
+    {
+      id: "default",
+      label: "Default Brain",
+      sessionStateFile: "output/hermes-dispatch/planner-sessions/default.json",
+      description: "Default Hermes planner conversation.",
+      models: {},
+    },
+    {
+      id: "research",
+      label: "Research Brain",
+      sessionStateFile: "output/hermes-dispatch/planner-sessions/research.json",
+      description: "Separate planner context for research and discovery.",
+      models: {},
+    },
+    {
+      id: "scratch",
+      label: "Scratch Brain",
+      sessionStateFile: "output/hermes-dispatch/planner-sessions/scratch.json",
+      description: "Temporary planner context for experiments and dry runs.",
+      models: {},
+    },
+  ],
+};
 let settings = {
   providers: [],
   agentConfigs: {},
@@ -63,6 +102,7 @@ let settings = {
       requireManualTakeoverForVerification: true,
     },
   },
+  hermesDispatchSettings: DEFAULT_HERMES_DISPATCH_SETTINGS,
 };
 const hermesDispatchRuns = new Map();
 
@@ -120,9 +160,114 @@ function commandLocator() {
   return process.platform === "win32" ? "where" : "which";
 }
 
+function normalizeCommandValue(command) {
+  const trimmed = String(command || "").trim();
+  return trimmed.replace(/^"(.*)"$/, "$1");
+}
+
+function isExplicitCommandPath(command) {
+  const normalized = normalizeCommandValue(command);
+  return /[\\/]/.test(normalized) || /^[a-zA-Z]:/.test(normalized);
+}
+
+function resolveCommandForExecution(command) {
+  const normalized = normalizeCommandValue(command);
+  if (!normalized) {
+    return "";
+  }
+
+  if (!isExplicitCommandPath(normalized)) {
+    return normalized;
+  }
+
+  if (/^[a-zA-Z]:/.test(normalized) || normalized.startsWith("\\\\")) {
+    return normalized;
+  }
+
+  return join(repoRoot, normalized);
+}
+
+function getCommandFamily(command) {
+  return basename(normalizeCommandValue(command))
+    .toLowerCase()
+    .replace(/\.(cmd|exe|bat|ps1)$/i, "");
+}
+
+function findBundledCodexExecutable() {
+  if (process.platform !== "win32") {
+    return "";
+  }
+
+  const extensionsRoot = join(os.homedir(), ".vscode", "extensions");
+  if (!existsSync(extensionsRoot)) {
+    return "";
+  }
+
+  const candidates = readdirSync(extensionsRoot, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && /^openai\.chatgpt-/i.test(entry.name))
+    .map((entry) => join(extensionsRoot, entry.name, "bin", "windows-x86_64", "codex.exe"))
+    .filter((filePath) => existsSync(filePath))
+    .sort((left, right) => statSync(right).mtimeMs - statSync(left).mtimeMs);
+
+  return candidates[0] || "";
+}
+
+function getHermesToolCommand(tool) {
+  const envKey = HERMES_TOOL_COMMAND_ENV_KEYS[tool];
+  const explicit = normalizeCommandValue(process.env[envKey]);
+  if (explicit) {
+    return explicit;
+  }
+
+  if (tool === "planner" || tool === "codex") {
+    const bundledCodex = findBundledCodexExecutable();
+    if (bundledCodex) {
+      return bundledCodex;
+    }
+  }
+
+  return normalizeCommandValue(DEFAULT_HERMES_TOOL_COMMANDS[tool]);
+}
+
+function getHermesToolCommands() {
+  return {
+    planner: getHermesToolCommand("planner"),
+    codex: getHermesToolCommand("codex"),
+    claude: getHermesToolCommand("claude"),
+    gemini: getHermesToolCommand("gemini"),
+  };
+}
+
+function formatUnavailableCommandMessage(role, command) {
+  const normalized = normalizeCommandValue(command);
+  const family = getCommandFamily(normalized);
+  const locationHint = isExplicitCommandPath(normalized)
+    ? "configured path"
+    : "PATH";
+
+  if (family === "codex") {
+    return `${role} command "${normalized}" is not available via ${locationHint}. The Codex VS Code extension is not the same as the codex CLI; install the Codex CLI or set ${HERMES_TOOL_COMMAND_ENV_KEYS[role === "Planner" ? "planner" : "codex"]}.`;
+  }
+
+  return `${role} command "${normalized}" is not available via ${locationHint}.`;
+}
+
 function commandAvailable(command) {
   return new Promise((resolve) => {
-    const child = spawn(commandLocator(), [command], { stdio: "ignore" });
+    const normalized = normalizeCommandValue(command);
+    const resolved = resolveCommandForExecution(normalized);
+
+    if (!resolved) {
+      resolve(false);
+      return;
+    }
+
+    if (isExplicitCommandPath(normalized)) {
+      resolve(existsSync(resolved));
+      return;
+    }
+
+    const child = spawn(commandLocator(), [normalized], { stdio: "ignore" });
     child.on("close", (code) => resolve(code === 0));
     child.on("error", () => resolve(false));
   });
@@ -158,46 +303,169 @@ function tailText(value, maxChars = 6000) {
   return value.length <= maxChars ? value : value.slice(-maxChars);
 }
 
+function buildDefaultHermesSessionStateFile(profileId) {
+  const id = String(profileId || "").trim() || "default";
+  return `output/hermes-dispatch/planner-sessions/${id}.json`;
+}
+
+function normalizeHermesDispatchSettings(input) {
+  const fallbackProfiles = DEFAULT_HERMES_DISPATCH_SETTINGS.plannerProfiles;
+  const rawProfiles = Array.isArray(input?.plannerProfiles) ? input.plannerProfiles : fallbackProfiles;
+  const plannerProfiles = rawProfiles
+    .map((profile) => {
+      const id = typeof profile?.id === "string" ? profile.id.trim() : "";
+      const label = typeof profile?.label === "string" ? profile.label.trim() : "";
+      const rawSessionStateFile = typeof profile?.sessionStateFile === "string" ? profile.sessionStateFile.trim() : "";
+      const sessionStateFile = resolveHermesSessionStatePath(rawSessionStateFile)
+        ? rawSessionStateFile
+        : buildDefaultHermesSessionStateFile(id);
+      if (!id || !label || !sessionStateFile) return null;
+      const models = profile?.models && typeof profile.models === "object"
+        ? Object.fromEntries(
+            Object.entries(profile.models)
+              .map(([key, value]) => [key, typeof value === "string" ? value.trim() : ""])
+              .filter(([, value]) => Boolean(value)),
+          )
+        : null;
+
+      return {
+        id,
+        label,
+        sessionStateFile,
+        ...(typeof profile?.description === "string" && profile.description.trim()
+          ? { description: profile.description.trim() }
+          : {}),
+        ...(models && Object.keys(models).length > 0 ? { models } : {}),
+      };
+    })
+    .filter(Boolean)
+    .filter((profile, index, list) => list.findIndex(candidate => candidate.id === profile.id) === index)
+    .slice(0, 6);
+
+  const safeProfiles = plannerProfiles.length > 0 ? plannerProfiles : fallbackProfiles;
+  const activePlannerProfileId = safeProfiles.some(profile => profile.id === input?.activePlannerProfileId)
+    ? input.activePlannerProfileId
+    : safeProfiles[0].id;
+
+  return {
+    activePlannerProfileId,
+    plannerProfiles: safeProfiles,
+  };
+}
+
+function getNormalizedHermesDispatchSettings() {
+  return normalizeHermesDispatchSettings(settings.hermesDispatchSettings);
+}
+
+function getHermesPlannerProfileById(profileId) {
+  const normalizedProfileId = String(profileId || "").trim();
+  if (!normalizedProfileId) {
+    return null;
+  }
+
+  return getNormalizedHermesDispatchSettings().plannerProfiles.find(profile => profile.id === normalizedProfileId) || null;
+}
+
+function resolveHermesSessionStatePath(sessionStateFile) {
+  const relativePath = String(sessionStateFile || "").trim();
+  if (!relativePath) {
+    return null;
+  }
+
+  const outputRoot = join(repoRoot, "output", "hermes-dispatch");
+  const resolvedPath = join(repoRoot, relativePath);
+  const normalizedOutputRoot = `${outputRoot}${process.platform === "win32" ? "\\" : "/"}`;
+  const normalizedResolvedPath = resolvedPath;
+
+  if (normalizedResolvedPath !== outputRoot && !normalizedResolvedPath.startsWith(normalizedOutputRoot)) {
+    return null;
+  }
+
+  return resolvedPath;
+}
+
+function resolveHermesPlannerProfile(selectedProfileId) {
+  const hermesDispatchSettings = getNormalizedHermesDispatchSettings();
+  return hermesDispatchSettings.plannerProfiles.find(profile => profile.id === selectedProfileId)
+    || hermesDispatchSettings.plannerProfiles.find(profile => profile.id === hermesDispatchSettings.activePlannerProfileId)
+    || hermesDispatchSettings.plannerProfiles[0];
+}
+
 async function getHermesDispatchAvailability() {
+  const commands = getHermesToolCommands();
   const checks = await Promise.all([
-    commandAvailable("hermes"),
-    commandAvailable("codex"),
-    commandAvailable("claude"),
-    commandAvailable("gemini"),
+    commandAvailable(commands.planner),
+    commandAvailable(commands.codex),
+    commandAvailable(commands.claude),
+    commandAvailable(commands.gemini),
   ]);
 
   return {
-    hermes: { command: "hermes", available: checks[0] },
-    codex: { command: "codex", available: checks[1] },
-    claude: { command: "claude", available: checks[2] },
-    gemini: { command: "gemini", available: checks[3] },
+    planner: { command: commands.planner, available: checks[0] },
+    codex: { command: commands.codex, available: checks[1] },
+    claude: { command: commands.claude, available: checks[2] },
+    gemini: { command: commands.gemini, available: checks[3] },
   };
 }
 
 async function collectHermesDispatchRunFromDirectory(dirName) {
   const runDir = join(hermesDispatchOutputRoot, dirName);
   const plan = await safeReadJson(join(runDir, "plan.json"));
+  const progress = await safeReadJson(join(runDir, "progress.json"));
+  const plannerMeta = await safeReadJson(join(runDir, "planner-meta.json"));
   const summary = await safeReadJson(join(runDir, "summary.json"));
   const results = await safeReadJson(join(runDir, "results.json"));
+  const taskLogs = await collectHermesTaskLogs(runDir, plan, progress, results);
   const plannerStdout = await safeReadText(join(runDir, "planner-stdout.txt"));
   const latestTaskStdout = await collectLatestTaskLog(runDir, "stdout.txt");
   const latestTaskStderr = await collectLatestTaskLog(runDir, "stderr.txt");
   const createdAt = Number.isFinite(Date.parse(dirName.split("-run-")[0] || dirName))
     ? Date.parse(dirName.split("-run-")[0] || dirName)
     : Date.now();
+  const progressUpdatedAt = Number.isFinite(Date.parse(progress?.updatedAt || ""))
+    ? Date.parse(progress.updatedAt)
+    : createdAt;
+  const progressSummary = progress?.summary || null;
+  const derivedStatus = summary
+    ? (summary.failed > 0 ? "failed" : "completed")
+    : (() => {
+        if (!progressSummary) {
+          return "planned";
+        }
+        if (progressSummary.running > 0 || (progressSummary.queued > 0 && (progressSummary.completed > 0 || progressSummary.failed > 0))) {
+          return "running";
+        }
+        if (progressSummary.failed > 0 && progressSummary.completed + progressSummary.failed >= progressSummary.total) {
+          return "failed";
+        }
+        if (progressSummary.completed >= progressSummary.total && progressSummary.total > 0) {
+          return "completed";
+        }
+        if (progressSummary.queued > 0) {
+          return "queued";
+        }
+        return "planned";
+      })();
 
   return {
     id: dirName,
     instruction: plan?.summary || "",
     mode: summary ? "execute" : "plan-only",
-    planner: "hermes",
-    status: summary ? (summary.failed > 0 ? "failed" : "completed") : "planned",
+    plannerProfileId: plannerMeta?.profileId ?? null,
+    planner: String(plannerMeta?.label || "codex-brain"),
+    plannerModel: plannerMeta?.model ?? null,
+    plannerSessionId: plannerMeta?.sessionId ?? null,
+    plannerSessionStateFile: plannerMeta?.sessionStateFile ?? null,
+    executorModels: plannerMeta?.executorModels ?? null,
+    status: derivedStatus,
     createdAt,
-    updatedAt: createdAt,
+    updatedAt: progressUpdatedAt,
     outputDir: runDir,
     plan,
+    progress,
     summary,
     results,
+    taskLogs,
     stdoutTail: tailText(latestTaskStdout || plannerStdout),
     stderrTail: tailText(latestTaskStderr),
     error: null,
@@ -224,6 +492,37 @@ async function collectLatestTaskLog(runDir, fileName) {
   return "";
 }
 
+async function collectHermesTaskLogs(runDir, plan, progress, results) {
+  const tasks = Array.isArray(plan?.tasks) ? plan.tasks : [];
+  const progressTasks = Array.isArray(progress?.tasks) ? progress.tasks : [];
+  const resultItems = Array.isArray(results) ? results : [];
+  const progressMap = new Map(progressTasks.map(task => [task.id, task]));
+  const resultMap = new Map(resultItems.map(item => [item.taskId, item]));
+
+  return Promise.all(
+    tasks.map(async (task) => {
+      const taskDir = join(runDir, task.id);
+      const progressItem = progressMap.get(task.id) || null;
+      const resultItem = resultMap.get(task.id) || null;
+
+      return {
+        taskId: task.id,
+        title: task.title,
+        executor: task.executor,
+        status: progressItem?.status || (resultItem?.status === "fulfilled" ? "completed" : (resultItem?.status === "rejected" ? "failed" : "queued")),
+        writeTargets: Array.isArray(task.writeTargets) ? task.writeTargets : [],
+        canUseSubagents: Boolean(task.canUseSubagents),
+        startedAt: progressItem?.startedAt ?? resultItem?.startedAt ?? null,
+        finishedAt: progressItem?.finishedAt ?? resultItem?.finishedAt ?? null,
+        durationMs: progressItem?.durationMs ?? resultItem?.durationMs ?? null,
+        stdoutTail: tailText(await safeReadText(join(taskDir, "stdout.txt")), 2000),
+        stderrTail: tailText(await safeReadText(join(taskDir, "stderr.txt")), 2000),
+        error: progressItem?.error ?? resultItem?.error ?? null,
+      };
+    }),
+  );
+}
+
 async function listHermesDispatchRuns() {
   await fs.mkdir(hermesDispatchOutputRoot, { recursive: true });
   const directoryEntries = await fs.readdir(hermesDispatchOutputRoot, { withFileTypes: true });
@@ -235,16 +534,81 @@ async function listHermesDispatchRuns() {
 
   const merged = new Map(finishedRuns.map(run => [run.id, run]));
   for (const [runId, run] of hermesDispatchRuns.entries()) {
+    const persisted = merged.get(runId);
     merged.set(runId, {
-      ...merged.get(runId),
+      ...persisted,
       ...run,
+      plannerProfileId: run.plannerProfileId ?? persisted?.plannerProfileId ?? null,
+      plannerModel: run.plannerModel ?? persisted?.plannerModel ?? null,
+      plannerSessionId: run.plannerSessionId ?? persisted?.plannerSessionId ?? null,
+      plannerSessionStateFile: run.plannerSessionStateFile ?? persisted?.plannerSessionStateFile ?? null,
+      executorModels: run.executorModels ?? persisted?.executorModels ?? null,
+      plan: run.plan ?? persisted?.plan,
+      progress: run.progress ?? persisted?.progress,
+      summary: run.summary ?? persisted?.summary,
+      results: run.results ?? persisted?.results,
+      taskLogs: Array.isArray(run.taskLogs) && run.taskLogs.length > 0
+        ? run.taskLogs
+        : (persisted?.taskLogs ?? []),
+      stdoutTail: run.stdoutTail || persisted?.stdoutTail || "",
+      stderrTail: run.stderrTail || persisted?.stderrTail || "",
+      error: run.error ?? persisted?.error ?? null,
     });
   }
 
   return [...merged.values()].sort((left, right) => right.updatedAt - left.updatedAt).slice(0, 20);
 }
 
-async function startHermesDispatchRun({ instruction, planOnly = false, useSamplePlan = false }) {
+function resolveHermesRunDirectory(runId) {
+  const normalizedRunId = String(runId || "").trim();
+  if (!normalizedRunId) {
+    return null;
+  }
+
+  const resolvedPath = join(hermesDispatchOutputRoot, normalizedRunId);
+  const normalizedOutputRoot = `${hermesDispatchOutputRoot}${process.platform === "win32" ? "\\" : "/"}`;
+
+  if (resolvedPath !== hermesDispatchOutputRoot && !resolvedPath.startsWith(normalizedOutputRoot)) {
+    return null;
+  }
+
+  return resolvedPath;
+}
+
+async function deleteHermesDispatchRun(runId) {
+  const normalizedRunId = String(runId || "").trim();
+  if (!normalizedRunId) {
+    throw new Error("runId 不能为空。");
+  }
+
+  const inMemoryRun = hermesDispatchRuns.get(normalizedRunId);
+  if (inMemoryRun && (inMemoryRun.status === "queued" || inMemoryRun.status === "running")) {
+    throw new Error("运行中的记录暂时不能删除，请等待结束后再删除。");
+  }
+
+  const runDir = resolveHermesRunDirectory(normalizedRunId);
+  if (!runDir) {
+    throw new Error("无效的 runId。");
+  }
+
+  const existedOnDisk = existsSync(runDir);
+  if (!existedOnDisk && !inMemoryRun) {
+    throw new Error("找不到对应的运行记录。");
+  }
+
+  if (existedOnDisk) {
+    await fs.rm(runDir, { recursive: true, force: true });
+  }
+  hermesDispatchRuns.delete(normalizedRunId);
+
+  return {
+    ok: true,
+    runId: normalizedRunId,
+    deleted: existedOnDisk || Boolean(inMemoryRun),
+  };
+}
+
+async function startHermesDispatchRun({ instruction, planOnly = false, useSamplePlan = false, plannerProfileId }) {
   await fs.mkdir(hermesDispatchOutputRoot, { recursive: true });
 
   const runId = `${new Date().toISOString().replace(/[:.]/g, "-")}-run-${slugify(instruction || "sample")}`;
@@ -252,6 +616,46 @@ async function startHermesDispatchRun({ instruction, planOnly = false, useSample
   await fs.mkdir(outputDir, { recursive: true });
 
   const args = [hermesDispatchPrototypePath, "--output-dir", outputDir];
+  const commandOverrides = getHermesToolCommands();
+  const plannerProfile = useSamplePlan
+    ? null
+    : resolveHermesPlannerProfile(plannerProfileId);
+
+  if (plannerProfile) {
+    const plannerConfigPath = join(outputDir, "planner-profile.config.json");
+    await fs.writeFile(
+      plannerConfigPath,
+      JSON.stringify(
+        {
+          planner: {
+            profileId: plannerProfile.id,
+            label: plannerProfile.label,
+            command: commandOverrides.planner,
+            sessionStateFile: plannerProfile.sessionStateFile,
+            ...(plannerProfile.models?.planner ? { model: plannerProfile.models.planner } : {}),
+          },
+          executors: {
+            codex: {
+              command: commandOverrides.codex,
+              ...(plannerProfile.models?.codex ? { model: plannerProfile.models.codex } : {}),
+            },
+            claude: {
+              command: commandOverrides.claude,
+              ...(plannerProfile.models?.claude ? { model: plannerProfile.models.claude } : {}),
+            },
+            gemini: {
+              command: commandOverrides.gemini,
+              ...(plannerProfile.models?.gemini ? { model: plannerProfile.models.gemini } : {}),
+            },
+          },
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+    args.push("--config", plannerConfigPath);
+  }
   if (planOnly) args.push("--plan-only");
   if (useSamplePlan) {
     args.push("--plan-file", hermesDispatchSamplePlanPath);
@@ -263,11 +667,18 @@ async function startHermesDispatchRun({ instruction, planOnly = false, useSample
     id: runId,
     instruction: instruction || "样例计划演示",
     mode: planOnly ? "plan-only" : "execute",
-    planner: useSamplePlan ? "sample" : "hermes",
+    plannerProfileId: plannerProfile?.id ?? null,
+    planner: useSamplePlan ? "sample-plan" : (plannerProfile?.label ?? "codex-brain"),
+    plannerModel: plannerProfile?.models?.planner ?? null,
+    plannerSessionId: null,
+    plannerSessionStateFile: plannerProfile?.sessionStateFile ?? null,
+    executorModels: plannerProfile?.models ?? null,
     status: "queued",
     createdAt: Date.now(),
     updatedAt: Date.now(),
     outputDir,
+    progress: null,
+    taskLogs: null,
     stdoutTail: "",
     stderrTail: "",
     error: null,
@@ -302,17 +713,28 @@ async function startHermesDispatchRun({ instruction, planOnly = false, useSample
 
   child.on("close", async (code) => {
     const plan = await safeReadJson(join(outputDir, "plan.json"));
+    const progress = await safeReadJson(join(outputDir, "progress.json"));
+    const plannerMeta = await safeReadJson(join(outputDir, "planner-meta.json"));
     const summary = await safeReadJson(join(outputDir, "summary.json"));
     const results = await safeReadJson(join(outputDir, "results.json"));
+    const taskLogs = await collectHermesTaskLogs(outputDir, plan, progress, results);
 
     runState.status = summary
       ? (summary.failed > 0 || code !== 0 ? "failed" : "completed")
       : (code === 0 ? "planned" : "failed");
     runState.updatedAt = Date.now();
     runState.exitCode = code;
+    runState.plannerProfileId = plannerMeta?.profileId ?? runState.plannerProfileId ?? null;
+    runState.planner = plannerMeta?.label ?? runState.planner;
+    runState.plannerModel = plannerMeta?.model ?? runState.plannerModel ?? null;
+    runState.plannerSessionId = plannerMeta?.sessionId ?? runState.plannerSessionId ?? null;
+    runState.plannerSessionStateFile = plannerMeta?.sessionStateFile ?? runState.plannerSessionStateFile ?? null;
+    runState.executorModels = plannerMeta?.executorModels ?? runState.executorModels ?? null;
     runState.plan = plan;
+    runState.progress = progress;
     runState.summary = summary;
     runState.results = results;
+    runState.taskLogs = taskLogs;
     if (code !== 0 && !runState.error) {
       runState.error = tailText(runState.stderrTail) || `dispatch process exited with code ${code}`;
     }
@@ -1353,23 +1775,71 @@ const httpServer = createServer(async (req, res) => {
       ok: true,
       availability,
       runs,
+      hermesDispatchSettings: getNormalizedHermesDispatchSettings(),
       prototypePath: hermesDispatchPrototypePath,
     });
     return;
   }
 
+  if (req.method === "POST" && url.pathname === "/api/hermes-dispatch/reset-session") {
+    try {
+      const body = await readJson(req);
+      const profile = getHermesPlannerProfileById(body.profileId);
+      if (!profile) {
+        writeJson(res, 400, { ok: false, error: "无效的 planner profile。" });
+        return;
+      }
+
+      const sessionStatePath = resolveHermesSessionStatePath(profile.sessionStateFile);
+      if (!sessionStatePath) {
+        writeJson(res, 400, { ok: false, error: "Session state file 超出 Hermes 输出目录，已拒绝操作。" });
+        return;
+      }
+
+      const existed = existsSync(sessionStatePath);
+      if (existed) {
+        await fs.rm(sessionStatePath, { force: true });
+      }
+
+      writeJson(res, 200, {
+        ok: true,
+        profileId: profile.id,
+        label: profile.label,
+        sessionStateFile: profile.sessionStateFile,
+        deleted: existed,
+      });
+    } catch (error) {
+      writeJson(res, 500, { ok: false, error: error instanceof Error ? error.message : String(error) });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/hermes-dispatch/delete-run") {
+    try {
+      const body = await readJson(req);
+      const result = await deleteHermesDispatchRun(body.runId);
+      writeJson(res, 200, result);
+    } catch (error) {
+      writeJson(res, 400, { ok: false, error: error instanceof Error ? error.message : String(error) });
+    }
+    return;
+  }
+
   if (req.method === "POST" && url.pathname === "/api/hermes-dispatch/run") {
     try {
-      const { instruction, planOnly, useSamplePlan } = await readJson(req);
-      const normalizedInstruction = String(instruction || "").trim();
+      const body = await readJson(req);
+      const { plannerProfileId } = body;
+      const planOnly = body.planOnly;
+      const useSamplePlan = body.useSamplePlan;
+      const normalizedInstruction = String(body.instruction || "").trim();
       if (!useSamplePlan && !normalizedInstruction) {
         writeJson(res, 400, { ok: false, error: "instruction 不能为空" });
         return;
       }
 
       const availability = await getHermesDispatchAvailability();
-      if (!useSamplePlan && !availability.hermes.available) {
-        writeJson(res, 400, { ok: false, error: 'Planner command "hermes" is not available in PATH.' });
+      if (!useSamplePlan && !availability.planner.available) {
+        writeJson(res, 400, { ok: false, error: formatUnavailableCommandMessage("Planner", availability.planner.command) });
         return;
       }
 
@@ -1377,6 +1847,7 @@ const httpServer = createServer(async (req, res) => {
         instruction: normalizedInstruction,
         planOnly: Boolean(planOnly),
         useSamplePlan: Boolean(useSamplePlan),
+        plannerProfileId: String(plannerProfileId || "").trim(),
       });
 
       writeJson(res, 200, { ok: true, run });
@@ -1393,6 +1864,7 @@ const httpServer = createServer(async (req, res) => {
       if (body.agentConfigs) settings.agentConfigs = body.agentConfigs;
       if (body.userNickname !== undefined) settings.userNickname = body.userNickname;
       if (body.desktopProgramSettings) settings.desktopProgramSettings = body.desktopProgramSettings;
+      if (body.hermesDispatchSettings) settings.hermesDispatchSettings = normalizeHermesDispatchSettings(body.hermesDispatchSettings);
       writeJson(res, 200, { ok: true });
     } catch {
       writeJson(res, 400, { ok: false, error: "设置数据格式错误" });
@@ -1610,6 +2082,7 @@ wss.on("connection", (ws) => {
         if (msg.agentConfigs) settings.agentConfigs = msg.agentConfigs;
         if (msg.userNickname !== undefined) settings.userNickname = msg.userNickname;
         if (msg.desktopProgramSettings) settings.desktopProgramSettings = msg.desktopProgramSettings;
+        if (msg.hermesDispatchSettings) settings.hermesDispatchSettings = normalizeHermesDispatchSettings(msg.hermesDispatchSettings);
         if (msg.runtime) updateClientRuntime(ws, msg.runtime);
         ws.send(JSON.stringify({ type: "settings_ack" }));
         break;

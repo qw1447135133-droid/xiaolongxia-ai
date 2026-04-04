@@ -32,7 +32,19 @@ type ActionFeedback = {
   detail: string;
   executionRunId?: string;
   entitySection?: ControlCenterSectionId;
+  auditFocusRequest?: AuditFocusRequest;
+  contentTaskId?: string;
+  workflowRunId?: string;
 };
+
+function formatRemoteTimestamp(timestamp: number) {
+  return new Intl.DateTimeFormat("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(timestamp);
+}
 
 export function RemoteOpsCenter() {
   const [scheduledTasks, setScheduledTasks] = useState<ScheduledTask[]>([]);
@@ -69,8 +81,7 @@ export function RemoteOpsCenter() {
   const setAutomationPaused = useStore(s => s.setAutomationPaused);
   const setRemoteSupervisorEnabled = useStore(s => s.setRemoteSupervisorEnabled);
   const setAutoDispatchScheduledTasks = useStore(s => s.setAutoDispatchScheduledTasks);
-  const setBusinessApprovalDecision = useStore(s => s.setBusinessApprovalDecision);
-  const updateBusinessContentTask = useStore(s => s.updateBusinessContentTask);
+  const applyContentTaskApprovalDecision = useStore(s => s.applyContentTaskApprovalDecision);
   const queueContentTaskWorkflowRun = useStore(s => s.queueContentTaskWorkflowRun);
   const recordBusinessOperation = useStore(s => s.recordBusinessOperation);
   const recordContentPublishResult = useStore(s => s.recordContentPublishResult);
@@ -78,10 +89,11 @@ export function RemoteOpsCenter() {
   const continueContentTaskNextCycle = useStore(s => s.continueContentTaskNextCycle);
   const applyContentChannelGovernance = useStore(s => s.applyContentChannelGovernance);
   const enforceManualApprovalForContentTasks = useStore(s => s.enforceManualApprovalForContentTasks);
-  const archiveWorkflowRun = useStore(s => s.archiveWorkflowRun);
   const setActiveExecutionRun = useStore(s => s.setActiveExecutionRun);
   const setTab = useStore(s => s.setTab);
   const setActiveControlCenterSection = useStore(s => s.setActiveControlCenterSection);
+  const focusBusinessContentTask = useStore(s => s.focusBusinessContentTask);
+  const focusWorkflowRun = useStore(s => s.focusWorkflowRun);
   const wsStatus = useStore(s => s.wsStatus);
 
   const openControlCenterSection = (section: ControlCenterSectionId) => {
@@ -153,6 +165,15 @@ export function RemoteOpsCenter() {
     () => filterByProjectScope(businessApprovals, currentProjectScope),
     [businessApprovals, currentProjectScope],
   );
+  const contentApprovalStateMap = useMemo(
+    () =>
+      new Map(
+        scopedApprovals
+          .filter(item => item.entityType === "contentTask")
+          .map(item => [item.entityId, item.status] as const),
+      ),
+    [scopedApprovals],
+  );
   const scopedOperationLogs = useMemo(
     () => filterByProjectScope(businessOperationLogs, currentProjectScope),
     [businessOperationLogs, currentProjectScope],
@@ -180,6 +201,10 @@ export function RemoteOpsCenter() {
   const scopedChannelSessions = useMemo(
     () => filterByProjectScope(businessChannelSessions, currentProjectScope),
     [businessChannelSessions, currentProjectScope],
+  );
+  const workflowRunMap = useMemo(
+    () => Object.fromEntries(workflowRuns.map(run => [run.id, run])),
+    [workflowRuns],
   );
 
   const verificationReadyRuns = recentProjectRuns.filter(
@@ -231,6 +256,44 @@ export function RemoteOpsCenter() {
   const recentOperationLogs = useMemo(
     () => scopedOperationLogs.slice(0, 8),
     [scopedOperationLogs],
+  );
+  const latestApprovalLogByContentTask = useMemo(() => {
+    const map = new Map<string, BusinessOperationRecord>();
+    for (const log of scopedOperationLogs) {
+      if (log.entityType === "contentTask" && log.eventType === "approval" && !map.has(log.entityId)) {
+        map.set(log.entityId, log);
+      }
+    }
+    return map;
+  }, [scopedOperationLogs]);
+  const recentExecutionCards = useMemo(
+    () =>
+      recentProjectRuns.slice(0, 6).map(run => {
+        const linkedWorkflowRun = run.workflowRunId ? workflowRunMap[run.workflowRunId] ?? null : null;
+        const linkedContentTask = run.entityType === "contentTask" && run.entityId
+          ? contentTaskMap[run.entityId] ?? null
+          : null;
+        const approvalState = linkedContentTask ? contentApprovalStateMap.get(linkedContentTask.id) : undefined;
+        const latestRelatedLog = scopedOperationLogs.find(log =>
+          (log.executionRunId && log.executionRunId === run.id)
+          || (
+            run.entityType
+            && run.entityId
+            && log.entityType === run.entityType
+            && log.entityId === run.entityId
+          ),
+        ) ?? null;
+
+        return {
+          run,
+          linkedWorkflowRun,
+          linkedContentTask,
+          approvalState,
+          latestApprovalLog: linkedContentTask ? latestApprovalLogByContentTask.get(linkedContentTask.id) ?? null : null,
+          latestRelatedLog,
+        };
+      }),
+    [contentApprovalStateMap, contentTaskMap, latestApprovalLogByContentTask, recentProjectRuns, scopedOperationLogs, workflowRunMap],
   );
   const contentOpsSummary = useMemo(() => {
     const publishedTasks = scopedContentTasks.filter(task => task.status === "published").length;
@@ -1058,6 +1121,15 @@ export function RemoteOpsCenter() {
             <button type="button" className="btn-ghost" onClick={() => scrollAuditSectionIntoView()}>
               查看审计记录
             </button>
+            {actionFeedback.auditFocusRequest ? (
+              <button
+                type="button"
+                className="btn-ghost"
+                onClick={() => queueAuditFocus(actionFeedback.auditFocusRequest!)}
+              >
+                定位到本次记录
+              </button>
+            ) : null}
             {actionFeedback.executionRunId ? (
               <button
                 type="button"
@@ -1071,7 +1143,15 @@ export function RemoteOpsCenter() {
               <button
                 type="button"
                 className="btn-ghost"
-                onClick={() => openControlCenterSection(actionFeedback.entitySection!)}
+                onClick={() => {
+                  if (actionFeedback.contentTaskId) {
+                    focusBusinessContentTask(actionFeedback.contentTaskId);
+                  }
+                  if (actionFeedback.workflowRunId) {
+                    focusWorkflowRun(actionFeedback.workflowRunId);
+                  }
+                  openControlCenterSection(actionFeedback.entitySection!);
+                }}
               >
                 打开相关面板
               </button>
@@ -1082,6 +1162,127 @@ export function RemoteOpsCenter() {
           </div>
         </div>
       ) : null}
+
+      <div className="control-center__panel">
+        <div className="control-center__panel-title">最近执行</div>
+        <div className="control-center__list">
+          <div>最近运行: <strong className="control-center__strong">{recentExecutionCards.length}</strong></div>
+          <div>内容任务执行会额外展示审批状态和最近一次审批结果，便于手机端监督。</div>
+        </div>
+
+        <div className="control-center__dispatch-list">
+          {recentExecutionCards.length === 0 ? (
+            <div className="control-center__copy">当前项目还没有最近执行记录。</div>
+          ) : (
+            recentExecutionCards.map(({ run, linkedWorkflowRun, linkedContentTask, approvalState, latestApprovalLog, latestRelatedLog }) => (
+              <article key={run.id} className="control-center__dispatch-card">
+                <div className="control-center__approval-head">
+                  <div>
+                    <div className="control-center__panel-title">
+                      {linkedContentTask?.title ?? linkedWorkflowRun?.title ?? (run.instruction.slice(0, 56) || run.id)}
+                    </div>
+                    <div className="control-center__copy">
+                      {formatRemoteTimestamp(run.updatedAt)} · {run.source} · {run.entityType ?? "execution"}
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                    <span className={`control-center__scenario-badge is-${getExecutionRunTone(run.status)}`}>
+                      {getExecutionRunLabel(run.status)}
+                    </span>
+                    {run.verificationStatus ? (
+                      <span className={`control-center__scenario-badge is-${getVerificationStatusTone(run.verificationStatus)}`}>
+                        {getVerificationStatusLabel(run.verificationStatus)}
+                      </span>
+                    ) : null}
+                  </div>
+                </div>
+                <div className="control-center__dispatch-note">
+                  {linkedContentTask
+                    ? `当前内容状态: ${linkedContentTask.status} · 推荐主发 ${linkedContentTask.recommendedPrimaryChannel ?? linkedContentTask.channel}`
+                    : run.instruction.slice(0, 140)}
+                </div>
+                {linkedWorkflowRun ? (
+                  <div className="control-center__dispatch-meta">
+                    <span>绑定 Workflow: {linkedWorkflowRun.title}</span>
+                    <span>Workflow 状态: {linkedWorkflowRun.status}</span>
+                  </div>
+                ) : null}
+                {linkedContentTask ? (
+                  <div className="control-center__dispatch-meta">
+                    <span>
+                      审批状态: {approvalState ? getAuditStatusLabel(approvalState) : "无需审批"}
+                    </span>
+                    <span>
+                      最近审批: {latestApprovalLog
+                        ? `${getAuditStatusLabel(latestApprovalLog.status)} · ${formatRemoteTimestamp(latestApprovalLog.updatedAt)}`
+                        : "暂无审批动作"}
+                    </span>
+                  </div>
+                ) : null}
+                {latestApprovalLog ? (
+                  <div className="control-center__copy">{latestApprovalLog.detail}</div>
+                ) : null}
+                {latestRelatedLog && latestRelatedLog !== latestApprovalLog ? (
+                  <div className="control-center__copy">
+                    最近业务动作: {getAuditEventLabel(latestRelatedLog.eventType)} · {getAuditStatusLabel(latestRelatedLog.status)} · {latestRelatedLog.detail}
+                  </div>
+                ) : null}
+                <div className="control-center__quick-actions">
+                  <button
+                    type="button"
+                    className="btn-ghost"
+                    onClick={() => focusExecutionRun(run.id)}
+                  >
+                    查看对应执行
+                  </button>
+                  {latestApprovalLog ? (
+                    <button
+                      type="button"
+                      className="btn-ghost"
+                      onClick={() => queueAuditFocus({
+                        entityType: latestApprovalLog.entityType,
+                        entityId: latestApprovalLog.entityId,
+                        eventType: latestApprovalLog.eventType,
+                        status: latestApprovalLog.status,
+                        executionRunId: latestApprovalLog.executionRunId,
+                      })}
+                    >
+                      查看审批记录
+                    </button>
+                  ) : null}
+                  {run.workflowRunId ? (
+                    <button
+                      type="button"
+                      className="btn-ghost"
+                      onClick={() => {
+                        focusWorkflowRun(run.workflowRunId!);
+                        openControlCenterSection("workflow");
+                      }}
+                    >
+                      定位到 Workflow
+                    </button>
+                  ) : null}
+                  {linkedContentTask ? (
+                    <button
+                      type="button"
+                      className="btn-ghost"
+                      onClick={() => {
+                        focusBusinessContentTask(linkedContentTask.id);
+                        openControlCenterSection("entities");
+                      }}
+                    >
+                      定位到内容实体
+                    </button>
+                  ) : null}
+                  <button type="button" className="btn-ghost" onClick={() => setTab("tasks")}>
+                    回聊天接管
+                  </button>
+                </div>
+              </article>
+            ))
+          )}
+        </div>
+      </div>
 
       <div className="control-center__panel">
         <div className="control-center__panel-title">业务自动派发队列</div>
@@ -1187,6 +1388,13 @@ export function RemoteOpsCenter() {
                             : "这次尝试已进入审计记录，方便回看是哪一步被阻断。",
                           executionRunId: ok ? executionRunId : undefined,
                           entitySection: ok ? "execution" : "channels",
+                          auditFocusRequest: {
+                            entityType: item.entityType,
+                            entityId: item.entityId,
+                            eventType: "dispatch",
+                            status: ok ? "sent" : "blocked",
+                            executionRunId: ok ? executionRunId : undefined,
+                          },
                         });
                         if (ok && executionRunId) {
                           setActiveExecutionRun(executionRunId);
@@ -1312,6 +1520,12 @@ export function RemoteOpsCenter() {
                                 ? "内容任务已进入 published 状态，发布链接已写回实体，并自动排队了一条发布复盘 workflow。"
                                 : "内容任务已进入 published 状态，并自动排队了一条发布复盘 workflow。",
                               entitySection: "workflow",
+                              auditFocusRequest: {
+                                entityType: "contentTask",
+                                entityId: item.entityId,
+                                eventType: "publish",
+                                status: "completed",
+                              },
                             });
                           }}
                         >
@@ -1346,6 +1560,12 @@ export function RemoteOpsCenter() {
                               title: "发布失败已记录",
                               detail: "审计链路已保留失败原因，内容任务仍可回到聊天或 workflow 继续补救。",
                               entitySection: "workflow",
+                              auditFocusRequest: {
+                                entityType: "contentTask",
+                                entityId: item.entityId,
+                                eventType: "publish",
+                                status: "failed",
+                              },
                             });
                           }}
                         >
@@ -1395,26 +1615,11 @@ export function RemoteOpsCenter() {
                       type="button"
                       className="btn-ghost"
                       onClick={() => {
-                        const approvalDetail = shouldPromoteToScheduled
-                          ? "审批已批准并继续发布准备，系统已把内容任务推进到 scheduled。"
-                          : shouldQueuePublishWorkflow
-                            ? "审批已批准并继续发布准备，系统将继续排队发布准备 workflow。"
-                            : "审批已批准，这条业务对象已进入可自动推进状态。";
-                        setBusinessApprovalDecision({
-                          entityType: item.entityType,
-                          entityId: item.entityId,
-                          status: "approved",
-                          note: approvalDetail,
+                        const outcome = applyContentTaskApprovalDecision({
+                          contentTaskId: item.entityId,
+                          decision: "approved",
                         });
-                        if (shouldPromoteToScheduled) {
-                          updateBusinessContentTask(item.entityId, {
-                            status: "scheduled",
-                            lastOperationAt: Date.now(),
-                          });
-                        }
-                        if (shouldQueuePublishWorkflow) {
-                          queueContentTaskWorkflowRun(item.entityId);
-                        }
+                        if (!outcome) return;
                         queueAuditFocus({
                           entityType: item.entityType,
                           entityId: item.entityId,
@@ -1422,13 +1627,15 @@ export function RemoteOpsCenter() {
                           status: "approved",
                         });
                         setActionFeedback({
-                          title: shouldQueuePublishWorkflow ? "审批已批准并继续发布准备" : "审批已批准",
-                          detail: shouldPromoteToScheduled
-                            ? "系统已保留批准记录，把内容任务推进到 scheduled，并自动排队发布准备 workflow。"
-                            : shouldQueuePublishWorkflow
-                              ? "系统已保留批准记录，并为这条内容任务继续排队发布准备 workflow。"
-                            : "这条业务对象已进入可自动推进状态，审计区会保留这次批准记录。",
-                          entitySection: shouldQueuePublishWorkflow ? "workflow" : "execution",
+                          title: outcome.title,
+                          detail: outcome.detail,
+                          entitySection: outcome.queuedWorkflowRunId ? "workflow" : "execution",
+                          auditFocusRequest: {
+                            entityType: item.entityType,
+                            entityId: item.entityId,
+                            eventType: "approval",
+                            status: "approved",
+                          },
                         });
                       }}
                     >
@@ -1438,29 +1645,11 @@ export function RemoteOpsCenter() {
                       type="button"
                       className="btn-ghost"
                       onClick={() => {
-                        const rejectionDetail = linkedContentTask?.status === "scheduled"
-                          ? "审批已驳回并退回定稿，建议重新确认内容和渠道策略。"
-                          : "审批已驳回，建议继续打磨后重新提交。";
-                        setBusinessApprovalDecision({
-                          entityType: item.entityType,
-                          entityId: item.entityId,
-                          status: "rejected",
-                          note: rejectionDetail,
+                        const outcome = applyContentTaskApprovalDecision({
+                          contentTaskId: item.entityId,
+                          decision: "rejected",
                         });
-                        workflowRuns
-                          .filter(run =>
-                            run.entityType === "contentTask"
-                            && run.entityId === item.entityId
-                            && run.templateId === "content-publish-prep"
-                            && (run.status === "queued" || run.status === "staged" || run.status === "in-progress"),
-                          )
-                          .forEach(run => archiveWorkflowRun(run.id));
-                        if (linkedContentTask?.status === "scheduled") {
-                          updateBusinessContentTask(item.entityId, {
-                            status: "review",
-                            lastOperationAt: Date.now(),
-                          });
-                        }
+                        if (!outcome) return;
                         queueAuditFocus({
                           entityType: item.entityType,
                           entityId: item.entityId,
@@ -1468,11 +1657,15 @@ export function RemoteOpsCenter() {
                           status: "rejected",
                         });
                         setActionFeedback({
-                          title: linkedContentTask?.status === "scheduled" ? "已驳回并退回定稿" : "审批已驳回",
-                          detail: linkedContentTask?.status === "scheduled"
-                            ? "系统已把这条内容任务退回 review，方便继续打磨定稿后再次进入发布链路。"
-                            : "这次驳回会保留在审计记录里，后续可以回到业务实体面板继续调整。",
+                          title: outcome.title,
+                          detail: outcome.detail,
                           entitySection: "entities",
+                          auditFocusRequest: {
+                            entityType: item.entityType,
+                            entityId: item.entityId,
+                            eventType: "approval",
+                            status: "rejected",
+                          },
                         });
                       }}
                     >
@@ -1482,20 +1675,11 @@ export function RemoteOpsCenter() {
                       type="button"
                       className="btn-ghost"
                       onClick={() => {
-                        setBusinessApprovalDecision({
-                          entityType: item.entityType,
-                          entityId: item.entityId,
-                          status: "pending",
-                          note: "审批已重新打开，当前流程恢复为待人工确认状态。",
+                        const outcome = applyContentTaskApprovalDecision({
+                          contentTaskId: item.entityId,
+                          decision: "pending",
                         });
-                        workflowRuns
-                          .filter(run =>
-                            run.entityType === "contentTask"
-                            && run.entityId === item.entityId
-                            && run.templateId === "content-publish-prep"
-                            && (run.status === "queued" || run.status === "staged" || run.status === "in-progress"),
-                          )
-                          .forEach(run => archiveWorkflowRun(run.id));
+                        if (!outcome) return;
                         queueAuditFocus({
                           entityType: item.entityType,
                           entityId: item.entityId,
@@ -1503,9 +1687,15 @@ export function RemoteOpsCenter() {
                           status: "pending",
                         });
                         setActionFeedback({
-                          title: "审批已重新打开",
-                          detail: "系统已恢复待确认状态，审计记录会显示这次重新打开动作。",
+                          title: outcome.title,
+                          detail: outcome.detail,
                           entitySection: "entities",
+                          auditFocusRequest: {
+                            entityType: item.entityType,
+                            entityId: item.entityId,
+                            eventType: "approval",
+                            status: "pending",
+                          },
                         });
                       }}
                     >
@@ -1568,12 +1758,36 @@ export function RemoteOpsCenter() {
                         查看对应执行
                       </button>
                     ) : null}
+                    {log.workflowRunId ? (
+                      <button
+                        type="button"
+                        className="btn-ghost"
+                        onClick={() => {
+                          focusWorkflowRun(log.workflowRunId!);
+                          openControlCenterSection("workflow");
+                        }}
+                      >
+                        定位到 Workflow
+                      </button>
+                    ) : null}
+                    {log.entityType === "contentTask" ? (
+                      <button
+                        type="button"
+                        className="btn-ghost"
+                        onClick={() => {
+                          focusBusinessContentTask(log.entityId);
+                          openControlCenterSection("entities");
+                        }}
+                      >
+                        定位到内容实体
+                      </button>
+                    ) : null}
                     <button
                       type="button"
                       className="btn-ghost"
                       onClick={() => openControlCenterSection("entities")}
                     >
-                      去业务实体面板
+                      打开业务实体面板
                     </button>
                     {isHighlighted ? (
                       <button
@@ -1694,6 +1908,8 @@ function getAuditEventLabel(eventType: BusinessOperationRecord["eventType"]) {
   switch (eventType) {
     case "approval":
       return "审批";
+    case "desktop":
+      return "桌面动作";
     case "workflow":
       return "Workflow";
     case "publish":
@@ -1702,6 +1918,50 @@ function getAuditEventLabel(eventType: BusinessOperationRecord["eventType"]) {
       return "治理动作";
     default:
       return "派发";
+  }
+}
+
+function getExecutionRunTone(status: "queued" | "analyzing" | "running" | "completed" | "failed") {
+  if (status === "completed") return "ready";
+  if (status === "queued" || status === "analyzing" || status === "running") return "partial";
+  return "blocked";
+}
+
+function getExecutionRunLabel(status: "queued" | "analyzing" | "running" | "completed" | "failed") {
+  switch (status) {
+    case "queued":
+      return "排队中";
+    case "analyzing":
+      return "分析中";
+    case "running":
+      return "执行中";
+    case "completed":
+      return "已完成";
+    default:
+      return "已失败";
+  }
+}
+
+function getVerificationStatusTone(status: "idle" | "pending" | "running" | "passed" | "failed" | "skipped") {
+  if (status === "passed") return "ready";
+  if (status === "idle" || status === "pending" || status === "running") return "partial";
+  return "blocked";
+}
+
+function getVerificationStatusLabel(status: "idle" | "pending" | "running" | "passed" | "failed" | "skipped") {
+  switch (status) {
+    case "idle":
+      return "未验证";
+    case "pending":
+      return "待验证";
+    case "running":
+      return "验证中";
+    case "passed":
+      return "已验证";
+    case "skipped":
+      return "已跳过";
+    default:
+      return "验证失败";
   }
 }
 

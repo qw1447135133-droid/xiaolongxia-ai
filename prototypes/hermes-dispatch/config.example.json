@@ -1,7 +1,13 @@
 {
   "planner": {
-    "command": "hermes",
-    "args": ["chat", "-q"],
+    "profileId": "default",
+    "label": "codex-brain",
+    "command": "codex",
+    "args": ["exec", "--full-auto", "--skip-git-repo-check"],
+    "resumeArgs": ["exec", "resume", "--full-auto", "--skip-git-repo-check"],
+    "model": "",
+    "promptMode": "argument",
+    "sessionStateFile": "output/hermes-dispatch/planner-sessions/default.json",
     "cwd": "."
   },
   "dispatch": {
@@ -14,18 +20,21 @@
     "codex": {
       "command": "codex",
       "args": ["exec", "--full-auto", "--skip-git-repo-check"],
+      "model": "",
       "promptMode": "argument",
       "cwd": "."
     },
     "claude": {
       "command": "claude",
       "args": ["--print", "--dangerously-skip-permissions"],
+      "model": "",
       "promptMode": "argument",
       "cwd": "."
     },
     "gemini": {
       "command": "gemini",
       "args": ["-p"],
+      "model": "",
       "promptMode": "argument",
       "cwd": "."
     }

@@ -1,3 +1,5 @@
+import type { DesktopInputRetrySuggestion } from "@/types/electron-api";
+
 export type AgentId = "orchestrator" | "explorer" | "writer" | "designer" | "performer" | "greeter";
 export type AgentStatus = "idle" | "running" | "error";
 export type TaskComplexity = "high" | "medium" | "low";
@@ -58,6 +60,7 @@ export type ExecutionRunStatus = "queued" | "analyzing" | "running" | "completed
 export type ExecutionRunSource = "chat" | "workspace" | "workflow" | "quick-start" | "remote-ops";
 export type ExecutionEventType = "user" | "dispatch" | "agent" | "result" | "error" | "system";
 export type VerificationStatus = "idle" | "running" | "passed" | "failed" | "skipped";
+export type ExecutionRecoveryState = "none" | "retryable" | "manual-required" | "blocked";
 
 export interface VerificationStepResult {
   id: "build" | "typecheck" | "lint";
@@ -90,6 +93,12 @@ export interface ExecutionRun {
   entityType?: "customer" | "lead" | "ticket" | "contentTask" | "channelSession";
   entityId?: string;
   status: ExecutionRunStatus;
+  retryCount?: number;
+  retryOfRunId?: string;
+  lastFailureReason?: string;
+  recoveryState?: ExecutionRecoveryState;
+  lastRecoveryHint?: string;
+  blockedReason?: string;
   createdAt: number;
   updatedAt: number;
   completedAt?: number;
@@ -140,6 +149,24 @@ export interface DesktopProgramSettings {
   };
 }
 
+export interface HermesPlannerProfile {
+  id: string;
+  label: string;
+  sessionStateFile: string;
+  description?: string;
+  models?: {
+    planner?: string;
+    codex?: string;
+    claude?: string;
+    gemini?: string;
+  };
+}
+
+export interface HermesDispatchSettings {
+  activePlannerProfileId: string;
+  plannerProfiles: HermesPlannerProfile[];
+}
+
 export interface DesktopRuntimeSummary {
   totalClients: number;
   launchCapable: number;
@@ -175,6 +202,12 @@ export interface DesktopInputSession {
   executionRunId?: string;
   taskId?: string;
   resumeInstruction?: string;
+  retryStrategy?: "visual-recheck-offset";
+  retrySuggestions?: DesktopInputRetrySuggestion[];
+  cursor?: {
+    x: number;
+    y: number;
+  };
   updatedAt: number | null;
 }
 
@@ -188,6 +221,8 @@ export interface DesktopScreenshotState {
   target?: string;
   intent?: string;
   message?: string;
+  sessionId?: string;
+  executionRunId?: string;
   updatedAt: number | null;
 }
 

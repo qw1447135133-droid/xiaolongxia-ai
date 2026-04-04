@@ -1,29 +1,35 @@
 {
-  "summary": "为现有仓库增加 Hermes 到外部执行器的最小分发原型。",
+  "summary": "为现有仓库增加 Hermes 到外部执行器的最小分发原型，并按后端 / 前端 / 查漏补缺固定职责拆分。",
   "tasks": [
     {
       "id": "task-1",
-      "title": "Codex 实现 CLI 分发脚本",
+      "title": "Codex 完成后端调度主实现",
       "executor": "codex",
-      "objective": "在仓库中实现一个独立的原型脚本，用于读取计划 JSON 并将子任务分发给不同执行器。避免修改现有业务文件。",
+      "objective": "负责后端主路径实现：在仓库中完成调度脚本、服务端接口、运行时状态整理或其他服务端逻辑改动。重点关注可执行性、接口联通和工程主实现，避免把前端展示细节混入本任务。",
       "workdir": ".",
-      "dependsOn": []
+      "dependsOn": [],
+      "writeTargets": ["server", "prototypes/hermes-dispatch"],
+      "canUseSubagents": true
     },
     {
       "id": "task-2",
-      "title": "Claude 审核原型结构",
-      "executor": "claude",
-      "objective": "审查分发原型的目录结构、CLI 参数和配置项设计，指出明显的缺失和风险，并给出简短修改建议。",
+      "title": "Gemini 完成前端界面与交互",
+      "executor": "gemini",
+      "objective": "负责前端和 UI 相关工作：补齐面板、交互、文案、展示结构和前端体验，确保与后端调度能力正确对接，但不承担后端主实现。",
       "workdir": ".",
-      "dependsOn": ["task-1"]
+      "dependsOn": ["task-1"],
+      "writeTargets": ["src/components", "media"],
+      "canUseSubagents": true
     },
     {
       "id": "task-3",
-      "title": "Gemini 横向总结局限",
-      "executor": "gemini",
-      "objective": "总结该原型在并行执行、权限控制、工作区隔离上的当前局限，并给出后续迭代建议。",
+      "title": "Claude 负责查漏补缺与兜底复核",
+      "executor": "claude",
+      "objective": "负责代码查漏补缺、风险复核、遗漏扫描、边界情况补丁、说明补充和兜底修正。重点找出后端与前端串联后还缺什么，并给出最小收口建议。",
       "workdir": ".",
-      "dependsOn": ["task-1"]
+      "dependsOn": ["task-1", "task-2"],
+      "writeTargets": ["README.md", "docs", "tests"],
+      "canUseSubagents": false
     }
   ]
 }

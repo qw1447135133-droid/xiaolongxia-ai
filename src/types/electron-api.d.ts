@@ -110,7 +110,7 @@ export interface HermesDispatchEnvironment {
   outputRoot: string;
   commands: {
     node: HermesDispatchRuntimeStatus;
-    hermes: HermesDispatchRuntimeStatus;
+    planner: HermesDispatchRuntimeStatus;
     codex: HermesDispatchRuntimeStatus;
     claude: HermesDispatchRuntimeStatus;
     gemini: HermesDispatchRuntimeStatus;
@@ -120,7 +120,9 @@ export interface HermesDispatchEnvironment {
 export interface HermesDispatchRequest {
   instruction?: string;
   mode: "plan-only" | "execute";
-  planner: "hermes" | "sample-plan";
+  planner: "codex-brain" | "sample-plan";
+  plannerProfileId?: string;
+  plannerProfileLabel?: string;
   configPath?: string;
 }
 
@@ -145,6 +147,15 @@ export interface HermesDispatchResponse {
   args: string[];
   stdout: string;
   stderr: string;
+  plannerProfileId?: string | null;
+  plannerModel?: string | null;
+  plannerSessionId?: string | null;
+  plannerSessionStateFile?: string | null;
+  executorModels?: {
+    codex?: string | null;
+    claude?: string | null;
+    gemini?: string | null;
+  } | null;
   plan?: {
     summary: string;
     tasks: Array<{

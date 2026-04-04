@@ -10,13 +10,19 @@ const repoRoot = process.cwd();
 
 const defaultConfig = {
   planner: {
-    command: "hermes",
-    args: ["chat", "-q"],
+    profileId: "default",
+    label: "codex-brain",
+    command: "codex",
+    args: ["exec", "--full-auto", "--skip-git-repo-check"],
+    resumeArgs: ["exec", "resume", "--full-auto", "--skip-git-repo-check"],
+    model: "",
+    promptMode: "argument",
+    sessionStateFile: "output/hermes-dispatch/planner-sessions/default.json",
     cwd: ".",
   },
   dispatch: {
     defaultWorkdir: ".",
-    maxParallel: 1,
+    maxParallel: 3,
     allowSharedWorkdirParallel: false,
     outputRoot: "output/hermes-dispatch",
   },
@@ -24,18 +30,21 @@ const defaultConfig = {
     codex: {
       command: "codex",
       args: ["exec", "--full-auto", "--skip-git-repo-check"],
+      model: "",
       promptMode: "argument",
       cwd: ".",
     },
     claude: {
       command: "claude",
       args: ["--print", "--dangerously-skip-permissions"],
+      model: "",
       promptMode: "argument",
       cwd: ".",
     },
     gemini: {
       command: "gemini",
       args: ["-p"],
+      model: "",
       promptMode: "argument",
       cwd: ".",
     },
@@ -139,13 +148,85 @@ function resolveFromRoot(inputPath, fallback = ".") {
   return path.resolve(repoRoot, inputPath ?? fallback);
 }
 
+function normalizeCommandValue(command) {
+  const trimmed = String(command || "").trim();
+  return trimmed.replace(/^"(.*)"$/, "$1");
+}
+
+function isExplicitCommandPath(command) {
+  const normalized = normalizeCommandValue(command);
+  return /[\\/]/.test(normalized) || /^[a-zA-Z]:/.test(normalized);
+}
+
+function resolveCommandForExecution(command) {
+  const normalized = normalizeCommandValue(command);
+  if (!normalized) {
+    return "";
+  }
+
+  if (!isExplicitCommandPath(normalized)) {
+    return normalized;
+  }
+
+  if (/^[a-zA-Z]:/.test(normalized) || normalized.startsWith("\\\\")) {
+    return normalized;
+  }
+
+  return path.resolve(repoRoot, normalized);
+}
+
+function getCommandFamily(command) {
+  return path.basename(normalizeCommandValue(command))
+    .toLowerCase()
+    .replace(/\.(cmd|exe|bat|ps1)$/i, "");
+}
+
+function findBundledCodexExecutable() {
+  if (process.platform !== "win32") {
+    return "";
+  }
+
+  const extensionsRoot = path.join(os.homedir(), ".vscode", "extensions");
+  if (!fs.existsSync(extensionsRoot)) {
+    return "";
+  }
+
+  const candidates = fs.readdirSync(extensionsRoot, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && /^openai\.chatgpt-/i.test(entry.name))
+    .map((entry) => path.join(extensionsRoot, entry.name, "bin", "windows-x86_64", "codex.exe"))
+    .filter((filePath) => fs.existsSync(filePath))
+    .sort((left, right) => fs.statSync(right).mtimeMs - fs.statSync(left).mtimeMs);
+
+  return candidates[0] || "";
+}
+
+function formatUnavailableCommandMessage(role, command) {
+  const normalized = normalizeCommandValue(command);
+  const family = getCommandFamily(normalized);
+  const locationHint = isExplicitCommandPath(normalized)
+    ? "configured path"
+    : "PATH";
+
+  if (family === "codex") {
+    return `${role} command "${normalized}" is not available via ${locationHint}. The Codex VS Code extension is not the same as the codex CLI; install the Codex CLI or point Hermes to an actual codex executable.`;
+  }
+
+  return `${role} command "${normalized}" is not available via ${locationHint}.`;
+}
+
+const bundledCodexExecutable = findBundledCodexExecutable();
+if (bundledCodexExecutable) {
+  defaultConfig.planner.command = bundledCodexExecutable;
+  defaultConfig.executors.codex.command = bundledCodexExecutable;
+}
+
 function timestampId() {
   return new Date().toISOString().replace(/[:.]/g, "-");
 }
 
 function buildPlannerPrompt(instruction, config) {
   const workdir = config.dispatch.defaultWorkdir || ".";
-  return `你现在扮演一个任务总控，负责把用户请求拆解并分配给 3 个外部编码执行器：codex、claude、gemini。
+  return `你现在扮演 Hermes 的主控大脑，但执行载体是一个独立的 Codex 规划会话。你的职责是把用户请求拆解并分配给 3 个外部编码执行器：codex、claude、gemini。
 
 约束：
 1. 只输出 JSON，不要输出解释，不要输出 Markdown。
@@ -159,17 +240,26 @@ function buildPlannerPrompt(instruction, config) {
       "executor": "codex|claude|gemini",
       "objective": "给该执行器的完整任务说明",
       "workdir": "${workdir}",
-      "dependsOn": []
+      "dependsOn": [],
+      "writeTargets": ["相对文件或目录路径"],
+      "canUseSubagents": true
     }
   ]
 }
 3. task id 必须唯一，dependsOn 只能引用前面出现过的 task id。
-4. 优先按能力分工：
-   - codex: 大改动、代码实现、重构
-   - claude: 分析、review、补文档、细化方案
-   - gemini: 检索、总结、横向比较、辅助实现
-5. 如果任务不适合拆分，就只返回 1 个任务。
-6. workdir 使用相对路径，默认 "${workdir}"。
+4. 默认按下面这套固定职责分工，不要随意改：
+   - codex: 后端任务、服务端逻辑、接口、数据流、工程实现
+   - gemini: 前端任务、UI、交互、页面表现、前端体验
+   - claude: 代码查漏补缺、review、兜底修正、边界核对、补文档
+5. 任务拆分时优先遵循领域而不是泛泛的能力标签：
+   - 只要是后端主任务，优先分给 codex
+   - 只要是前端主任务，优先分给 gemini
+   - 如果需要做代码查漏补缺、遗漏扫描、风险复核、补丁兜底，优先分给 claude
+6. 如果请求同时包含前后端，优先拆成“后端 codex” + “前端 gemini” + “查漏补缺 claude” 这样的结构。
+7. 如果任务不适合拆分，就只返回 1 个任务，但仍要按上面的固定职责选 executor。
+8. 每个 task 尽量提供 writeTargets，列出预计会改动的相对文件或目录路径，用于并行调度时判断是否冲突；如果确实无法判断，再写 []。
+9. 如果某个任务本身很复杂、还可以在执行器内部继续拆分子问题，就把 canUseSubagents 设为 true；否则设为 false。
+10. workdir 使用相对路径，默认 "${workdir}"。
 
 用户请求：
 ${instruction}`;
@@ -219,6 +309,97 @@ function extractJsonBlock(text) {
   throw new Error("Planner output contains an incomplete JSON object.");
 }
 
+function inferExecutorFromTask(task) {
+  const titleText = String(task.title ?? "").toLowerCase();
+  const objectiveText = String(task.objective ?? "").toLowerCase();
+
+  const routingRules = {
+    claude: [
+      "查漏补缺",
+      "兜底",
+      "复核",
+    "review",
+    "补文档",
+    "文档",
+    "边界",
+    "风险",
+    "遗漏扫描",
+    "gap-filling",
+    "fallback",
+      "audit",
+      "edge case",
+      "edge-case",
+      "regression",
+    ],
+    gemini: [
+      "前端",
+      "frontend",
+      "ui",
+    "页面",
+    "page",
+    "交互",
+    "样式",
+    "style",
+    "css",
+    "组件",
+    "component",
+      "视觉",
+      "布局",
+      "layout",
+      "体验",
+    ],
+    codex: [
+      "后端",
+      "backend",
+      "服务端",
+    "server",
+    "接口",
+    "api",
+    "数据流",
+    "data flow",
+    "service",
+    "数据库",
+    "database",
+      "middleware",
+      "路由",
+      "route",
+      "工程实现",
+    ],
+  };
+
+  const scoreRole = (keywords) => {
+    let score = 0;
+    for (const keyword of keywords) {
+      if (titleText.includes(keyword)) {
+        score += 4;
+      }
+      if (objectiveText.includes(keyword)) {
+        score += 1;
+      }
+    }
+    return score;
+  };
+
+  const scoredRoles = Object.entries(routingRules)
+    .map(([executor, keywords]) => ({ executor, score: scoreRole(keywords) }))
+    .sort((left, right) => right.score - left.score);
+
+  if (scoredRoles[0] && scoredRoles[0].score > 0) {
+    return scoredRoles[0].executor;
+  }
+
+  return "";
+}
+
+function normalizeWriteTarget(value) {
+  return String(value || "")
+    .trim()
+    .replace(/\\/g, "/")
+    .replace(/^\.?\//, "")
+    .replace(/\/+/g, "/")
+    .replace(/\/$/, "");
+}
+
 function normalizePlan(rawPlan, config) {
   if (!rawPlan || typeof rawPlan !== "object") {
     throw new Error("Plan must be a JSON object.");
@@ -234,12 +415,18 @@ function normalizePlan(rawPlan, config) {
   const normalizedTasks = tasks.map((task, index) => {
     const id = String(task.id ?? `task-${index + 1}`).trim();
     const title = String(task.title ?? task.objective ?? id).trim();
-    const executor = String(task.executor ?? "").trim();
     const objective = String(task.objective ?? "").trim();
     const workdir = String(task.workdir ?? config.dispatch.defaultWorkdir ?? ".").trim();
     const dependsOn = Array.isArray(task.dependsOn)
       ? task.dependsOn.map((value) => String(value).trim()).filter(Boolean)
       : [];
+    const writeTargets = Array.isArray(task.writeTargets)
+      ? task.writeTargets.map((value) => normalizeWriteTarget(value)).filter(Boolean)
+      : [];
+    const canUseSubagents = Boolean(task.canUseSubagents);
+    const requestedExecutor = String(task.executor ?? "").trim();
+    const inferredExecutor = inferExecutorFromTask({ title, objective });
+    const executor = inferredExecutor || requestedExecutor;
 
     if (!id) {
       throw new Error(`Task ${index + 1} is missing an id.`);
@@ -247,15 +434,21 @@ function normalizePlan(rawPlan, config) {
     if (seenIds.has(id)) {
       throw new Error(`Duplicate task id: ${id}`);
     }
+    if (requestedExecutor && !knownExecutors.has(requestedExecutor)) {
+      throw new Error(`Task ${id} uses unknown executor "${requestedExecutor}".`);
+    }
     if (!knownExecutors.has(executor)) {
       throw new Error(`Task ${id} uses unknown executor "${executor}".`);
     }
     if (!objective) {
       throw new Error(`Task ${id} is missing an objective.`);
     }
+    if (requestedExecutor && inferredExecutor && requestedExecutor !== inferredExecutor) {
+      console.warn(`[Hermes routing] task "${id}" reassigned from ${requestedExecutor} to ${inferredExecutor} based on fixed routing rules.`);
+    }
 
     seenIds.add(id);
-    return { id, title, executor, objective, workdir, dependsOn };
+    return { id, title, executor, objective, workdir, dependsOn, writeTargets, canUseSubagents };
   });
 
   for (const task of normalizedTasks) {
@@ -287,6 +480,8 @@ ${plan.summary || "未提供"}
 - 标题: ${task.title}
 - ${dependencyNotes}
 - 工作目录: ${task.workdir}
+- 预计改动范围: ${task.writeTargets.length > 0 ? task.writeTargets.join(", ") : "未声明，默认按可能冲突处理"}
+- 允许子代理: ${task.canUseSubagents ? "是" : "否"}
 
 任务目标：
 ${task.objective}
@@ -294,7 +489,9 @@ ${task.objective}
 执行要求：
 1. 如果需要改文件，直接在工作目录内完成。
 2. 不要重复规划整个项目，只完成当前任务范围。
-3. 最终输出使用下面的文本格式，方便主控汇总：
+3. 如果任务较复杂且你的运行时支持子代理、并行 worker 或内部任务拆分，可以在不越权、不与其他任务争抢同一批文件的前提下使用子代理推进；如果不支持，就正常单线程完成。
+4. 尽量把改动限制在上面声明的 writeTargets 范围内；如果实际需要越出该范围，先在最终 NOTES 里明确说明。
+5. 最终输出使用下面的文本格式，方便主控汇总：
 STATUS: DONE|BLOCKED
 SUMMARY: 一段简短总结
 ARTIFACTS:
@@ -306,13 +503,45 @@ NOTES:
 function buildExecutorArgs(executorConfig, prompt, workdir) {
   const baseArgs = Array.isArray(executorConfig.args) ? [...executorConfig.args] : [];
   const mode = executorConfig.promptMode ?? "argument";
+  const model = String(executorConfig.model ?? "").trim();
+  const env = {};
+  const commandFamily = getCommandFamily(executorConfig.command);
 
-  if (executorConfig.command === "codex" && !baseArgs.includes("-C") && !baseArgs.includes("--cd")) {
+  if (commandFamily === "codex" && !baseArgs.includes("-C") && !baseArgs.includes("--cd")) {
     baseArgs.push("-C", workdir);
   }
 
-  if (executorConfig.command === "claude" && !baseArgs.includes("--add-dir")) {
+  if (commandFamily === "claude" && !baseArgs.includes("--add-dir")) {
     baseArgs.push("--add-dir", workdir);
+  }
+
+  if (model && (commandFamily === "codex" || commandFamily === "claude")) {
+    baseArgs.push("--model", model);
+  }
+
+  if (model && commandFamily === "gemini") {
+    env.GEMINI_MODEL = model;
+  }
+
+  if (mode === "stdin") {
+    return { args: baseArgs, stdin: prompt, env };
+  }
+
+  return { args: [...baseArgs, prompt], stdin: null, env };
+}
+
+function buildPlannerArgs(plannerConfig, prompt, workdir) {
+  const baseArgs = Array.isArray(plannerConfig.args) ? [...plannerConfig.args] : [];
+  const mode = plannerConfig.promptMode ?? "argument";
+  const model = String(plannerConfig.model ?? "").trim();
+  const commandFamily = getCommandFamily(plannerConfig.command);
+
+  if (commandFamily === "codex" && !baseArgs.includes("-C") && !baseArgs.includes("--cd")) {
+    baseArgs.push("-C", workdir);
+  }
+
+  if (model && commandFamily === "codex") {
+    baseArgs.push("--model", model);
   }
 
   if (mode === "stdin") {
@@ -322,10 +551,106 @@ function buildExecutorArgs(executorConfig, prompt, workdir) {
   return { args: [...baseArgs, prompt], stdin: null };
 }
 
+function buildPlannerResumeArgs(plannerConfig, sessionId, prompt) {
+  const baseArgs = Array.isArray(plannerConfig.resumeArgs) ? [...plannerConfig.resumeArgs] : ["exec", "resume"];
+  const mode = plannerConfig.promptMode ?? "argument";
+  const model = String(plannerConfig.model ?? "").trim();
+  const commandFamily = getCommandFamily(plannerConfig.command);
+  const args = [...baseArgs, sessionId];
+
+  if (model && commandFamily === "codex") {
+    args.push("--model", model);
+  }
+
+  if (mode === "stdin") {
+    return { args, stdin: prompt };
+  }
+
+  return { args: [...args, prompt], stdin: null };
+}
+
+function buildPlannerSchema() {
+  return {
+    type: "object",
+    additionalProperties: false,
+    required: ["summary", "tasks"],
+    properties: {
+      summary: { type: "string" },
+      tasks: {
+        type: "array",
+        minItems: 1,
+        items: {
+          type: "object",
+          additionalProperties: false,
+          required: ["id", "title", "executor", "objective", "workdir", "dependsOn"],
+          properties: {
+            id: { type: "string" },
+            title: { type: "string" },
+            executor: { type: "string", enum: ["codex", "claude", "gemini"] },
+            objective: { type: "string" },
+            workdir: { type: "string" },
+            dependsOn: {
+              type: "array",
+              items: { type: "string" },
+            },
+            writeTargets: {
+              type: "array",
+              items: { type: "string" },
+            },
+            canUseSubagents: { type: "boolean" },
+          },
+        },
+      },
+    },
+  };
+}
+
+function extractPlannerSessionId(...chunks) {
+  for (const chunk of chunks) {
+    const text = String(chunk || "");
+    const match = text.match(/session id:\s*([0-9a-f-]{8,})/i);
+    if (match) {
+      return match[1];
+    }
+
+    const sessionMetaMatch = text.match(/"id":"([0-9a-f-]{8,})"/i);
+    if (sessionMetaMatch) {
+      return sessionMetaMatch[1];
+    }
+  }
+  return "";
+}
+
+async function readPlannerState(statePath) {
+  try {
+    const text = await fsp.readFile(statePath, "utf8");
+    const parsed = JSON.parse(text);
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+async function writePlannerState(statePath, payload) {
+  await ensureDir(path.dirname(statePath));
+  await fsp.writeFile(statePath, JSON.stringify(payload, null, 2), "utf8");
+}
+
 async function commandExists(command) {
+  const normalized = normalizeCommandValue(command);
+  const resolved = resolveCommandForExecution(normalized);
+
+  if (!resolved) {
+    return false;
+  }
+
+  if (isExplicitCommandPath(normalized)) {
+    return fs.existsSync(resolved);
+  }
+
   const locator = process.platform === "win32" ? "where" : "which";
   return new Promise((resolve) => {
-    const child = spawn(locator, [command], { stdio: "ignore" });
+    const child = spawn(locator, [normalized], { stdio: "ignore" });
     child.on("close", (code) => resolve(code === 0));
     child.on("error", () => resolve(false));
   });
@@ -336,10 +661,12 @@ async function runProcess(command, args, options = {}) {
     cwd = repoRoot,
     stdin = null,
     env = process.env,
+    onStdout = null,
+    onStderr = null,
   } = options;
 
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, {
+    const child = spawn(resolveCommandForExecution(command), args, {
       cwd,
       env,
       stdio: ["pipe", "pipe", "pipe"],
@@ -351,9 +678,15 @@ async function runProcess(command, args, options = {}) {
 
     child.stdout.on("data", (chunk) => {
       stdout += chunk.toString();
+      if (typeof onStdout === "function") {
+        onStdout(chunk);
+      }
     });
     child.stderr.on("data", (chunk) => {
       stderr += chunk.toString();
+      if (typeof onStderr === "function") {
+        onStderr(chunk);
+      }
     });
     child.on("error", reject);
     child.on("close", (code) => {
@@ -374,22 +707,90 @@ async function runProcess(command, args, options = {}) {
 async function generatePlan(instruction, config, runDir) {
   const plannerConfig = config.planner ?? {};
   const command = plannerConfig.command ?? "hermes";
+  const commandFamily = getCommandFamily(command);
   const exists = await commandExists(command);
   if (!exists) {
-    throw new Error(`Planner command "${command}" is not available in PATH.`);
+    throw new Error(formatUnavailableCommandMessage("Planner", command));
   }
 
   const plannerPrompt = buildPlannerPrompt(instruction, config);
   await fsp.writeFile(path.join(runDir, "planner-prompt.txt"), plannerPrompt, "utf8");
+  const plannerSchemaPath = path.join(runDir, "planner-schema.json");
+  const plannerLastMessagePath = path.join(runDir, "planner-last-message.txt");
+  const plannerStatePath = resolveFromRoot(plannerConfig.sessionStateFile, path.join(config.dispatch.outputRoot, "planner-session.json"));
+  await fsp.writeFile(plannerSchemaPath, JSON.stringify(buildPlannerSchema(), null, 2), "utf8");
 
-  const plannerArgs = [...(plannerConfig.args ?? []), plannerPrompt];
   const plannerCwd = resolveFromRoot(plannerConfig.cwd, ".");
-  const result = await runProcess(command, plannerArgs, { cwd: plannerCwd });
+  const existingPlannerState = await readPlannerState(plannerStatePath);
+  const previousSessionId = String(existingPlannerState?.sessionId || "").trim();
+
+  let invocationMode = "fresh";
+  let plannerInvocation;
+  if (commandFamily === "codex" && previousSessionId) {
+    invocationMode = "resume";
+    plannerInvocation = buildPlannerResumeArgs(plannerConfig, previousSessionId, plannerPrompt);
+  } else {
+    plannerInvocation = buildPlannerArgs(plannerConfig, plannerPrompt, plannerCwd);
+  }
+
+  const { args, stdin } = plannerInvocation;
+  if (commandFamily === "codex") {
+    if (invocationMode === "fresh") {
+      args.push("--output-schema", plannerSchemaPath);
+    }
+    args.push("--output-last-message", plannerLastMessagePath);
+  }
+
+  const plannerMeta = {
+    profileId: String(plannerConfig.profileId ?? "default"),
+    label: String(plannerConfig.label ?? command),
+    model: String(plannerConfig.model ?? "").trim() || null,
+    command,
+    cwd: String(plannerConfig.cwd ?? "."),
+    mode: invocationMode,
+    previousSessionId: previousSessionId || null,
+    sessionStateFile: String(plannerConfig.sessionStateFile ?? ""),
+    executorModels: {
+      codex: String(config.executors?.codex?.model ?? "").trim() || null,
+      claude: String(config.executors?.claude?.model ?? "").trim() || null,
+      gemini: String(config.executors?.gemini?.model ?? "").trim() || null,
+    },
+  };
+  await fsp.writeFile(path.join(runDir, "planner-meta.json"), JSON.stringify(plannerMeta, null, 2), "utf8");
+
+  let result;
+  try {
+    result = await runProcess(command, args, { cwd: plannerCwd, stdin });
+  } catch (error) {
+    if (error instanceof Error) {
+      await fsp.writeFile(path.join(runDir, "planner-error.txt"), error.message, "utf8");
+    }
+    throw error;
+  }
 
   await fsp.writeFile(path.join(runDir, "planner-stdout.txt"), result.stdout, "utf8");
   await fsp.writeFile(path.join(runDir, "planner-stderr.txt"), result.stderr, "utf8");
 
-  const plan = normalizePlan(JSON.parse(extractJsonBlock(result.stdout)), config);
+  const currentSessionId = extractPlannerSessionId(result.stdout, result.stderr, previousSessionId);
+  const nextPlannerMeta = {
+    ...plannerMeta,
+    sessionId: currentSessionId || previousSessionId || null,
+  };
+  await fsp.writeFile(path.join(runDir, "planner-meta.json"), JSON.stringify(nextPlannerMeta, null, 2), "utf8");
+  if (commandFamily === "codex" && (currentSessionId || previousSessionId)) {
+    await writePlannerState(plannerStatePath, {
+      label: nextPlannerMeta.label,
+      command,
+      cwd: plannerCwd,
+      sessionId: currentSessionId || previousSessionId,
+      updatedAt: new Date().toISOString(),
+    });
+  }
+
+  const plannerText = fs.existsSync(plannerLastMessagePath)
+    ? await fsp.readFile(plannerLastMessagePath, "utf8")
+    : result.stdout;
+  const plan = normalizePlan(JSON.parse(extractJsonBlock(plannerText)), config);
   await fsp.writeFile(path.join(runDir, "plan.json"), JSON.stringify(plan, null, 2), "utf8");
   return plan;
 }
@@ -398,15 +799,132 @@ async function loadPlanFromFile(planFile, config, runDir) {
   const planPath = path.resolve(repoRoot, planFile);
   const planText = await fsp.readFile(planPath, "utf8");
   const plan = normalizePlan(JSON.parse(planText), config);
+  await fsp.writeFile(
+    path.join(runDir, "planner-meta.json"),
+    JSON.stringify(
+      {
+        profileId: null,
+        label: "sample-plan",
+        model: null,
+        command: "sample-plan",
+        cwd: ".",
+        mode: "manual",
+        sessionId: null,
+        sessionStateFile: null,
+        executorModels: {
+          codex: null,
+          claude: null,
+          gemini: null,
+        },
+      },
+      null,
+      2,
+    ),
+    "utf8",
+  );
   await fsp.writeFile(path.join(runDir, "plan.json"), JSON.stringify(plan, null, 2), "utf8");
   return plan;
 }
 
+function createDispatchState(plan) {
+  return {
+    completed: new Set(),
+    failed: new Set(),
+    running: new Map(),
+    outputs: [],
+    taskMeta: new Map(
+      plan.tasks.map((task) => [
+        task.id,
+        {
+          status: "queued",
+          startedAt: null,
+          finishedAt: null,
+          durationMs: null,
+          error: null,
+        },
+      ]),
+    ),
+  };
+}
+
+function createProgressSnapshot(plan, state) {
+  const tasks = plan.tasks.map((task) => {
+    const meta = state.taskMeta.get(task.id) || {};
+    return {
+      id: task.id,
+      title: task.title,
+      executor: task.executor,
+      workdir: task.workdir,
+      dependsOn: task.dependsOn,
+      writeTargets: task.writeTargets,
+      canUseSubagents: task.canUseSubagents,
+      status: meta.status || "queued",
+      startedAt: meta.startedAt || null,
+      finishedAt: meta.finishedAt || null,
+      durationMs: meta.durationMs || null,
+      error: meta.error || null,
+    };
+  });
+
+  const summary = tasks.reduce((accumulator, task) => {
+    accumulator.total += 1;
+    accumulator[task.status] = (accumulator[task.status] || 0) + 1;
+    return accumulator;
+  }, {
+    total: 0,
+    queued: 0,
+    running: 0,
+    completed: 0,
+    failed: 0,
+  });
+
+  return {
+    updatedAt: new Date().toISOString(),
+    currentTaskIds: tasks.filter((task) => task.status === "running").map((task) => task.id),
+    currentExecutors: tasks.filter((task) => task.status === "running").map((task) => task.executor),
+    summary,
+    tasks,
+  };
+}
+
+async function persistDispatchState(plan, state, runDir) {
+  await Promise.all([
+    fsp.writeFile(path.join(runDir, "progress.json"), JSON.stringify(createProgressSnapshot(plan, state), null, 2), "utf8"),
+    fsp.writeFile(path.join(runDir, "results.json"), JSON.stringify(state.outputs, null, 2), "utf8"),
+  ]);
+}
+
+function pathScopesOverlap(left, right) {
+  if (!left || !right) {
+    return false;
+  }
+
+  return left === right
+    || left.startsWith(`${right}/`)
+    || right.startsWith(`${left}/`);
+}
+
+function tasksConflict(leftTask, rightTask, config) {
+  const leftWorkdir = resolveFromRoot(leftTask.workdir, config.dispatch.defaultWorkdir);
+  const rightWorkdir = resolveFromRoot(rightTask.workdir, config.dispatch.defaultWorkdir);
+
+  if (leftWorkdir !== rightWorkdir) {
+    return false;
+  }
+
+  const leftTargets = Array.isArray(leftTask.writeTargets) ? leftTask.writeTargets : [];
+  const rightTargets = Array.isArray(rightTask.writeTargets) ? rightTask.writeTargets : [];
+
+  if (leftTargets.length === 0 || rightTargets.length === 0) {
+    return !config.dispatch.allowSharedWorkdirParallel;
+  }
+
+  return leftTargets.some((leftTarget) => rightTargets.some((rightTarget) => pathScopesOverlap(leftTarget, rightTarget)));
+}
+
 function selectReadyTasks(plan, state, config) {
   const ready = [];
-  const activeWorkdirs = new Set(
-    Array.from(state.running.values()).map((task) => resolveFromRoot(task.workdir, config.dispatch.defaultWorkdir)),
-  );
+  const activeTasks = Array.from(state.running.values());
 
   for (const task of plan.tasks) {
     if (state.completed.has(task.id) || state.failed.has(task.id) || state.running.has(task.id)) {
@@ -417,13 +935,12 @@ function selectReadyTasks(plan, state, config) {
       continue;
     }
 
-    const taskWorkdir = resolveFromRoot(task.workdir, config.dispatch.defaultWorkdir);
-    if (!config.dispatch.allowSharedWorkdirParallel && activeWorkdirs.has(taskWorkdir)) {
+    const hasConflict = [...activeTasks, ...ready].some((activeTask) => tasksConflict(task, activeTask, config));
+    if (hasConflict) {
       continue;
     }
 
     ready.push(task);
-    activeWorkdirs.add(taskWorkdir);
     if (ready.length >= (config.dispatch.maxParallel ?? 1)) {
       break;
     }
@@ -439,29 +956,43 @@ async function executeTask(plan, task, config, runDir) {
 
   const exists = await commandExists(executorConfig.command);
   if (!exists) {
-    throw new Error(`Executor command "${executorConfig.command}" is not available in PATH.`);
+    throw new Error(formatUnavailableCommandMessage(`Executor ${task.executor}`, executorConfig.command));
   }
 
   const taskDir = path.join(runDir, task.id);
   await ensureDir(taskDir);
+  const stdoutPath = path.join(taskDir, "stdout.txt");
+  const stderrPath = path.join(taskDir, "stderr.txt");
+  await Promise.all([
+    fsp.writeFile(stdoutPath, "", "utf8"),
+    fsp.writeFile(stderrPath, "", "utf8"),
+  ]);
+  const stdoutStream = fs.createWriteStream(stdoutPath, { flags: "a" });
+  const stderrStream = fs.createWriteStream(stderrPath, { flags: "a" });
 
   const workdir = resolveFromRoot(task.workdir || executorConfig.cwd, config.dispatch.defaultWorkdir);
   const prompt = buildExecutorPrompt(plan, task);
   await fsp.writeFile(path.join(taskDir, "prompt.txt"), prompt, "utf8");
 
-  const { args, stdin } = buildExecutorArgs(executorConfig, prompt, workdir);
+  const { args, stdin, env } = buildExecutorArgs(executorConfig, prompt, workdir);
   console.log(`-> ${task.id} [${task.executor}] ${task.title}`);
 
   const startedAt = Date.now();
-  const result = await runProcess(executorConfig.command, args, {
-    cwd: workdir,
-    stdin,
-    env: { ...process.env, ...(executorConfig.env ?? {}) },
-  });
+  let result;
+  try {
+    result = await runProcess(executorConfig.command, args, {
+      cwd: workdir,
+      stdin,
+      env: { ...process.env, ...(executorConfig.env ?? {}), ...env },
+      onStdout: (chunk) => stdoutStream.write(chunk),
+      onStderr: (chunk) => stderrStream.write(chunk),
+    });
+  } finally {
+    stdoutStream.end();
+    stderrStream.end();
+  }
 
   const finishedAt = Date.now();
-  await fsp.writeFile(path.join(taskDir, "stdout.txt"), result.stdout, "utf8");
-  await fsp.writeFile(path.join(taskDir, "stderr.txt"), result.stderr, "utf8");
   await fsp.writeFile(
     path.join(taskDir, "result.json"),
     JSON.stringify(
@@ -494,12 +1025,8 @@ async function executeTask(plan, task, config, runDir) {
 }
 
 async function dispatchPlan(plan, config, runDir) {
-  const state = {
-    completed: new Set(),
-    failed: new Set(),
-    running: new Map(),
-  };
-  const outputs = [];
+  const state = createDispatchState(plan);
+  await persistDispatchState(plan, state, runDir);
 
   while (state.completed.size + state.failed.size < plan.tasks.length) {
     const ready = selectReadyTasks(plan, state, config);
@@ -512,7 +1039,16 @@ async function dispatchPlan(plan, config, runDir) {
 
     for (const task of ready) {
       state.running.set(task.id, task);
+      state.taskMeta.set(task.id, {
+        ...(state.taskMeta.get(task.id) || {}),
+        status: "running",
+        startedAt: Date.now(),
+        finishedAt: null,
+        durationMs: null,
+        error: null,
+      });
     }
+    await persistDispatchState(plan, state, runDir);
 
     const settled = await Promise.allSettled(
       ready.map((task) => executeTask(plan, task, config, runDir)),
@@ -523,25 +1059,40 @@ async function dispatchPlan(plan, config, runDir) {
       state.running.delete(task.id);
       if (result.status === "fulfilled") {
         state.completed.add(task.id);
-        outputs.push({ status: "fulfilled", ...result.value });
+        state.outputs.push({ status: "fulfilled", ...result.value });
+        state.taskMeta.set(task.id, {
+          ...(state.taskMeta.get(task.id) || {}),
+          status: "completed",
+          startedAt: result.value.startedAt,
+          finishedAt: result.value.finishedAt,
+          durationMs: result.value.durationMs,
+          error: null,
+        });
         console.log(`<- ${task.id} [${task.executor}] done`);
         return;
       }
 
       state.failed.add(task.id);
-      outputs.push({
+      state.outputs.push({
         status: "rejected",
         taskId: task.id,
         executor: task.executor,
         title: task.title,
         error: String(result.reason?.message ?? result.reason),
       });
+      state.taskMeta.set(task.id, {
+        ...(state.taskMeta.get(task.id) || {}),
+        status: "failed",
+        finishedAt: Date.now(),
+        error: String(result.reason?.message ?? result.reason),
+      });
       console.log(`<- ${task.id} [${task.executor}] failed`);
     });
+    await persistDispatchState(plan, state, runDir);
   }
 
-  await fsp.writeFile(path.join(runDir, "results.json"), JSON.stringify(outputs, null, 2), "utf8");
-  return outputs;
+  await persistDispatchState(plan, state, runDir);
+  return state.outputs;
 }
 
 async function main() {
@@ -562,6 +1113,7 @@ async function main() {
     : await generatePlan(options.instruction, config, runDir);
 
   console.log(JSON.stringify(plan, null, 2));
+  await persistDispatchState(plan, createDispatchState(plan), runDir);
 
   if (options.planOnly) {
     return;

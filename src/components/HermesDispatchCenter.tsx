@@ -1,7 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import { useEffect, useMemo, useRef, useState, type ChangeEvent, type CSSProperties } from "react";
 import { resolveBackendUrl } from "@/lib/backend-url";
+import { sendWs } from "@/hooks/useWebSocket";
+import { useStore } from "@/store";
+import type { HermesDispatchSettings, HermesPlannerProfile } from "@/store/types";
 
 type HermesAvailability = Record<string, { command: string; available: boolean }>;
 
@@ -23,7 +26,16 @@ type HermesDispatchRun = {
   id: string;
   instruction: string;
   mode: "execute" | "plan-only";
-  planner: "hermes" | "sample";
+  plannerProfileId?: string | null;
+  planner: "codex-brain" | "sample-plan" | string;
+  plannerModel?: string | null;
+  plannerSessionId?: string | null;
+  plannerSessionStateFile?: string | null;
+  executorModels?: {
+    codex?: string | null;
+    claude?: string | null;
+    gemini?: string | null;
+  } | null;
   status: "queued" | "running" | "completed" | "failed" | "planned";
   createdAt: number;
   updatedAt: number;
@@ -45,6 +57,7 @@ type HermesDispatchStatusResponse = {
   ok: boolean;
   availability: HermesAvailability;
   runs: HermesDispatchRun[];
+  hermesDispatchSettings: HermesDispatchSettings;
   prototypePath: string;
 };
 
@@ -52,6 +65,34 @@ type HermesDispatchLaunchResponse = {
   ok: boolean;
   run: HermesDispatchRun;
 };
+
+type HermesDispatchResetSessionResponse = {
+  ok: boolean;
+  profileId: string;
+  label: string;
+  sessionStateFile: string;
+  deleted: boolean;
+};
+
+type HermesPlannerProfileDraft = {
+  id: string;
+  label: string;
+  sessionStateFile: string;
+  description: string;
+  models: {
+    planner: string;
+    codex: string;
+    claude: string;
+    gemini: string;
+  };
+};
+
+const MODEL_SUGGESTIONS = {
+  planner: ["gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "gpt-5.2-codex"],
+  codex: ["gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "gpt-5.2-codex"],
+  claude: ["claude-sonnet-4-6", "claude-haiku-4-5-20251001", "sonnet", "opus"],
+  gemini: ["gemini-2.5-pro", "gemini-2.5-flash"],
+} as const;
 
 const RUN_STATUS_TONE: Record<HermesDispatchRun["status"], { label: string; color: string }> = {
   queued: { label: "Queued", color: "#94a3b8" },
@@ -83,12 +124,18 @@ function badgeStyle(color: string): CSSProperties {
 }
 
 export function HermesDispatchCenter() {
+  const hermesDispatchSettings = useStore(state => state.hermesDispatchSettings);
+  const replaceHermesDispatchSettings = useStore(state => state.replaceHermesDispatchSettings);
+  const profileImportRef = useRef<HTMLInputElement | null>(null);
   const [instruction, setInstruction] = useState("");
   const [availability, setAvailability] = useState<HermesAvailability>({});
   const [runs, setRuns] = useState<HermesDispatchRun[]>([]);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [prototypePath, setPrototypePath] = useState("");
+  const [profileDraft, setProfileDraft] = useState<HermesPlannerProfileDraft | null>(null);
+  const [settingsHydrated, setSettingsHydrated] = useState(false);
   const [submittingMode, setSubmittingMode] = useState<"execute" | "plan-only" | "sample" | null>(null);
+  const [requestNotice, setRequestNotice] = useState<string | null>(null);
   const [requestError, setRequestError] = useState<string | null>(null);
 
   const loadStatus = async () => {
@@ -101,6 +148,10 @@ export function HermesDispatchCenter() {
 
     setAvailability(payload.availability);
     setRuns(payload.runs);
+    if (!settingsHydrated) {
+      replaceHermesDispatchSettings(payload.hermesDispatchSettings);
+      setSettingsHydrated(true);
+    }
     setPrototypePath(payload.prototypePath);
     setSelectedRunId(current => current ?? payload.runs[0]?.id ?? null);
   };
@@ -129,9 +180,113 @@ export function HermesDispatchCenter() {
     () => Object.entries(availability),
     [availability],
   );
+  const selectedProfile = useMemo(
+    () => hermesDispatchSettings.plannerProfiles.find(
+      profile => profile.id === hermesDispatchSettings.activePlannerProfileId,
+    ) ?? hermesDispatchSettings.plannerProfiles[0] ?? null,
+    [hermesDispatchSettings],
+  );
+
+  useEffect(() => {
+    setProfileDraft(selectedProfile ? createProfileDraft(selectedProfile) : null);
+  }, [selectedProfile]);
+
+  const isProfileDirty = useMemo(() => {
+    if (!selectedProfile || !profileDraft) return false;
+    return JSON.stringify(normalizeProfileDraft(profileDraft)) !== JSON.stringify(selectedProfile);
+  }, [profileDraft, selectedProfile]);
 
   const missingCommands = commandList.filter(([, item]) => !item.available).map(([name]) => name);
-  const hermesReady = availability.hermes?.available ?? false;
+  const plannerReady = availability.planner?.available ?? false;
+
+  const persistHermesDispatchSettings = async (nextSettings: HermesDispatchSettings) => {
+    replaceHermesDispatchSettings(nextSettings);
+    const store = useStore.getState();
+    const syncPayload = {
+      type: "settings_sync",
+      providers: store.providers,
+      agentConfigs: store.agentConfigs,
+      userNickname: store.userNickname,
+      desktopProgramSettings: store.desktopProgramSettings,
+      hermesDispatchSettings: nextSettings,
+    };
+
+    if (!sendWs(syncPayload)) {
+      const url = await resolveBackendUrl("/api/settings");
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          providers: store.providers,
+          agentConfigs: store.agentConfigs,
+          userNickname: store.userNickname,
+          desktopProgramSettings: store.desktopProgramSettings,
+          hermesDispatchSettings: nextSettings,
+        }),
+      });
+      if (!response.ok) {
+        throw new Error("保存 Hermes dispatch 设置失败。");
+      }
+    }
+  };
+
+  const exportProfiles = () => {
+    const blob = new Blob([JSON.stringify(hermesDispatchSettings, null, 2)], {
+      type: "application/json;charset=utf-8",
+    });
+    const objectUrl = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = objectUrl;
+    anchor.download = `hermes-dispatch-profiles-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-")}.json`;
+    anchor.click();
+    URL.revokeObjectURL(objectUrl);
+    setRequestError(null);
+    setRequestNotice("已导出当前 Hermes profiles JSON。");
+  };
+
+  const importProfiles = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+
+    try {
+      const text = await file.text();
+      const parsed = JSON.parse(text) as HermesDispatchSettings | { hermesDispatchSettings?: HermesDispatchSettings };
+      const importedSettings = "hermesDispatchSettings" in parsed && parsed.hermesDispatchSettings
+        ? parsed.hermesDispatchSettings
+        : parsed;
+      await persistHermesDispatchSettings(importedSettings as HermesDispatchSettings);
+      setRequestError(null);
+      setRequestNotice(`已导入 profiles：${file.name}`);
+      await loadStatus();
+    } catch (error) {
+      setRequestNotice(null);
+      setRequestError(error instanceof Error ? `导入失败：${error.message}` : `导入失败：${String(error)}`);
+    }
+  };
+
+  const resetSelectedProfileSession = async () => {
+    if (!selectedProfile) return;
+    const confirmed = window.confirm(`确定清空 brain "${selectedProfile.label}" 的 planner session 记忆吗？下一次 dispatch 会从新会话开始。`);
+    if (!confirmed) return;
+
+    const url = await resolveBackendUrl("/api/hermes-dispatch/reset-session");
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ profileId: selectedProfile.id }),
+    });
+    const payload = await response.json() as HermesDispatchResetSessionResponse & { error?: string };
+    if (!response.ok || !payload.ok) {
+      throw new Error(payload.error || "清空 planner session 失败。");
+    }
+
+    setRequestError(null);
+    setRequestNotice(payload.deleted
+      ? `已清空 ${selectedProfile.label} 的 session 记忆。`
+      : `${selectedProfile.label} 当前没有可清空的 session 文件。`);
+    await loadStatus();
+  };
 
   const submitRun = async (mode: "execute" | "plan-only" | "sample") => {
     const trimmed = instruction.trim();
@@ -142,6 +297,7 @@ export function HermesDispatchCenter() {
 
     setSubmittingMode(mode);
     setRequestError(null);
+    setRequestNotice(null);
 
     try {
       const url = await resolveBackendUrl("/api/hermes-dispatch/run");
@@ -152,6 +308,7 @@ export function HermesDispatchCenter() {
           instruction: trimmed,
           planOnly: mode === "plan-only",
           useSamplePlan: mode === "sample",
+          plannerProfileId: mode === "sample" ? undefined : selectedProfile?.id,
         }),
       });
       const payload = await response.json() as HermesDispatchLaunchResponse & { error?: string };
@@ -165,6 +322,86 @@ export function HermesDispatchCenter() {
     } finally {
       setSubmittingMode(null);
     }
+  };
+
+  const saveProfileDraft = async () => {
+    if (!profileDraft || !selectedProfile) return;
+
+    const nextId = slugifyProfileId(profileDraft.id);
+    if (!nextId) {
+      setRequestError("Profile ID 不能为空。");
+      setRequestNotice(null);
+      return;
+    }
+    if (!profileDraft.sessionStateFile.trim()) {
+      setRequestError("Session State File 不能为空。");
+      setRequestNotice(null);
+      return;
+    }
+    if (nextId !== selectedProfile.id && hermesDispatchSettings.plannerProfiles.some(profile => profile.id === nextId)) {
+      setRequestError(`Profile ID "${nextId}" 已存在。`);
+      setRequestNotice(null);
+      return;
+    }
+
+    const nextProfile = normalizeProfileDraft(profileDraft);
+    nextProfile.id = nextId;
+
+    const nextProfiles = hermesDispatchSettings.plannerProfiles.map(profile =>
+      profile.id === selectedProfile.id ? nextProfile : profile,
+    );
+    const nextSettings: HermesDispatchSettings = {
+      activePlannerProfileId:
+        hermesDispatchSettings.activePlannerProfileId === selectedProfile.id
+          ? nextProfile.id
+          : hermesDispatchSettings.activePlannerProfileId,
+      plannerProfiles: nextProfiles,
+    };
+
+    setRequestError(null);
+    setRequestNotice(`已保存槽位 ${nextProfile.label}。`);
+    await persistHermesDispatchSettings(nextSettings);
+  };
+
+  const addProfile = async () => {
+    const nextId = nextAvailableProfileId(hermesDispatchSettings.plannerProfiles);
+    const nextProfile: HermesPlannerProfile = {
+      id: nextId,
+      label: `Brain ${nextId}`,
+      sessionStateFile: `output/hermes-dispatch/planner-sessions/${nextId}.json`,
+      description: "New planner slot.",
+      models: {},
+    };
+    const nextSettings: HermesDispatchSettings = {
+      activePlannerProfileId: nextProfile.id,
+      plannerProfiles: [...hermesDispatchSettings.plannerProfiles, nextProfile].slice(0, 6),
+    };
+
+    setRequestError(null);
+    setRequestNotice(`已新增槽位 ${nextProfile.label}。`);
+    await persistHermesDispatchSettings(nextSettings);
+  };
+
+  const removeSelectedProfile = async () => {
+    if (!selectedProfile) return;
+    if (hermesDispatchSettings.plannerProfiles.length <= 1) {
+      setRequestError("至少保留一个 planner profile。");
+      setRequestNotice(null);
+      return;
+    }
+
+    const nextProfiles = hermesDispatchSettings.plannerProfiles.filter(profile => profile.id !== selectedProfile.id);
+    const nextSettings: HermesDispatchSettings = {
+      activePlannerProfileId:
+        hermesDispatchSettings.activePlannerProfileId === selectedProfile.id
+          ? nextProfiles[0].id
+          : hermesDispatchSettings.activePlannerProfileId,
+      plannerProfiles: nextProfiles,
+    };
+
+    setRequestError(null);
+    setRequestNotice(`已删除槽位 ${selectedProfile.label}。`);
+    await persistHermesDispatchSettings(nextSettings);
   };
 
   return (
@@ -198,25 +435,57 @@ export function HermesDispatchCenter() {
               <div style={{ fontSize: 11, color: "var(--text-muted)" }}>Launch</div>
               <div style={{ marginTop: 4, fontSize: 15, fontWeight: 700 }}>新建一个 dispatch run</div>
             </div>
-            <span style={badgeStyle(hermesReady ? "#86efac" : "#fda4af")}>
-              {hermesReady ? "Hermes ready" : "Hermes missing"}
+            <span style={badgeStyle(plannerReady ? "#86efac" : "#fda4af")}>
+              {plannerReady ? "Planner ready" : "Planner missing"}
             </span>
           </div>
 
           <textarea
             className="input"
             style={{ minHeight: 140, resize: "vertical" }}
-            placeholder="例如：为当前仓库做一个多代理调度 MVP，并把实现、review、风险总结分别派给 Codex / Claude / Gemini。"
+            placeholder="例如：为当前仓库做一个多代理调度 MVP，并把后端实现派给 Codex、前端界面派给 Gemini、查漏补缺 / review / 风险总结派给 Claude。"
             value={instruction}
             onChange={event => setInstruction(event.target.value)}
           />
+
+          <div style={{ display: "grid", gap: 8 }}>
+            <div style={{ fontSize: 11, color: "var(--text-muted)" }}>Planner Brain Slot</div>
+            <select
+              className="input"
+              value={selectedProfile?.id ?? ""}
+              onChange={event => {
+                const nextSettings: HermesDispatchSettings = {
+                  ...hermesDispatchSettings,
+                  activePlannerProfileId: event.target.value,
+                };
+                void persistHermesDispatchSettings(nextSettings).catch(error => {
+                  setRequestError(error instanceof Error ? error.message : String(error));
+                });
+              }}
+              disabled={submittingMode !== null}
+            >
+              {hermesDispatchSettings.plannerProfiles.map(profile => (
+                <option key={profile.id} value={profile.id}>
+                  {profile.label} · {profile.id}
+                </option>
+              ))}
+            </select>
+            <div style={{ fontSize: 12, lineHeight: 1.7, color: "var(--text-muted)" }}>
+              {selectedProfile?.description || "当前槽位会复用自己的 Codex planner 会话，不同槽位之间互不串上下文。"}
+            </div>
+            {isProfileDirty ? (
+              <div style={{ fontSize: 12, lineHeight: 1.7, color: "#fbbf24" }}>
+                当前 profile 有未保存修改。点击“保存当前槽位”后，新模型和新 session 文件才会用于下一次 dispatch。
+              </div>
+            ) : null}
+          </div>
 
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <button
               type="button"
               className="btn-primary"
               onClick={() => void submitRun("execute")}
-              disabled={submittingMode !== null || !hermesReady}
+              disabled={submittingMode !== null || !plannerReady}
             >
               {submittingMode === "execute" ? "启动中..." : "Hermes 执行 Dispatch"}
             </button>
@@ -224,7 +493,7 @@ export function HermesDispatchCenter() {
               type="button"
               className="btn-ghost"
               onClick={() => void submitRun("plan-only")}
-              disabled={submittingMode !== null || !hermesReady}
+              disabled={submittingMode !== null || !plannerReady}
             >
               {submittingMode === "plan-only" ? "生成中..." : "只生成计划"}
             </button>
@@ -242,6 +511,10 @@ export function HermesDispatchCenter() {
             <div style={warningCardStyle("#fda4af")}>{requestError}</div>
           ) : null}
 
+          {requestNotice ? (
+            <div style={warningCardStyle("#7dd3fc")}>{requestNotice}</div>
+          ) : null}
+
           <div style={{ display: "grid", gap: 8 }}>
             <div style={{ fontSize: 11, color: "var(--text-muted)" }}>Environment</div>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -253,7 +526,7 @@ export function HermesDispatchCenter() {
             </div>
             {missingCommands.length > 0 ? (
               <div style={{ fontSize: 12, lineHeight: 1.7, color: "var(--text-muted)" }}>
-                当前缺失: {missingCommands.join(", ")}。缺 `hermes` 时，面板仍可用样例计划演示 UI 流程，但不能跑真实 Hermes 规划。
+                当前缺失: {missingCommands.join(", ")}。缺 `planner` 或 `codex` 时，面板仍可用样例计划演示 UI 流程，但不能跑真实 Codex 规划大脑。
               </div>
             ) : null}
           </div>
@@ -289,6 +562,7 @@ export function HermesDispatchCenter() {
                     </div>
                     <div style={{ fontSize: 11, color: "var(--text-muted)" }}>
                       {formatTime(run.createdAt)} · {run.mode} · {run.planner}
+                      {run.plannerProfileId ? ` · slot ${run.plannerProfileId}` : ""}
                     </div>
                     <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
                       {run.plan?.tasks?.length ?? 0} tasks
@@ -303,6 +577,188 @@ export function HermesDispatchCenter() {
           )}
         </section>
       </div>
+
+      <section className="card" style={{ padding: 16, display: "grid", gap: 14 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+          <div>
+            <div style={{ fontSize: 11, color: "var(--text-muted)" }}>Profile Manager</div>
+            <div style={{ marginTop: 4, fontSize: 16, fontWeight: 700 }}>可编辑的 Hermes brain profiles</div>
+          </div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <input
+              ref={profileImportRef}
+              type="file"
+              accept="application/json,.json"
+              style={{ display: "none" }}
+              onChange={event => {
+                void importProfiles(event);
+              }}
+            />
+            <button
+              type="button"
+              className="btn-ghost"
+              onClick={exportProfiles}
+            >
+              导出 JSON
+            </button>
+            <button
+              type="button"
+              className="btn-ghost"
+              onClick={() => profileImportRef.current?.click()}
+            >
+              导入 JSON
+            </button>
+            <button type="button" className="btn-ghost" onClick={() => void addProfile().catch(error => {
+              setRequestNotice(null);
+              setRequestError(error instanceof Error ? error.message : String(error));
+            })}>
+              新增槽位
+            </button>
+            <button
+              type="button"
+              className="btn-ghost"
+              onClick={() => void removeSelectedProfile().catch(error => {
+                setRequestNotice(null);
+                setRequestError(error instanceof Error ? error.message : String(error));
+              })}
+              disabled={hermesDispatchSettings.plannerProfiles.length <= 1 || !selectedProfile}
+            >
+              删除当前槽位
+            </button>
+            <button
+              type="button"
+              className="btn-ghost"
+              onClick={() => void resetSelectedProfileSession().catch(error => {
+                setRequestNotice(null);
+                setRequestError(error instanceof Error ? error.message : String(error));
+              })}
+              disabled={!selectedProfile}
+            >
+              清空当前记忆
+            </button>
+            <button
+              type="button"
+              className="btn-primary"
+              onClick={() => void saveProfileDraft().catch(error => {
+                setRequestNotice(null);
+                setRequestError(error instanceof Error ? error.message : String(error));
+              })}
+              disabled={!profileDraft}
+            >
+              保存当前槽位
+            </button>
+          </div>
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(220px, 0.7fr) minmax(320px, 1.3fr)", gap: 16 }}>
+          <div style={{ display: "grid", gap: 10 }}>
+            {hermesDispatchSettings.plannerProfiles.map(profile => {
+              const isActive = profile.id === selectedProfile?.id;
+              return (
+                <button
+                  key={profile.id}
+                  type="button"
+                  className="card"
+                  onClick={() => {
+                    const nextSettings: HermesDispatchSettings = {
+                      ...hermesDispatchSettings,
+                      activePlannerProfileId: profile.id,
+                    };
+                    void persistHermesDispatchSettings(nextSettings).catch(error => {
+                      setRequestError(error instanceof Error ? error.message : String(error));
+                    });
+                  }}
+                  style={{
+                    textAlign: "left",
+                    padding: 12,
+                    display: "grid",
+                    gap: 6,
+                    borderColor: isActive ? "rgba(96, 165, 250, 0.55)" : "var(--border)",
+                    background: isActive ? "rgba(96, 165, 250, 0.12)" : "rgba(255,255,255,0.03)",
+                  }}
+                >
+                  <strong style={{ fontSize: 13 }}>{profile.label}</strong>
+                  <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{profile.id}</div>
+                  <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.6 }}>
+                    {profile.description || "No description"}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+
+          {!profileDraft ? (
+            <div style={emptyPanelStyle}>没有可编辑的 profile。</div>
+          ) : (
+            <div style={{ display: "grid", gap: 10 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10 }}>
+                <LabeledInput
+                  label="Profile ID"
+                  value={profileDraft.id}
+                  onChange={value => setProfileDraft(current => current ? { ...current, id: value } : current)}
+                  placeholder="default"
+                />
+                <LabeledInput
+                  label="Label"
+                  value={profileDraft.label}
+                  onChange={value => setProfileDraft(current => current ? { ...current, label: value } : current)}
+                  placeholder="Default Brain"
+                />
+              </div>
+
+              <LabeledInput
+                label="Session State File"
+                value={profileDraft.sessionStateFile}
+                onChange={value => setProfileDraft(current => current ? { ...current, sessionStateFile: value } : current)}
+                placeholder="output/hermes-dispatch/planner-sessions/default.json"
+              />
+
+              <LabeledTextarea
+                label="Description"
+                value={profileDraft.description}
+                onChange={value => setProfileDraft(current => current ? { ...current, description: value } : current)}
+                placeholder="这个槽位的用途说明。"
+              />
+
+              <div style={{ fontSize: 11, color: "var(--text-muted)" }}>Models</div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10 }}>
+                <LabeledInput
+                  label="Planner / Codex"
+                  value={profileDraft.models.planner}
+                  onChange={value => setProfileDraft(current => current ? { ...current, models: { ...current.models, planner: value } } : current)}
+                  placeholder="留空则使用 codex CLI 默认"
+                  suggestions={MODEL_SUGGESTIONS.planner}
+                  listId="hermes-model-planner"
+                />
+                <LabeledInput
+                  label="Executor / Codex"
+                  value={profileDraft.models.codex}
+                  onChange={value => setProfileDraft(current => current ? { ...current, models: { ...current.models, codex: value } } : current)}
+                  placeholder="留空则使用 codex CLI 默认"
+                  suggestions={MODEL_SUGGESTIONS.codex}
+                  listId="hermes-model-codex"
+                />
+                <LabeledInput
+                  label="Executor / Claude"
+                  value={profileDraft.models.claude}
+                  onChange={value => setProfileDraft(current => current ? { ...current, models: { ...current.models, claude: value } } : current)}
+                  placeholder="例如 claude-sonnet-4-6"
+                  suggestions={MODEL_SUGGESTIONS.claude}
+                  listId="hermes-model-claude"
+                />
+                <LabeledInput
+                  label="Executor / Gemini"
+                  value={profileDraft.models.gemini}
+                  onChange={value => setProfileDraft(current => current ? { ...current, models: { ...current.models, gemini: value } } : current)}
+                  placeholder="例如 gemini-2.5-pro"
+                  suggestions={MODEL_SUGGESTIONS.gemini}
+                  listId="hermes-model-gemini"
+                />
+              </div>
+            </div>
+          )}
+        </div>
+      </section>
 
       <section className="card" style={{ padding: 16, display: "grid", gap: 14 }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
@@ -325,10 +781,25 @@ export function HermesDispatchCenter() {
           <>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 10 }}>
               <TraceStat label="Run ID" value={selectedRun.id} />
+              <TraceStat label="Brain Slot" value={selectedRun.plannerProfileId || "manual"} />
               <TraceStat label="Planner" value={selectedRun.planner} />
+              <TraceStat label="Planner Model" value={selectedRun.plannerModel || "default"} />
+              <TraceStat label="Planner Session" value={selectedRun.plannerSessionId || "none"} />
               <TraceStat label="Mode" value={selectedRun.mode} />
               <TraceStat label="Updated" value={formatTime(selectedRun.updatedAt)} />
             </div>
+
+            {selectedRun.plannerSessionStateFile ? (
+              <div style={{ fontSize: 12, lineHeight: 1.7, color: "var(--text-muted)", wordBreak: "break-all" }}>
+                Session State File: {selectedRun.plannerSessionStateFile}
+              </div>
+            ) : null}
+
+            {selectedRun.executorModels ? (
+              <div style={{ fontSize: 12, lineHeight: 1.7, color: "var(--text-muted)" }}>
+                Executor Models: codex={selectedRun.executorModels.codex || "default"} · claude={selectedRun.executorModels.claude || "default"} · gemini={selectedRun.executorModels.gemini || "default"}
+              </div>
+            ) : null}
 
             {selectedRun.error ? (
               <div style={warningCardStyle("#fda4af")}>{selectedRun.error}</div>
@@ -381,6 +852,51 @@ export function HermesDispatchCenter() {
   );
 }
 
+function createProfileDraft(profile: HermesPlannerProfile): HermesPlannerProfileDraft {
+  return {
+    id: profile.id,
+    label: profile.label,
+    sessionStateFile: profile.sessionStateFile,
+    description: profile.description || "",
+    models: {
+      planner: profile.models?.planner || "",
+      codex: profile.models?.codex || "",
+      claude: profile.models?.claude || "",
+      gemini: profile.models?.gemini || "",
+    },
+  };
+}
+
+function normalizeProfileDraft(draft: HermesPlannerProfileDraft): HermesPlannerProfile {
+  const models = Object.fromEntries(
+    Object.entries(draft.models)
+      .map(([key, value]) => [key, value.trim()])
+      .filter(([, value]) => Boolean(value)),
+  ) as HermesPlannerProfile["models"];
+
+  return {
+    id: slugifyProfileId(draft.id),
+    label: draft.label.trim() || slugifyProfileId(draft.id),
+    sessionStateFile: draft.sessionStateFile.trim(),
+    ...(draft.description.trim() ? { description: draft.description.trim() } : {}),
+    ...(Object.keys(models || {}).length > 0 ? { models } : {}),
+  };
+}
+
+function slugifyProfileId(value: string) {
+  return value.trim().toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 48);
+}
+
+function nextAvailableProfileId(profiles: HermesPlannerProfile[]) {
+  for (let index = 1; index <= 99; index += 1) {
+    const candidate = `brain-${index}`;
+    if (!profiles.some(profile => profile.id === candidate)) {
+      return candidate;
+    }
+  }
+  return `brain-${Date.now()}`;
+}
+
 function TraceStat({ label, value }: { label: string; value: string }) {
   return (
     <div
@@ -396,6 +912,67 @@ function TraceStat({ label, value }: { label: string; value: string }) {
       <span style={{ fontSize: 10, color: "var(--text-muted)", letterSpacing: "0.08em", textTransform: "uppercase" }}>{label}</span>
       <strong style={{ fontSize: 12, wordBreak: "break-word" }}>{value}</strong>
     </div>
+  );
+}
+
+function LabeledInput({
+  label,
+  value,
+  onChange,
+  placeholder,
+  suggestions,
+  listId,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  placeholder?: string;
+  suggestions?: readonly string[];
+  listId?: string;
+}) {
+  return (
+    <label style={{ display: "grid", gap: 6 }}>
+      <span style={{ fontSize: 11, color: "var(--text-muted)" }}>{label}</span>
+      <input
+        className="input"
+        value={value}
+        onChange={event => onChange(event.target.value)}
+        placeholder={placeholder}
+        list={suggestions?.length ? listId : undefined}
+      />
+      {suggestions?.length && listId ? (
+        <datalist id={listId}>
+          {suggestions.map(option => (
+            <option key={option} value={option} />
+          ))}
+        </datalist>
+      ) : null}
+    </label>
+  );
+}
+
+function LabeledTextarea({
+  label,
+  value,
+  onChange,
+  placeholder,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  placeholder?: string;
+}) {
+  return (
+    <label style={{ display: "grid", gap: 6 }}>
+      <span style={{ fontSize: 11, color: "var(--text-muted)" }}>{label}</span>
+      <textarea
+        className="input"
+        style={{ minHeight: 88, resize: "vertical" }}
+        value={value}
+        onChange={event => onChange(event.target.value)}
+        placeholder={placeholder}
+      />
+    </label>
   );
 }
 

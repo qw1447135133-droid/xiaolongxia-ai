@@ -1,14 +1,16 @@
 "use client";
 
 import { useMemo, type CSSProperties } from "react";
+import { retryExecutionDispatch, sendExecutionDispatch } from "@/lib/execution-dispatch";
 import { useStore } from "@/store";
 import {
+  filterByProjectScope,
   getProjectScopeKey,
   getRunProjectScopeKey,
   getSessionProjectLabel,
   getSessionProjectScope,
 } from "@/lib/project-context";
-import { AGENT_META, type ExecutionRun } from "@/store/types";
+import { AGENT_META, type ExecutionRecoveryState, type ExecutionRun } from "@/store/types";
 import { timeAgo } from "@/lib/utils";
 import { runExecutionVerification } from "@/lib/execution-verification";
 import type { ControlCenterSectionId } from "@/store/types";
@@ -39,6 +41,19 @@ function statusTone(status: ExecutionRun["status"]) {
   }
 }
 
+function recoveryTone(state: ExecutionRecoveryState) {
+  switch (state) {
+    case "retryable":
+      return { label: "Retryable", color: "#fda4af" };
+    case "manual-required":
+      return { label: "Manual Required", color: "#fbbf24" };
+    case "blocked":
+      return { label: "Blocked", color: "#fb7185" };
+    default:
+      return { label: "Stable", color: "#94a3b8" };
+  }
+}
+
 function getSemanticRecallEvents(run: ExecutionRun) {
   return run.events.filter(event =>
     event.type === "system" &&
@@ -50,9 +65,12 @@ function getSemanticRecallEvents(run: ExecutionRun) {
   );
 }
 
-function getExecutionEntityLabel(run: Pick<ExecutionRun, "entityType" | "entityId" | "workflowRunId">) {
-  const entityLabel = run.entityType && run.entityId ? `${run.entityType}:${run.entityId.slice(0, 8)}` : null;
-  const workflowLabel = run.workflowRunId ? `workflow:${run.workflowRunId.slice(0, 12)}` : null;
+function getExecutionEntityLabel(
+  run: Pick<ExecutionRun, "entityType" | "entityId" | "workflowRunId">,
+  labels?: { entityLabel?: string | null; workflowLabel?: string | null },
+) {
+  const entityLabel = labels?.entityLabel ?? (run.entityType && run.entityId ? `${run.entityType}:${run.entityId.slice(0, 8)}` : null);
+  const workflowLabel = labels?.workflowLabel ?? (run.workflowRunId ? `workflow:${run.workflowRunId.slice(0, 12)}` : null);
   return [entityLabel, workflowLabel].filter(Boolean).join(" · ");
 }
 
@@ -62,12 +80,88 @@ export function ExecutionCenter({ compact = false }: { compact?: boolean }) {
   const setActiveExecutionRun = useStore(s => s.setActiveExecutionRun);
   const setActiveControlCenterSection = useStore(s => s.setActiveControlCenterSection);
   const setTab = useStore(s => s.setTab);
+  const businessContentTasks = useStore(s => s.businessContentTasks);
+  const workflowRuns = useStore(s => s.workflowRuns);
+  const focusBusinessContentTask = useStore(s => s.focusBusinessContentTask);
+  const focusWorkflowRun = useStore(s => s.focusWorkflowRun);
   const chatSessions = useStore(s => s.chatSessions);
   const activeSessionId = useStore(s => s.activeSessionId);
+  const setActiveChatSession = useStore(s => s.setActiveChatSession);
+  const setCommandDraft = useStore(s => s.setCommandDraft);
+  const desktopInputSession = useStore(s => s.desktopInputSession);
+  const clearDesktopInputSession = useStore(s => s.clearDesktopInputSession);
+  const setAutomationPaused = useStore(s => s.setAutomationPaused);
 
   const openControlSection = (section: ControlCenterSectionId) => {
     setActiveControlCenterSection(section);
     setTab("settings");
+  };
+
+  const openExecutionRun = (runId: string) => {
+    setActiveExecutionRun(runId);
+    openControlSection("execution");
+  };
+
+  const handoffToChat = (run: ExecutionRun) => {
+    const resumeInstruction = desktopInputSession.executionRunId === run.id
+      ? desktopInputSession.resumeInstruction
+      : undefined;
+    setActiveChatSession(run.sessionId);
+    setCommandDraft(
+      resumeInstruction
+        ? resumeInstruction
+        : run.recoveryState === "manual-required"
+          ? `继续接管这次桌面阻断执行，并先处理人工验证步骤：\n${run.instruction}`
+          : `继续处理这次异常执行，并优先分析恢复路径：\n${run.instruction}`,
+    );
+    setTab("tasks");
+  };
+
+  const retryRun = (run: ExecutionRun) => {
+    const { ok, executionRunId } = retryExecutionDispatch(run, {
+      includeUserMessage: true,
+      includeActiveProjectMemory: true,
+      taskDescription: `${run.instruction} [重试]`,
+      lastRecoveryHint: "从 Execution Center 的恢复队列重新发起。",
+    });
+
+    if (ok && executionRunId) {
+      setActiveChatSession(run.sessionId);
+      openExecutionRun(executionRunId);
+      return;
+    }
+
+    handoffToChat(run);
+  };
+
+  const continueAfterManualRecovery = (run: ExecutionRun) => {
+    if (desktopInputSession.executionRunId !== run.id || !desktopInputSession.resumeInstruction) {
+      handoffToChat(run);
+      return;
+    }
+
+    setActiveChatSession(run.sessionId);
+    const { ok, executionRunId } = sendExecutionDispatch({
+      instruction: desktopInputSession.resumeInstruction,
+      source: "chat",
+      includeUserMessage: false,
+      includeActiveProjectMemory: true,
+      sessionId: run.sessionId,
+      taskDescription: "验证完成后继续执行",
+      retryOfRunId: run.id,
+      lastRecoveryHint: "人工验证已完成，继续沿用原执行上下文。",
+    });
+
+    if (ok) {
+      setAutomationPaused(false);
+      clearDesktopInputSession();
+      if (executionRunId) {
+        openExecutionRun(executionRunId);
+        return;
+      }
+    }
+
+    handoffToChat(run);
   };
 
   const activeSession = useMemo(
@@ -77,6 +171,18 @@ export function ExecutionCenter({ compact = false }: { compact?: boolean }) {
   const activeProjectKey = useMemo(
     () => getProjectScopeKey(getSessionProjectScope(activeSession)),
     [activeSession],
+  );
+  const scopedContentTasks = useMemo(
+    () => filterByProjectScope(businessContentTasks, activeSession ?? {}),
+    [activeSession, businessContentTasks],
+  );
+  const contentTaskMap = useMemo(
+    () => Object.fromEntries(scopedContentTasks.map(task => [task.id, task])),
+    [scopedContentTasks],
+  );
+  const workflowRunMap = useMemo(
+    () => Object.fromEntries(workflowRuns.map(run => [run.id, run])),
+    [workflowRuns],
   );
 
   const sortedRuns = useMemo(
@@ -91,6 +197,15 @@ export function ExecutionCenter({ compact = false }: { compact?: boolean }) {
   const activeRuns = sortedRuns.filter(run => run.status === "analyzing" || run.status === "running").length;
   const completedRuns = sortedRuns.filter(run => run.status === "completed").length;
   const failedRuns = sortedRuns.filter(run => run.status === "failed").length;
+  const recoveryRuns = useMemo(() => {
+    const recoveredSourceIds = new Set(sortedRuns.map(run => run.retryOfRunId).filter(Boolean));
+    return sortedRuns.filter(run => {
+      if (recoveredSourceIds.has(run.id)) return false;
+      if (run.recoveryState && run.recoveryState !== "none") return true;
+      return run.status === "failed";
+    });
+  }, [sortedRuns]);
+  const visibleRecoveryRuns = compact ? recoveryRuns.slice(0, 2) : recoveryRuns.slice(0, 5);
   const totalEvents = sortedRuns.reduce((count, run) => count + run.events.length, 0);
 
   return (
@@ -131,8 +246,116 @@ export function ExecutionCenter({ compact = false }: { compact?: boolean }) {
         <MetricCard label="Active Runs" value={activeRuns} accent="#fbbf24" />
         <MetricCard label="Completed" value={completedRuns} accent="#86efac" />
         <MetricCard label="Failed" value={failedRuns} accent="#fda4af" />
+        <MetricCard label="Recovery Queue" value={recoveryRuns.length} accent={recoveryRuns.length > 0 ? "#fbbf24" : "#94a3b8"} />
         <MetricCard label="Trace Events" value={totalEvents} accent="#7dd3fc" />
       </div>
+
+      {visibleRecoveryRuns.length > 0 ? (
+        <div
+          className="card"
+          style={{
+            padding: 16,
+            display: "grid",
+            gap: 12,
+            borderColor: "rgba(251, 191, 36, 0.26)",
+            background: "linear-gradient(180deg, rgba(251, 191, 36, 0.08), rgba(255,255,255,0.03))",
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+            <div>
+              <div style={{ fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--text-muted)" }}>
+                Recovery Queue
+              </div>
+              <div style={{ marginTop: 4, fontSize: 16, fontWeight: 700 }}>
+                最近需要恢复、重试或人工接管的执行 run
+              </div>
+            </div>
+            <span style={badgeStyle("#fbbf24")}>{recoveryRuns.length} Pending</span>
+          </div>
+
+          <div style={{ display: "grid", gap: 10 }}>
+            {visibleRecoveryRuns.map(run => {
+              const state = run.recoveryState === "none" || !run.recoveryState
+                ? (run.status === "failed" ? "retryable" : "blocked")
+                : run.recoveryState;
+              const matchingResumeInstruction =
+                desktopInputSession.executionRunId === run.id ? desktopInputSession.resumeInstruction : undefined;
+              const tone = recoveryTone(state);
+              return (
+                <div
+                  key={`recovery-${run.id}`}
+                  style={{
+                    display: "grid",
+                    gap: 10,
+                    padding: 12,
+                    borderRadius: 14,
+                    border: `1px solid ${tone.color}33`,
+                    background: "rgba(255,255,255,0.04)",
+                  }}
+                >
+                  <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}>
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontSize: 13, fontWeight: 700, lineHeight: 1.5 }}>{run.instruction}</div>
+                      <div style={{ marginTop: 4, fontSize: 11, color: "var(--text-muted)" }}>
+                        {timeAgo(run.updatedAt)} · {run.retryCount ? `第 ${run.retryCount} 次恢复链` : "首轮执行"}
+                      </div>
+                    </div>
+                    <span style={badgeStyle(tone.color)}>{tone.label}</span>
+                  </div>
+
+                  <div style={{ display: "grid", gap: 6 }}>
+                    {run.lastFailureReason ? (
+                      <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.7 }}>
+                        Failure: {run.lastFailureReason}
+                      </div>
+                    ) : null}
+                    {run.lastRecoveryHint ? (
+                      <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.7 }}>
+                        Hint: {run.lastRecoveryHint}
+                      </div>
+                    ) : null}
+                  </div>
+
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    {state === "retryable" || state === "blocked" ? (
+                      <button type="button" className="btn-ghost" onClick={() => retryRun(run)}>
+                        一键重试
+                      </button>
+                    ) : state === "manual-required" ? (
+                      <button
+                        type="button"
+                        className="btn-primary"
+                        onClick={() => continueAfterManualRecovery(run)}
+                        disabled={!matchingResumeInstruction}
+                      >
+                        验证完成继续
+                      </button>
+                    ) : (
+                      <button type="button" className="btn-ghost" onClick={() => handoffToChat(run)}>
+                        回聊天接管
+                      </button>
+                    )}
+                    <button type="button" className="btn-ghost" onClick={() => handoffToChat(run)}>
+                      去聊天接管
+                    </button>
+                    <button type="button" className="btn-ghost" onClick={() => openExecutionRun(run.id)}>
+                      查看执行
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-ghost"
+                      onClick={() => void runExecutionVerification(run.id)}
+                      disabled={run.verificationStatus === "running"}
+                    >
+                      {run.verificationStatus === "running" ? "验证中..." : "重新验证"}
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
 
       {visibleRuns.length === 0 ? (
         <div style={emptyPanelStyle}>
@@ -148,6 +371,12 @@ export function ExecutionCenter({ compact = false }: { compact?: boolean }) {
             const semanticEvents = getSemanticRecallEvents(run);
             const isActive = activeExecutionRunId === run.id;
             const verificationTone = run.verificationStatus ? verificationStatusTone(run.verificationStatus) : null;
+            const linkedContentTask = run.entityType === "contentTask" && run.entityId ? contentTaskMap[run.entityId] ?? null : null;
+            const linkedWorkflowRun = run.workflowRunId ? workflowRunMap[run.workflowRunId] ?? null : null;
+            const executionEntityLabel = getExecutionEntityLabel(run, {
+              entityLabel: linkedContentTask ? `content:${linkedContentTask.title}` : undefined,
+              workflowLabel: linkedWorkflowRun ? `workflow:${linkedWorkflowRun.title}` : undefined,
+            });
 
             return (
               <article
@@ -181,7 +410,7 @@ export function ExecutionCenter({ compact = false }: { compact?: boolean }) {
                   <TraceStat label="Current" value={currentAgent ? `${currentAgent.emoji} ${currentAgent.name}` : "待分配"} />
                 </div>
 
-                {getExecutionEntityLabel(run) ? (
+                {executionEntityLabel ? (
                   <div
                     style={{
                       padding: "10px 12px",
@@ -192,7 +421,7 @@ export function ExecutionCenter({ compact = false }: { compact?: boolean }) {
                       color: "var(--text-muted)",
                     }}
                   >
-                    Bound to {getExecutionEntityLabel(run)}
+                    Bound to {executionEntityLabel}
                   </div>
                 ) : null}
 
@@ -377,6 +606,30 @@ export function ExecutionCenter({ compact = false }: { compact?: boolean }) {
                   <button type="button" className="btn-ghost" onClick={() => setActiveExecutionRun(run.id)}>
                     {isActive ? "当前正在查看" : "设为当前"}
                   </button>
+                  {linkedWorkflowRun ? (
+                    <button
+                      type="button"
+                      className="btn-ghost"
+                      onClick={() => {
+                        focusWorkflowRun(linkedWorkflowRun.id);
+                        openControlSection("workflow");
+                      }}
+                    >
+                      定位到 Workflow
+                    </button>
+                  ) : null}
+                  {linkedContentTask ? (
+                    <button
+                      type="button"
+                      className="btn-ghost"
+                      onClick={() => {
+                        focusBusinessContentTask(linkedContentTask.id);
+                        openControlSection("entities");
+                      }}
+                    >
+                      定位到内容实体
+                    </button>
+                  ) : null}
                   <button type="button" className="btn-ghost" onClick={() => openControlSection("artifacts")}>
                     查看相关产物
                   </button>

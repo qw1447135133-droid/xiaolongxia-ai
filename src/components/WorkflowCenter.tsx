@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, type CSSProperties } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { getProjectContentChannelSummaries, getProjectRiskyContentChannels } from "@/lib/content-governance";
 import { getAvailableWorkflowTemplates } from "@/lib/workflow-runtime";
 import { sendExecutionDispatch } from "@/lib/execution-dispatch";
@@ -136,41 +136,24 @@ type WorkflowActionFeedback = {
   message: string;
 };
 
-function buildWorkflowApprovalFeedback(
-  taskStatus: "draft" | "review" | "scheduled" | "published" | "archived",
-  decision: WorkflowApprovalDecision,
-): WorkflowActionFeedback {
-  if (decision === "approved") {
-    return {
-      tone: "#22c55e",
-      message: taskStatus === "scheduled"
-        ? "已批准并继续发布准备，任务可进入外发前准备。"
-        : "已批准并继续推进，任务已进入下一步内容流程。",
-    };
-  }
-
-  if (decision === "rejected") {
-    return {
-      tone: "#ef4444",
-      message: taskStatus === "scheduled"
-        ? "已驳回并退回定稿，建议重新确认内容和渠道策略。"
-        : "已驳回当前内容，建议继续打磨后再提交审批。",
-    };
-  }
-
-  return {
-    tone: "#f59e0b",
-    message: "已重新打开审批，任务已回到待人工确认状态。",
-  };
+function getWorkflowApprovalTone(decision: WorkflowApprovalDecision) {
+  if (decision === "approved") return "#22c55e";
+  if (decision === "rejected") return "#ef4444";
+  return "#f59e0b";
 }
 
 export function WorkflowCenter() {
+  const contentTaskRefs = useRef<Record<string, HTMLElement | null>>({});
+  const workflowRunRefs = useRef<Record<string, HTMLElement | null>>({});
   const setCommandDraft = useStore(s => s.setCommandDraft);
   const setTab = useStore(s => s.setTab);
   const setActiveExecutionRun = useStore(s => s.setActiveExecutionRun);
   const setActiveControlCenterSection = useStore(s => s.setActiveControlCenterSection);
-  const setBusinessApprovalDecision = useStore(s => s.setBusinessApprovalDecision);
-  const updateBusinessContentTask = useStore(s => s.updateBusinessContentTask);
+  const applyContentTaskApprovalDecision = useStore(s => s.applyContentTaskApprovalDecision);
+  const focusedBusinessContentTaskId = useStore(s => s.focusedBusinessContentTaskId);
+  const focusedWorkflowRunId = useStore(s => s.focusedWorkflowRunId);
+  const focusBusinessContentTask = useStore(s => s.focusBusinessContentTask);
+  const focusWorkflowRun = useStore(s => s.focusWorkflowRun);
   const queueWorkflowRun = useStore(s => s.queueWorkflowRun);
   const queueContentTaskWorkflowRun = useStore(s => s.queueContentTaskWorkflowRun);
   const restageWorkflowRun = useStore(s => s.restageWorkflowRun);
@@ -190,6 +173,8 @@ export function WorkflowCenter() {
   const enabledPluginIds = useStore(s => s.enabledPluginIds);
   const activeTeamOperatingTemplateId = useStore(s => s.activeTeamOperatingTemplateId);
   const [workflowActionFeedback, setWorkflowActionFeedback] = useState<Record<string, WorkflowActionFeedback>>({});
+  const [highlightedContentTaskId, setHighlightedContentTaskId] = useState<string | null>(null);
+  const [highlightedWorkflowRunId, setHighlightedWorkflowRunId] = useState<string | null>(null);
 
   const activeSession = useMemo(
     () => chatSessions.find(session => session.id === activeSessionId) ?? null,
@@ -356,6 +341,40 @@ export function WorkflowCenter() {
     injectWorkflowRun(workflowRun);
   };
 
+  const focusContentTask = (contentTaskId: string) => {
+    setHighlightedContentTaskId(contentTaskId);
+    contentTaskRefs.current[contentTaskId]?.scrollIntoView({
+      behavior: "smooth",
+      block: "center",
+    });
+    window.setTimeout(() => {
+      setHighlightedContentTaskId(current => (current === contentTaskId ? null : current));
+    }, 2200);
+  };
+
+  const focusWorkflowCard = (workflowRunId: string) => {
+    setHighlightedWorkflowRunId(workflowRunId);
+    workflowRunRefs.current[workflowRunId]?.scrollIntoView({
+      behavior: "smooth",
+      block: "center",
+    });
+    window.setTimeout(() => {
+      setHighlightedWorkflowRunId(current => (current === workflowRunId ? null : current));
+    }, 2200);
+  };
+
+  useEffect(() => {
+    if (!focusedBusinessContentTaskId) return;
+    focusContentTask(focusedBusinessContentTaskId);
+    focusBusinessContentTask(null);
+  }, [focusBusinessContentTask, focusedBusinessContentTaskId]);
+
+  useEffect(() => {
+    if (!focusedWorkflowRunId) return;
+    focusWorkflowCard(focusedWorkflowRunId);
+    focusWorkflowRun(null);
+  }, [focusWorkflowRun, focusedWorkflowRunId]);
+
   const launchRun = (workflowRun: WorkflowRun) => {
     const { ok, executionRunId } = sendExecutionDispatch({
       instruction: workflowRun.draft,
@@ -409,65 +428,20 @@ export function WorkflowCenter() {
   ) => {
     if (workflowRun.entityType !== "contentTask" || !workflowRun.entityId) return;
 
-    const linkedContentTask = contentTaskMap.get(workflowRun.entityId);
-    if (!linkedContentTask) return;
-    const feedback = buildWorkflowApprovalFeedback(linkedContentTask.status, decision);
-
-    setBusinessApprovalDecision({
-      entityType: "contentTask",
-      entityId: workflowRun.entityId,
-      status: decision,
-      note: feedback.message,
+    const outcome = applyContentTaskApprovalDecision({
+      contentTaskId: workflowRun.entityId,
+      decision,
     });
+    if (!outcome) return;
 
     setWorkflowActionFeedback(current => ({
       ...current,
-      [workflowRun.id]: feedback,
+      [workflowRun.id]: {
+        tone: getWorkflowApprovalTone(decision),
+        message: outcome.detail,
+      },
     }));
-
-    if (decision === "approved") {
-      const shouldPromoteToScheduled = linkedContentTask.status === "review";
-      const shouldQueuePublishWorkflow = linkedContentTask.status === "scheduled" || shouldPromoteToScheduled;
-
-      if (shouldPromoteToScheduled) {
-        updateBusinessContentTask(workflowRun.entityId, {
-          status: "scheduled",
-          lastOperationAt: Date.now(),
-        });
-      }
-
-      if (shouldQueuePublishWorkflow) {
-        queueContentTaskWorkflowRun(workflowRun.entityId);
-      }
-      return;
-    }
-
-    if (decision === "rejected" && linkedContentTask.status === "scheduled") {
-      workflowRuns
-        .filter(run =>
-          run.entityType === "contentTask"
-          && run.entityId === workflowRun.entityId
-          && run.templateId === "content-publish-prep"
-          && (run.status === "queued" || run.status === "staged" || run.status === "in-progress"),
-        )
-        .forEach(run => archiveWorkflowRun(run.id));
-      updateBusinessContentTask(workflowRun.entityId, {
-        status: "review",
-        lastOperationAt: Date.now(),
-      });
-      return;
-    }
-
-    if (decision === "pending") {
-      workflowRuns
-        .filter(run =>
-          run.entityType === "contentTask"
-          && run.entityId === workflowRun.entityId
-          && run.templateId === "content-publish-prep"
-          && (run.status === "queued" || run.status === "staged" || run.status === "in-progress"),
-        )
-        .forEach(run => archiveWorkflowRun(run.id));
-    }
+    focusContentTask(workflowRun.entityId);
   };
 
   return (
@@ -656,13 +630,23 @@ export function WorkflowCenter() {
                 return (
                   <article
                     key={task.id}
+                    ref={node => {
+                      contentTaskRefs.current[task.id] = node;
+                    }}
                     style={{
                       display: "grid",
                       gap: 10,
                       padding: 14,
                       borderRadius: 18,
-                      border: "1px solid rgba(192, 132, 252, 0.24)",
-                      background: "linear-gradient(180deg, rgba(192, 132, 252, 0.12), rgba(255,255,255,0.02) 72%)",
+                      border: highlightedContentTaskId === task.id
+                        ? "1px solid rgba(125, 211, 252, 0.52)"
+                        : "1px solid rgba(192, 132, 252, 0.24)",
+                      background: highlightedContentTaskId === task.id
+                        ? "linear-gradient(180deg, rgba(125, 211, 252, 0.2), rgba(255,255,255,0.04) 72%)"
+                        : "linear-gradient(180deg, rgba(192, 132, 252, 0.12), rgba(255,255,255,0.02) 72%)",
+                      boxShadow: highlightedContentTaskId === task.id
+                        ? "0 0 0 1px rgba(125, 211, 252, 0.12), 0 20px 50px rgba(15, 23, 42, 0.24)"
+                        : undefined,
                     }}
                   >
                 <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
@@ -785,14 +769,24 @@ export function WorkflowCenter() {
               return (
                 <article
                   key={workflowRun.id}
+                  ref={node => {
+                    workflowRunRefs.current[workflowRun.id] = node;
+                  }}
                   style={{
                     display: "flex",
                     flexDirection: "column",
                     gap: 12,
                     padding: 14,
                     borderRadius: 18,
-                    border: `1px solid ${workflowRun.accent}44`,
-                    background: `linear-gradient(180deg, ${workflowRun.accent}18, rgba(255,255,255,0.02) 68%)`,
+                    border: highlightedWorkflowRunId === workflowRun.id
+                      ? "1px solid rgba(125, 211, 252, 0.52)"
+                      : `1px solid ${workflowRun.accent}44`,
+                    background: highlightedWorkflowRunId === workflowRun.id
+                      ? "linear-gradient(180deg, rgba(125, 211, 252, 0.2), rgba(255,255,255,0.04) 68%)"
+                      : `linear-gradient(180deg, ${workflowRun.accent}18, rgba(255,255,255,0.02) 68%)`,
+                    boxShadow: highlightedWorkflowRunId === workflowRun.id
+                      ? "0 0 0 1px rgba(125, 211, 252, 0.12), 0 20px 50px rgba(15, 23, 42, 0.24)"
+                      : undefined,
                   }}
                 >
                   <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
@@ -927,6 +921,15 @@ export function WorkflowCenter() {
                         Open Approvals
                       </button>
                     ) : null}
+                    {linkedContentTask ? (
+                      <button
+                        type="button"
+                        className="btn-ghost"
+                        onClick={() => focusContentTask(linkedContentTask.id)}
+                      >
+                        定位到内容任务
+                      </button>
+                    ) : null}
                     <button type="button" className="btn-ghost" onClick={() => removeWorkflowRun(workflowRun.id)}>
                       Remove
                     </button>
@@ -964,14 +967,24 @@ export function WorkflowCenter() {
               return (
                 <article
                   key={workflowRun.id}
+                  ref={node => {
+                    workflowRunRefs.current[workflowRun.id] = node;
+                  }}
                   style={{
                     display: "flex",
                     flexDirection: "column",
                     gap: 10,
                     padding: 12,
                     borderRadius: 16,
-                    border: "1px solid var(--border)",
-                    background: "rgba(255,255,255,0.025)",
+                    border: highlightedWorkflowRunId === workflowRun.id
+                      ? "1px solid rgba(125, 211, 252, 0.52)"
+                      : "1px solid var(--border)",
+                    background: highlightedWorkflowRunId === workflowRun.id
+                      ? "linear-gradient(180deg, rgba(125, 211, 252, 0.18), rgba(255,255,255,0.04))"
+                      : "rgba(255,255,255,0.025)",
+                    boxShadow: highlightedWorkflowRunId === workflowRun.id
+                      ? "0 0 0 1px rgba(125, 211, 252, 0.12), 0 20px 50px rgba(15, 23, 42, 0.24)"
+                      : undefined,
                   }}
                 >
                   <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
@@ -1049,6 +1062,15 @@ export function WorkflowCenter() {
                         onClick={() => openApprovalQueue(setActiveControlCenterSection, setTab)}
                       >
                         Open Approvals
+                      </button>
+                    ) : null}
+                    {linkedContentTask ? (
+                      <button
+                        type="button"
+                        className="btn-ghost"
+                        onClick={() => focusContentTask(linkedContentTask.id)}
+                      >
+                        定位到内容任务
                       </button>
                     ) : null}
                     <button type="button" className="btn-ghost" onClick={() => archiveWorkflowRun(workflowRun.id)}>

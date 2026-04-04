@@ -118,7 +118,7 @@ export interface BusinessApprovalRecord extends BusinessScopedEntity {
 export interface BusinessOperationRecord extends BusinessScopedEntity {
   entityType: BusinessEntityType;
   entityId: string;
-  eventType: "approval" | "dispatch" | "workflow" | "publish" | "governance";
+  eventType: "approval" | "dispatch" | "workflow" | "publish" | "governance" | "desktop";
   trigger: "manual" | "auto";
   status: "pending" | "approved" | "rejected" | "sent" | "blocked" | "completed" | "failed";
   title: string;

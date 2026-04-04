@@ -41,7 +41,7 @@ import {
 import { timeAgo } from "@/lib/utils";
 import { AGENT_META, getTeamOperatingTemplate, TEAM_OPERATING_SURFACES } from "@/store/types";
 import type { AppTab, ControlCenterSectionId } from "@/store/types";
-import { sendExecutionDispatch } from "@/lib/execution-dispatch";
+import { retryExecutionDispatch, sendExecutionDispatch } from "@/lib/execution-dispatch";
 import { detectElectronRuntimeWindow } from "@/lib/electron-runtime";
 import { runExecutionVerification } from "@/lib/execution-verification";
 
@@ -108,8 +108,8 @@ export default function App() {
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
-      const { providers, agentConfigs, userNickname, desktopProgramSettings } = useStore.getState();
-      sendWs({ type: "settings_sync", providers, agentConfigs, userNickname, desktopProgramSettings });
+      const { providers, agentConfigs, userNickname, desktopProgramSettings, hermesDispatchSettings } = useStore.getState();
+      sendWs({ type: "settings_sync", providers, agentConfigs, userNickname, desktopProgramSettings, hermesDispatchSettings });
     }, 1500);
     return () => window.clearTimeout(timer);
   }, []);
@@ -873,13 +873,11 @@ function DesktopChatWorkspace() {
   };
 
   const retryRun = (run: NonNullable<typeof recentFailedRun>) => {
-    const { ok, executionRunId } = sendExecutionDispatch({
-      instruction: run.instruction,
-      source: run.source,
+    const { ok, executionRunId } = retryExecutionDispatch(run, {
       includeUserMessage: true,
       includeActiveProjectMemory: true,
-      sessionId: run.sessionId,
       taskDescription: `${run.instruction} [重试]`,
+      lastRecoveryHint: "重试上一条失败执行，并优先复用原会话上下文。",
     });
     if (ok && executionRunId) {
       focusChatSession(run.sessionId);
@@ -904,6 +902,8 @@ function DesktopChatWorkspace() {
       includeActiveProjectMemory: true,
       sessionId: desktopInputSession.sessionId,
       taskDescription: "验证完成后继续执行",
+      retryOfRunId: desktopInputSession.executionRunId,
+      lastRecoveryHint: "人工验证已完成，继续沿用原执行上下文。",
     });
 
     if (ok) {
@@ -918,6 +918,33 @@ function DesktopChatWorkspace() {
     }
 
     setTab("tasks");
+  };
+
+  const retryDesktopSuggestion = (label: string, nextX: number, nextY: number) => {
+    const retryAction = desktopInputSession.lastAction === "double_click" || desktopInputSession.lastAction === "right_click"
+      ? desktopInputSession.lastAction
+      : "click";
+    const ok = sendWs({
+      type: "desktop_input_request",
+      requestId: `desktop-retry-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      sessionId: desktopInputSession.sessionId,
+      executionRunId: desktopInputSession.executionRunId,
+      taskId: desktopInputSession.taskId,
+      payload: {
+        action: retryAction,
+        x: nextX,
+        y: nextY,
+        target: desktopInputSession.target,
+        intent: `${desktopInputSession.lastIntent || "桌面点击"} · 偏移重试 ${label}`,
+        riskCategory: "normal",
+      },
+    });
+
+    if (ok) {
+      setDesktopApprovalFeedback(`已发起偏移重试：${label} (${nextX}, ${nextY})。`);
+    } else {
+      setDesktopApprovalFeedback("偏移重试发送失败：当前 WebSocket 未连接。");
+    }
   };
 
   const approveRailItem = (item: BusinessAutomationQueueItem) => {
@@ -989,6 +1016,153 @@ function DesktopChatWorkspace() {
     });
     setDesktopApprovalFeedback(`已驳回 ${item.title}，审计记录会保留这次处理。`);
   };
+
+  const operatorAlerts = useMemo(() => {
+    const alerts: Array<{
+      id: string;
+      severity: "critical" | "warning" | "info";
+      title: string;
+      detail: string;
+      meta: string[];
+      primaryLabel: string;
+      onPrimary: () => void;
+      secondaryLabel?: string;
+      onSecondary?: () => void;
+    }> = [];
+
+    if (canTakeOver) {
+      alerts.push({
+        id: "desktop-takeover",
+        severity: "critical",
+        title: "桌面交互等待人工接管",
+        detail: desktopInputSession.message || "当前桌面交互需要你先人工确认，再继续自动执行。",
+        meta: [
+          desktopInputSession.lastAction ? `动作 ${desktopInputSession.lastAction}` : "",
+          desktopInputSession.target ? `目标 ${desktopInputSession.target}` : "",
+          desktopInputSession.cursor ? `坐标 ${desktopInputSession.cursor.x},${desktopInputSession.cursor.y}` : "",
+        ].filter(Boolean),
+        primaryLabel: "回聊天接管",
+        onPrimary: () => handoffToChat(desktopInputSession.sessionId),
+        secondaryLabel: "验证完成继续",
+        onSecondary: continueAfterTakeover,
+      });
+    }
+
+    if (recentFailedRun) {
+      alerts.push({
+        id: `failed-run-${recentFailedRun.id}`,
+        severity: "critical",
+        title: "最近一次执行失败",
+        detail: recentFailedRun.instruction,
+        meta: [
+          getMobileExecutionLabel(recentFailedRun.status),
+          `${recentFailedRun.events.length} 条轨迹`,
+          recentFailedRun.verificationStatus ? `验证 ${getVerificationLabel(recentFailedRun.verificationStatus)}` : "",
+        ].filter(Boolean),
+        primaryLabel: "一键重试",
+        onPrimary: () => retryRun(recentFailedRun),
+        secondaryLabel: "看失败轨迹",
+        onSecondary: () => openExecutionRun(recentFailedRun.id),
+      });
+    }
+
+    railApprovalQueue.forEach(item => {
+      alerts.push({
+        id: `approval-${item.entityType}-${item.entityId}`,
+        severity: "warning",
+        title: `${item.title} 待审批`,
+        detail: item.summary,
+        meta: [item.subtitle, item.nextAction, item.requiresApproval ? "需人工审批" : ""].filter(Boolean),
+        primaryLabel: "批准",
+        onPrimary: () => approveRailItem(item),
+        secondaryLabel: "驳回",
+        onSecondary: () => rejectRailItem(item),
+      });
+    });
+
+    const desktopOperationAlert = scopedOperationLogs.find(log =>
+      log.eventType === "desktop" && (log.status === "failed" || log.status === "blocked"),
+    );
+    if (desktopOperationAlert) {
+      alerts.push({
+        id: `desktop-op-${desktopOperationAlert.id}`,
+        severity: desktopOperationAlert.status === "failed" ? "critical" : "warning",
+        title: desktopOperationAlert.title,
+        detail: desktopOperationAlert.detail,
+        meta: [
+          desktopOperationAlert.status === "blocked" ? "待人工恢复" : "桌面动作失败",
+          desktopOperationAlert.failureReason || "",
+        ].filter(Boolean),
+        primaryLabel: "打开桌面诊断",
+        onPrimary: () => openControlSection("desktop"),
+        secondaryLabel: desktopOperationAlert.executionRunId ? "查看对应执行" : "打开远程值守",
+        onSecondary: desktopOperationAlert.executionRunId
+          ? () => openExecutionRun(desktopOperationAlert.executionRunId!)
+          : () => openControlSection("remote"),
+      });
+    }
+
+    const publishFailureAlert = scopedOperationLogs.find(log =>
+      log.eventType === "publish" && log.status === "failed",
+    );
+    if (publishFailureAlert) {
+      alerts.push({
+        id: `publish-failure-${publishFailureAlert.id}`,
+        severity: "warning",
+        title: "内容发布失败需要处理",
+        detail: publishFailureAlert.detail,
+        meta: [
+          publishFailureAlert.title,
+          publishFailureAlert.failureReason || "",
+        ].filter(Boolean),
+        primaryLabel: "打开渠道面板",
+        onPrimary: () => openControlSection("channels"),
+        secondaryLabel: publishFailureAlert.executionRunId ? "查看对应执行" : "打开远程值守",
+        onSecondary: publishFailureAlert.executionRunId
+          ? () => openExecutionRun(publishFailureAlert.executionRunId!)
+          : () => openControlSection("remote"),
+      });
+    }
+
+    const blockedDispatchAlert = scopedOperationLogs.find(log =>
+      log.eventType === "dispatch" && log.status === "blocked",
+    );
+    if (blockedDispatchAlert) {
+      alerts.push({
+        id: `dispatch-blocked-${blockedDispatchAlert.id}`,
+        severity: "warning",
+        title: "业务派发被阻断",
+        detail: blockedDispatchAlert.detail,
+        meta: [
+          blockedDispatchAlert.title,
+          blockedDispatchAlert.failureReason || "",
+        ].filter(Boolean),
+        primaryLabel: "打开远程值守",
+        onPrimary: () => openControlSection("remote"),
+        secondaryLabel: blockedDispatchAlert.executionRunId ? "查看对应执行" : "回聊天接管",
+        onSecondary: blockedDispatchAlert.executionRunId
+          ? () => openExecutionRun(blockedDispatchAlert.executionRunId!)
+          : () => handoffToChat(activeSessionId),
+      });
+    }
+
+    return alerts.slice(0, 6);
+  }, [
+    activeSessionId,
+    canTakeOver,
+    continueAfterTakeover,
+    desktopInputSession.cursor,
+    desktopInputSession.lastAction,
+    desktopInputSession.message,
+    desktopInputSession.sessionId,
+    desktopInputSession.target,
+    openControlSection,
+    railApprovalQueue,
+    recentFailedRun,
+    scopedOperationLogs,
+  ]);
+
+  const criticalAlertCount = operatorAlerts.filter(alert => alert.severity === "critical").length;
 
   return (
     <div className="desktop-workspace-shell__chat-layout">
@@ -1091,6 +1265,48 @@ function DesktopChatWorkspace() {
             </div>
           ) : null}
         </section>
+
+        {operatorAlerts.length > 0 ? (
+          <section className="desktop-workspace-shell__rail-card is-warning">
+            <div className="desktop-workspace-shell__section-eyebrow">待处理告警</div>
+            <div className="desktop-workspace-shell__rail-run-meta">
+              <span>{operatorAlerts.length} 条待处理</span>
+              <span>{criticalAlertCount} 条高优先级</span>
+            </div>
+            <div className="desktop-workspace-shell__rail-stack">
+              {operatorAlerts.map(alert => (
+                <article key={alert.id} className="desktop-workspace-shell__rail-list-item">
+                  <div className="desktop-workspace-shell__rail-run">
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                      <strong>{alert.title}</strong>
+                      <span className={`control-center__scenario-badge is-${alert.severity === "critical" ? "blocked" : alert.severity === "warning" ? "partial" : "ready"}`}>
+                        {alert.severity === "critical" ? "高优先级" : alert.severity === "warning" ? "处理中" : "提醒"}
+                      </span>
+                    </div>
+                    <div className="desktop-workspace-shell__rail-copy">{alert.detail}</div>
+                    {alert.meta.length > 0 ? (
+                      <div className="desktop-workspace-shell__rail-run-meta">
+                        {alert.meta.map(item => (
+                          <span key={`${alert.id}-${item}`}>{item}</span>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+                  <div className="desktop-workspace-shell__rail-actions is-inline">
+                    <button type="button" className="desktop-workspace-shell__hero-action is-primary" onClick={alert.onPrimary}>
+                      {alert.primaryLabel}
+                    </button>
+                    {alert.secondaryLabel && alert.onSecondary ? (
+                      <button type="button" className="desktop-workspace-shell__hero-action" onClick={alert.onSecondary}>
+                        {alert.secondaryLabel}
+                      </button>
+                    ) : null}
+                  </div>
+                </article>
+              ))}
+            </div>
+          </section>
+        ) : null}
 
         {activeRun ? (
           <section className="desktop-workspace-shell__rail-card">
@@ -1240,8 +1456,29 @@ function DesktopChatWorkspace() {
             <div className="desktop-workspace-shell__rail-run-meta">
               {desktopInputSession.lastAction ? <span>动作 {desktopInputSession.lastAction}</span> : null}
               {desktopInputSession.target ? <span>目标 {desktopInputSession.target}</span> : null}
+              {desktopInputSession.cursor ? <span>坐标 {desktopInputSession.cursor.x},{desktopInputSession.cursor.y}</span> : null}
               {desktopInputSession.lastIntent ? <span>意图已记录</span> : null}
             </div>
+            {desktopInputSession.retrySuggestions && desktopInputSession.retrySuggestions.length > 0 ? (
+              <>
+                <div className="desktop-workspace-shell__rail-copy">
+                  偏移重试建议：
+                  {desktopInputSession.retrySuggestions.slice(0, 3).map(item => ` ${item.label}(${item.nextX},${item.nextY})`).join(" / ")}
+                </div>
+                <div className="desktop-workspace-shell__rail-actions is-inline">
+                  {desktopInputSession.retrySuggestions.slice(0, 3).map(item => (
+                    <button
+                      key={`${item.label}-${item.nextX}-${item.nextY}`}
+                      type="button"
+                      className="desktop-workspace-shell__hero-action"
+                      onClick={() => retryDesktopSuggestion(item.label, item.nextX, item.nextY)}
+                    >
+                      重试 {item.label}
+                    </button>
+                  ))}
+                </div>
+              </>
+            ) : null}
             <div className="desktop-workspace-shell__rail-actions">
               <button
                 type="button"
@@ -1539,12 +1776,11 @@ function DashboardTab({ onOpenTab }: { onOpenTab: (tab: AppTab) => void }) {
   };
 
   const retryLatestExecution = (run: NonNullable<typeof latestRun>) => {
-    const { ok, executionRunId } = sendExecutionDispatch({
-      instruction: run.instruction,
-      source: run.source,
+    const { ok, executionRunId } = retryExecutionDispatch(run, {
       includeUserMessage: true,
-      taskDescription: `[重试执行] ${run.instruction}`,
       includeActiveProjectMemory: true,
+      taskDescription: `[重试执行] ${run.instruction}`,
+      lastRecoveryHint: "从首页监督轨重新发起失败执行。",
     });
 
     if (ok && executionRunId) {
@@ -1802,12 +2038,11 @@ function DashboardTab({ onOpenTab }: { onOpenTab: (tab: AppTab) => void }) {
             onOpenExecution={() => openControlCenterSection("execution")}
             onOpenChat={() => onOpenTab("tasks")}
             onRetryExecution={(run) => {
-              const { ok, executionRunId } = sendExecutionDispatch({
-                instruction: run.instruction,
-                source: run.source,
+              const { ok, executionRunId } = retryExecutionDispatch(run, {
                 includeUserMessage: true,
-                taskDescription: `[重试执行] ${run.instruction}`,
                 includeActiveProjectMemory: true,
+                taskDescription: `[重试执行] ${run.instruction}`,
+                lastRecoveryHint: "从移动监督面板重新发起失败执行。",
               });
 
               if (ok && executionRunId) {
@@ -2430,8 +2665,8 @@ function MeetingTab() {
     clearMeeting();
     setMeetingTopic(topic.trim());
     setMeetingActive(true);
-    const { providers, agentConfigs, userNickname, desktopProgramSettings } = useStore.getState();
-    sendWs({ type: "settings_sync", providers, agentConfigs, userNickname, desktopProgramSettings });
+    const { providers, agentConfigs, userNickname, desktopProgramSettings, hermesDispatchSettings } = useStore.getState();
+    sendWs({ type: "settings_sync", providers, agentConfigs, userNickname, desktopProgramSettings, hermesDispatchSettings });
     sendWs({ type: "meeting", topic: topic.trim() });
   };
 

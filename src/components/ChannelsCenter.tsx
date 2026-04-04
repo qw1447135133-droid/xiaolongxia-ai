@@ -1,19 +1,71 @@
 "use client";
 
+import { useMemo } from "react";
 import { sendWs } from "@/hooks/useWebSocket";
 import { useStore } from "@/store";
+import { filterByProjectScope, getSessionProjectLabel } from "@/lib/project-context";
 import { PLATFORM_DEFINITIONS } from "@/store/types";
 import type { ControlCenterSectionId } from "@/store/types";
+import type {
+  BusinessContentPublishResult,
+  BusinessContentTask,
+  BusinessOperationRecord,
+} from "@/types/business-entities";
 
 export function ChannelsCenter() {
   const { platformConfigs, updatePlatformConfig } = useStore();
+  const chatSessions = useStore(s => s.chatSessions);
+  const activeSessionId = useStore(s => s.activeSessionId);
+  const businessOperationLogs = useStore(s => s.businessOperationLogs);
+  const businessContentTasks = useStore(s => s.businessContentTasks);
   const setActiveControlCenterSection = useStore(s => s.setActiveControlCenterSection);
   const setTab = useStore(s => s.setTab);
+  const setActiveExecutionRun = useStore(s => s.setActiveExecutionRun);
+  const focusBusinessContentTask = useStore(s => s.focusBusinessContentTask);
+  const focusWorkflowRun = useStore(s => s.focusWorkflowRun);
+  const launchContentTaskNextCycle = useStore(s => s.launchContentTaskNextCycle);
+  const applyContentChannelGovernance = useStore(s => s.applyContentChannelGovernance);
 
   const openControlSection = (section: ControlCenterSectionId) => {
     setActiveControlCenterSection(section);
     setTab("settings");
   };
+
+  const activeSession = useMemo(
+    () => chatSessions.find(session => session.id === activeSessionId) ?? null,
+    [activeSessionId, chatSessions],
+  );
+  const scopedContentTasks = useMemo(
+    () => filterByProjectScope(businessContentTasks, activeSession ?? {}),
+    [activeSession, businessContentTasks],
+  );
+  const contentTaskMap = useMemo(
+    () => Object.fromEntries(scopedContentTasks.map(task => [task.id, task])),
+    [scopedContentTasks],
+  );
+  const scopedOperationLogs = useMemo(
+    () => filterByProjectScope(businessOperationLogs, activeSession ?? {}),
+    [activeSession, businessOperationLogs],
+  );
+  const recentChannelEvents = useMemo(
+    () =>
+      scopedOperationLogs
+        .filter(log =>
+          log.entityType === "contentTask"
+          && ["publish", "dispatch", "governance", "desktop"].includes(log.eventType)
+          && Boolean(contentTaskMap[log.entityId]),
+        )
+        .sort((left, right) => right.createdAt - left.createdAt)
+        .slice(0, 6)
+        .map(log => ({
+          log,
+          task: contentTaskMap[log.entityId],
+          latestPublishResult: resolveLatestPublishResult(contentTaskMap[log.entityId], log),
+          fallbackExecutionRunId: log.executionRunId ?? contentTaskMap[log.entityId].lastExecutionRunId,
+          fallbackWorkflowRunId: log.workflowRunId ?? contentTaskMap[log.entityId].lastWorkflowRunId,
+        })),
+    [contentTaskMap, scopedOperationLogs],
+  );
 
   const enabledCount = PLATFORM_DEFINITIONS.filter(def => platformConfigs[def.id]?.enabled).length;
   const connectedCount = PLATFORM_DEFINITIONS.filter(def => platformConfigs[def.id]?.status === "connected").length;
@@ -56,6 +108,9 @@ export function ChannelsCenter() {
         <div style={{ fontSize: 13, color: "var(--text-muted)", lineHeight: 1.8, marginTop: 8 }}>
           This lightweight layer turns the existing platform settings into a visible channel board, so external access routes feel like part of the workbench rather than a hidden configuration form.
         </div>
+        <div style={{ marginTop: 6, fontSize: 12, color: "var(--text-muted)" }}>
+          Current project: {activeSession ? getSessionProjectLabel(activeSession) : "General"}
+        </div>
         <div style={{ marginTop: 14, display: "flex", gap: 8, flexWrap: "wrap" }}>
           <button type="button" className="btn-ghost" onClick={() => openControlSection("remote")}>
             去远程值守面板
@@ -71,6 +126,184 @@ export function ChannelsCenter() {
         <ChannelMetric label="Enabled" value={enabledCount} accent="#60a5fa" />
         <ChannelMetric label="Connected" value={connectedCount} accent="var(--success)" />
         <ChannelMetric label="Webhook-based" value={webhookCount} accent="var(--warning)" />
+      </div>
+
+      <div className="card" style={{ padding: 16 }}>
+        <div style={{ fontSize: 14, fontWeight: 700 }}>Recent Channel Events</div>
+        <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 4 }}>
+          这里直接复用内容任务的发布、派发和治理日志，把渠道异常变成可回跳的入口。
+        </div>
+
+        <div style={{ display: "grid", gap: 12, marginTop: 14 }}>
+          {recentChannelEvents.length === 0 ? (
+            <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
+              当前项目还没有可用于渠道回跳的业务事件。
+            </div>
+          ) : (
+            recentChannelEvents.map(({ log, task, latestPublishResult, fallbackExecutionRunId, fallbackWorkflowRunId }) => {
+              const highlights = buildChannelEventHighlights(task, log, latestPublishResult);
+              const contextLine = buildChannelEventContext(task, log, latestPublishResult);
+
+              return (
+                <article
+                  key={log.id}
+                  style={{
+                    display: "grid",
+                    gap: 10,
+                    padding: 14,
+                    borderRadius: 18,
+                    border: "1px solid var(--border)",
+                    background: "rgba(255,255,255,0.025)",
+                  }}
+                >
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start" }}>
+                    <div>
+                      <div style={{ fontSize: 15, fontWeight: 700 }}>{task.title}</div>
+                      <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 4 }}>
+                        {task.publishTargets.map(target => `${target.channel}:${target.accountLabel}`).join(" / ") || task.channel}
+                      </div>
+                    </div>
+                    <div style={{ display: "grid", justifyItems: "end", gap: 6 }}>
+                      <span style={eventBadgeStyle(log.status)}>{log.status}</span>
+                      <span style={{ fontSize: 11, color: "var(--text-muted)" }}>{formatEventTime(log.createdAt)}</span>
+                    </div>
+                  </div>
+
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 8, fontSize: 12, color: "var(--text-muted)" }}>
+                    <span>事件 {getEventTypeLabel(log.eventType)}</span>
+                    <span>阶段 {task.status}</span>
+                    <span>格式 {task.format}</span>
+                    <span>主发 {task.recommendedPrimaryChannel ?? task.channel}</span>
+                    <span>{task.riskyChannels.length > 0 ? `风险 ${task.riskyChannels.join(" / ")}` : "暂无高风险渠道"}</span>
+                  </div>
+
+                  {highlights.length > 0 ? (
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                      {highlights.map(highlight => (
+                        <span
+                          key={`${log.id}-${highlight}`}
+                          style={{
+                            padding: "4px 8px",
+                            borderRadius: 999,
+                            border: "1px solid rgba(255,255,255,0.08)",
+                            background: "rgba(255,255,255,0.04)",
+                            color: "var(--text-muted)",
+                            fontSize: 11,
+                          }}
+                        >
+                          {highlight}
+                        </span>
+                      ))}
+                    </div>
+                  ) : null}
+
+                  <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.75 }}>
+                    {log.detail}
+                  </div>
+
+                  {contextLine ? (
+                    <div
+                      style={{
+                        fontSize: 11,
+                        color: "var(--text-muted)",
+                        lineHeight: 1.7,
+                        padding: "10px 12px",
+                        borderRadius: 12,
+                        border: "1px solid rgba(255,255,255,0.08)",
+                        background: "rgba(255,255,255,0.03)",
+                      }}
+                    >
+                      {contextLine}
+                    </div>
+                  ) : null}
+
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    {log.eventType === "publish" && log.status === "failed" ? (
+                      <button
+                        type="button"
+                        className="btn-ghost"
+                        onClick={() => {
+                          const workflowRunId = launchContentTaskNextCycle({
+                            contentTaskId: task.id,
+                            recommendation: task.nextCycleRecommendation ?? "retry",
+                            detail: "从渠道事件卡恢复失败发布，系统已按下一轮建议重新排队内容 workflow。",
+                            trigger: "manual",
+                          });
+                          if (workflowRunId) {
+                            focusWorkflowRun(workflowRunId);
+                            openControlSection("workflow");
+                          } else {
+                            setTab("tasks");
+                          }
+                        }}
+                      >
+                        按建议重试
+                      </button>
+                    ) : null}
+                    {log.eventType === "governance" ? (
+                      <button
+                        type="button"
+                        className="btn-ghost"
+                        onClick={() => {
+                          applyContentChannelGovernance({
+                            contentTaskId: task.id,
+                            strategy: "prioritize_primary",
+                            detail: "从渠道事件卡同步治理策略，已按推荐主发渠道重排目标。",
+                            trigger: "manual",
+                          });
+                          focusBusinessContentTask(task.id);
+                          openControlSection("entities");
+                        }}
+                      >
+                        同步渠道策略
+                      </button>
+                    ) : null}
+                    {fallbackExecutionRunId ? (
+                      <button
+                        type="button"
+                        className="btn-ghost"
+                        onClick={() => {
+                          setActiveExecutionRun(fallbackExecutionRunId);
+                          openControlSection("execution");
+                        }}
+                      >
+                        查看对应执行
+                      </button>
+                    ) : null}
+                    {fallbackWorkflowRunId ? (
+                      <button
+                        type="button"
+                        className="btn-ghost"
+                        onClick={() => {
+                          focusWorkflowRun(fallbackWorkflowRunId);
+                          openControlSection("workflow");
+                        }}
+                      >
+                        定位到 Workflow
+                      </button>
+                    ) : null}
+                    <button
+                      type="button"
+                      className="btn-ghost"
+                      onClick={() => {
+                        focusBusinessContentTask(task.id);
+                        openControlSection("entities");
+                      }}
+                    >
+                      定位到内容实体
+                    </button>
+                    <button type="button" className="btn-ghost" onClick={() => openControlSection("remote")}>
+                      打开远程值守
+                    </button>
+                    <button type="button" className="btn-ghost" onClick={() => setTab("tasks")}>
+                      回聊天接管
+                    </button>
+                  </div>
+                </article>
+              );
+            })
+          )}
+        </div>
       </div>
 
       <div className="card" style={{ padding: 16 }}>
@@ -224,3 +457,131 @@ const channelRowStyle = {
   fontSize: 12,
   color: "var(--text-muted)",
 };
+
+function eventBadgeStyle(status: string) {
+  const color = status === "completed" || status === "sent"
+    ? "var(--success)"
+    : status === "pending"
+      ? "var(--warning)"
+      : "var(--danger)";
+
+  return {
+    padding: "3px 8px",
+    borderRadius: 999,
+    border: `1px solid ${color}33`,
+    background: `${color}1f`,
+    color,
+    fontSize: 10,
+    fontWeight: 700,
+  };
+}
+
+function getEventTypeLabel(eventType: BusinessOperationRecord["eventType"]) {
+  if (eventType === "publish") return "发布回写";
+  if (eventType === "governance") return "渠道治理";
+  if (eventType === "desktop") return "桌面动作";
+  if (eventType === "dispatch") return "派发准备";
+  if (eventType === "workflow") return "Workflow";
+  return "业务事件";
+}
+
+function formatEventTime(timestamp: number) {
+  return new Intl.DateTimeFormat("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(timestamp);
+}
+
+function resolveLatestPublishResult(
+  task: BusinessContentTask,
+  log: BusinessOperationRecord,
+): BusinessContentPublishResult | null {
+  const sortedResults = [...task.publishedResults].sort((left, right) => right.publishedAt - left.publishedAt);
+  return (
+    sortedResults.find(result =>
+      (log.workflowRunId && result.workflowRunId === log.workflowRunId)
+      || (log.executionRunId && result.executionRunId === log.executionRunId)
+      || (log.externalRef && `${result.channel}:${result.accountLabel}` === log.externalRef)
+      || (Boolean(log.failureReason) && result.failureReason === log.failureReason)
+      || result.status === log.status,
+    ) ?? sortedResults[0] ?? null
+  );
+}
+
+function buildChannelEventHighlights(
+  task: BusinessContentTask,
+  log: BusinessOperationRecord,
+  latestPublishResult: BusinessContentPublishResult | null,
+) {
+  if (log.eventType === "publish") {
+    return [
+      latestPublishResult ? `渠道 ${latestPublishResult.channel}:${latestPublishResult.accountLabel}` : `渠道 ${task.channel}`,
+      latestPublishResult?.externalId ? `外部ID ${latestPublishResult.externalId}` : "",
+      latestPublishResult?.link ? "已回写链接" : "",
+      log.failureReason ? `失败原因 ${log.failureReason}` : "",
+    ].filter(Boolean);
+  }
+
+  if (log.eventType === "governance") {
+    return [
+      `推荐主发 ${task.recommendedPrimaryChannel ?? task.channel}`,
+      task.nextCycleRecommendation ? `下一轮 ${task.nextCycleRecommendation}` : "",
+      task.riskyChannels.length > 0 ? `风险渠道 ${task.riskyChannels.join(" / ")}` : "当前无风险渠道",
+    ].filter(Boolean);
+  }
+
+  if (log.eventType === "desktop") {
+    return [
+      `目标 ${task.publishTargets.map(target => `${target.channel}:${target.accountLabel}`).join(" / ") || task.channel}`,
+      log.status === "blocked" ? "待人工接管" : "",
+      log.failureReason ? `原因 ${log.failureReason}` : "",
+    ].filter(Boolean);
+  }
+
+  return [
+    `目标 ${task.goal}`,
+    task.scheduledFor ? `排期 ${formatEventTime(task.scheduledFor)}` : "",
+    task.latestDraftSummary ? "已有草稿摘要" : "",
+  ].filter(Boolean);
+}
+
+function buildChannelEventContext(
+  task: BusinessContentTask,
+  log: BusinessOperationRecord,
+  latestPublishResult: BusinessContentPublishResult | null,
+) {
+  if (log.eventType === "publish") {
+    if (log.status === "failed") {
+      return latestPublishResult?.failureReason
+        ?? log.failureReason
+        ?? "发布失败，但当前还没有记录更细的失败原因。";
+    }
+
+    const externalRef = latestPublishResult?.externalId ?? log.externalRef;
+    const summary = latestPublishResult?.summary ?? task.latestPostmortemSummary ?? task.latestDraftSummary;
+    return [
+      externalRef ? `外部回执: ${externalRef}` : "",
+      summary ? `最近产出: ${summary}` : "",
+    ].filter(Boolean).join(" · ");
+  }
+
+  if (log.eventType === "governance") {
+    const governanceSummary = task.channelGovernance
+      .slice(0, 3)
+      .map(item => `${item.channel} ${item.completed}/${item.failed} ${item.recommendation}`)
+      .join(" · ");
+    return governanceSummary || task.latestPostmortemSummary || "";
+  }
+
+  if (log.eventType === "desktop") {
+    return [
+      task.lastWorkflowRunId ? `最近 Workflow: ${task.lastWorkflowRunId}` : "",
+      task.lastExecutionRunId ? `最近执行: ${task.lastExecutionRunId}` : "",
+      task.latestDraftSummary ?? "",
+    ].filter(Boolean).join(" · ");
+  }
+
+  return task.latestDraftSummary ?? task.brief;
+}

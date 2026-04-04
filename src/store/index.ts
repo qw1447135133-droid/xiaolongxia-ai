@@ -13,8 +13,11 @@ import type {
   DesktopScreenshotState,
   DesktopProgramEntry,
   DesktopProgramSettings,
+  HermesDispatchSettings,
+  HermesPlannerProfile,
   DesktopRuntimeState,
   ExecutionEvent,
+  ExecutionRecoveryState,
   ExecutionRun,
   ExecutionRunSource,
   ExecutionRunStatus,
@@ -159,6 +162,7 @@ interface SettingsSlice {
   activeTeamOperatingTemplateId: TeamOperatingTemplateId | null;
   semanticMemoryConfig: SemanticMemoryConfig;
   desktopProgramSettings: DesktopProgramSettings;
+  hermesDispatchSettings: HermesDispatchSettings;
   addProvider: (p: ModelProvider) => void;
   updateProvider: (id: string, updates: Partial<ModelProvider>) => void;
   removeProvider: (id: string) => void;
@@ -172,6 +176,9 @@ interface SettingsSlice {
   updateSemanticMemoryConfig: (updates: Partial<SemanticMemoryConfig>) => void;
   updateSemanticMemoryPgvectorConfig: (updates: Partial<SemanticMemoryConfig["pgvector"]>) => void;
   updateDesktopProgramSettings: (updates: Partial<DesktopProgramSettings>) => void;
+  replaceHermesDispatchSettings: (updates: Partial<HermesDispatchSettings>) => void;
+  setHermesDispatchActivePlannerProfile: (id: string) => void;
+  updateHermesDispatchPlannerProfile: (id: string, updates: Partial<Omit<HermesPlannerProfile, "id">>) => void;
   saveDesktopFavorite: (payload: Pick<DesktopProgramEntry, "label" | "target" | "args" | "cwd" | "notes" | "source">) => void;
   removeDesktopFavorite: (id: string) => void;
   saveDesktopWhitelistEntry: (payload: Pick<DesktopProgramEntry, "label" | "target" | "args" | "cwd" | "notes" | "source">) => void;
@@ -184,11 +191,15 @@ interface UISlice {
   rightOpen: boolean;
   activeTab: AppTab;
   activeControlCenterSectionId: ControlCenterSectionId;
+  focusedBusinessContentTaskId: string | null;
+  focusedWorkflowRunId: string | null;
   setTheme: (t: UISlice["theme"]) => void;
   toggleLeft: () => void;
   toggleRight: () => void;
   setTab: (t: AppTab) => void;
   setActiveControlCenterSection: (section: ControlCenterSectionId) => void;
+  focusBusinessContentTask: (id: string | null) => void;
+  focusWorkflowRun: (id: string | null) => void;
 }
 
 interface ConnectionSlice {
@@ -266,6 +277,17 @@ interface BusinessEntitiesSlice {
     status: BusinessApprovalRecord["status"];
     note?: string;
   }) => void;
+  applyContentTaskApprovalDecision: (payload: {
+    contentTaskId: string;
+    decision: BusinessApprovalRecord["status"];
+  }) => {
+    title: string;
+    note: string;
+    detail: string;
+    nextStatus: BusinessContentTask["status"];
+    queuedWorkflowRunId: string | null;
+    archivedWorkflowRunIds: string[];
+  } | null;
   recordBusinessOperation: (payload: {
     entityType: BusinessEntityType;
     entityId: string;
@@ -349,6 +371,8 @@ interface ExecutionSlice {
     workflowRunId?: string;
     entityType?: BusinessEntityType;
     entityId?: string;
+    retryOfRunId?: string;
+    lastRecoveryHint?: string;
   }) => string;
   updateExecutionRun: (payload: {
     id: string;
@@ -368,9 +392,17 @@ interface ExecutionSlice {
     verificationUpdatedAt?: number;
     timestamp?: number;
     completedAt?: number;
+    retryCount?: number;
+    retryOfRunId?: string;
+    lastFailureReason?: string;
+    recoveryState?: ExecutionRecoveryState;
+    lastRecoveryHint?: string;
     event?: ExecutionEvent;
   }) => void;
-  failExecutionRun: (runId: string, detail: string) => void;
+  failExecutionRun: (runId: string, detail: string, options?: {
+    recoveryState?: Exclude<ExecutionRecoveryState, "none">;
+    lastRecoveryHint?: string;
+  }) => void;
   setActiveExecutionRun: (runId: string | null) => void;
 }
 
@@ -594,6 +626,87 @@ function normalizeDesktopProgramSettings(
   };
 }
 
+function buildDefaultHermesSessionStateFile(profileId: string): string {
+  const normalizedId = profileId.trim() || "default";
+  return `output/hermes-dispatch/planner-sessions/${normalizedId}.json`;
+}
+
+function normalizeHermesSessionStateFile(profileId: string, value: unknown): string {
+  const fallback = buildDefaultHermesSessionStateFile(profileId);
+  if (typeof value !== "string") return fallback;
+
+  const trimmed = value.trim();
+  if (!trimmed) return fallback;
+
+  const normalized = trimmed.replace(/\\/g, "/");
+  if (
+    normalized.startsWith("/")
+    || /^[a-zA-Z]:\//.test(normalized)
+    || normalized.includes("../")
+    || !normalized.startsWith("output/hermes-dispatch/")
+    || normalized === "output/hermes-dispatch/"
+  ) {
+    return fallback;
+  }
+
+  return normalized;
+}
+
+function normalizeHermesPlannerProfiles(profiles: unknown): HermesPlannerProfile[] {
+  if (!Array.isArray(profiles)) return [];
+
+  return profiles
+    .map((profile) => {
+      const item = profile as Partial<HermesPlannerProfile>;
+      const id = typeof item?.id === "string" ? item.id.trim() : "";
+      const label = typeof item?.label === "string" ? item.label.trim() : "";
+      const sessionStateFile = normalizeHermesSessionStateFile(id, item?.sessionStateFile);
+      if (!id || !label || !sessionStateFile) return null;
+      const normalizedModels = item?.models && typeof item.models === "object"
+        ? Object.fromEntries(
+            Object.entries(item.models)
+              .map(([key, value]) => [key, typeof value === "string" ? value.trim() : ""])
+              .filter(([, value]) => Boolean(value)),
+          )
+        : null;
+
+      return {
+        id,
+        label,
+        sessionStateFile,
+        ...(typeof item?.description === "string" && item.description.trim()
+          ? { description: item.description.trim() }
+          : {}),
+        ...(normalizedModels && Object.keys(normalizedModels).length > 0
+          ? { models: normalizedModels as HermesPlannerProfile["models"] }
+          : {}),
+      } satisfies HermesPlannerProfile;
+    })
+    .filter((item): item is HermesPlannerProfile => Boolean(item))
+    .filter((item, index, list) => list.findIndex(candidate => candidate.id === item.id) === index)
+    .slice(0, 6);
+}
+
+function normalizeHermesDispatchSettings(
+  currentSettings: HermesDispatchSettings,
+  persistedSettings?: Partial<HermesDispatchSettings>,
+): HermesDispatchSettings {
+  const normalizedProfiles = normalizeHermesPlannerProfiles(
+    persistedSettings?.plannerProfiles ?? currentSettings.plannerProfiles,
+  );
+  const plannerProfiles = normalizedProfiles.length > 0 ? normalizedProfiles : currentSettings.plannerProfiles;
+  const activePlannerProfileId = plannerProfiles.some(
+    profile => profile.id === persistedSettings?.activePlannerProfileId,
+  )
+    ? String(persistedSettings?.activePlannerProfileId)
+    : plannerProfiles[0].id;
+
+  return {
+    activePlannerProfileId,
+    plannerProfiles,
+  };
+}
+
 const seedSession = makeEmptySession();
 const MAX_EXECUTION_RUNS = 24;
 const MAX_EXECUTION_EVENTS = 40;
@@ -624,6 +737,33 @@ const DEFAULT_DESKTOP_PROGRAM_SETTINGS: DesktopProgramSettings = {
     autoOpenPanelOnAction: true,
     requireManualTakeoverForVerification: true,
   },
+};
+
+const DEFAULT_HERMES_DISPATCH_SETTINGS: HermesDispatchSettings = {
+  activePlannerProfileId: "default",
+  plannerProfiles: [
+    {
+      id: "default",
+      label: "Default Brain",
+      sessionStateFile: "output/hermes-dispatch/planner-sessions/default.json",
+      description: "Default Hermes planner conversation.",
+      models: {},
+    },
+    {
+      id: "research",
+      label: "Research Brain",
+      sessionStateFile: "output/hermes-dispatch/planner-sessions/research.json",
+      description: "Separate planner context for research and discovery.",
+      models: {},
+    },
+    {
+      id: "scratch",
+      label: "Scratch Brain",
+      sessionStateFile: "output/hermes-dispatch/planner-sessions/scratch.json",
+      description: "Temporary planner context for experiments and dry runs.",
+      models: {},
+    },
+  ],
 };
 
 const DEFAULT_DESKTOP_RUNTIME_STATE: DesktopRuntimeState = {
@@ -672,6 +812,18 @@ function capExecutionRuns(runs: ExecutionRun[]): ExecutionRun[] {
   return [...runs]
     .sort((left, right) => right.updatedAt - left.updatedAt)
     .slice(0, MAX_EXECUTION_RUNS);
+}
+
+function deriveExecutionRecoveryState(params: {
+  status: ExecutionRunStatus;
+  explicitRecoveryState?: ExecutionRecoveryState;
+  currentRecoveryState?: ExecutionRecoveryState;
+}) {
+  const { status, explicitRecoveryState, currentRecoveryState } = params;
+  if (explicitRecoveryState) return explicitRecoveryState;
+  if (status === "completed") return "none";
+  if (status === "failed") return currentRecoveryState === "blocked" ? "blocked" : "retryable";
+  return currentRecoveryState ?? "none";
 }
 
 function capWorkspaceProjectMemories(memories: WorkspaceProjectMemory[]): WorkspaceProjectMemory[] {
@@ -1028,6 +1180,75 @@ function findActiveContentWorkflowRun(
   ) ?? null;
 }
 
+function buildContentTaskApprovalOutcome(
+  task: BusinessContentTask,
+  decision: BusinessApprovalRecord["status"],
+) {
+  if (decision === "approved") {
+    if (task.status === "review") {
+      return {
+        title: "审批已批准并继续发布准备",
+        note: "审批已批准并继续发布准备，系统已把内容任务推进到 scheduled。",
+        detail: "系统已保留批准记录，把内容任务推进到 scheduled，并自动排队发布准备 workflow。",
+        nextStatus: "scheduled" as const,
+        queuePublishPrepWorkflow: true,
+        archivePublishPrepWorkflows: false,
+      };
+    }
+
+    if (task.status === "scheduled") {
+      return {
+        title: "审批已批准并继续发布准备",
+        note: "审批已批准并继续发布准备，系统将继续排队发布准备 workflow。",
+        detail: "系统已保留批准记录，并为这条内容任务继续排队发布准备 workflow。",
+        nextStatus: task.status,
+        queuePublishPrepWorkflow: true,
+        archivePublishPrepWorkflows: false,
+      };
+    }
+
+    return {
+      title: "审批已批准",
+      note: "审批已批准，这条业务对象已进入可自动推进状态。",
+      detail: "这条业务对象已进入可自动推进状态，审计区会保留这次批准记录。",
+      nextStatus: task.status,
+      queuePublishPrepWorkflow: false,
+      archivePublishPrepWorkflows: false,
+    };
+  }
+
+  if (decision === "rejected") {
+    if (task.status === "scheduled") {
+      return {
+        title: "已驳回并退回定稿",
+        note: "审批已驳回并退回定稿，建议重新确认内容和渠道策略。",
+        detail: "系统已把这条内容任务退回 review，方便继续打磨定稿后再次进入发布链路。",
+        nextStatus: "review" as const,
+        queuePublishPrepWorkflow: false,
+        archivePublishPrepWorkflows: true,
+      };
+    }
+
+    return {
+      title: "审批已驳回",
+      note: "审批已驳回，建议继续打磨后重新提交。",
+      detail: "这次驳回会保留在审计记录里，后续可以回到业务实体面板继续调整。",
+      nextStatus: task.status,
+      queuePublishPrepWorkflow: false,
+      archivePublishPrepWorkflows: true,
+    };
+  }
+
+  return {
+    title: "审批已重新打开",
+    note: "审批已重新打开，当前流程恢复为待人工确认状态。",
+    detail: "系统已恢复待确认状态，审计记录会显示这次重新打开动作。",
+    nextStatus: task.status,
+    queuePublishPrepWorkflow: false,
+    archivePublishPrepWorkflows: true,
+  };
+}
+
 function resolveContentTaskStatusAfterWorkflow(
   task: BusinessContentTask,
   workflowRun: Pick<WorkflowRun, "templateId">,
@@ -1334,6 +1555,7 @@ export const useStore = create<Store>()(
       activeTeamOperatingTemplateId: null,
       semanticMemoryConfig: DEFAULT_SEMANTIC_MEMORY_CONFIG,
       desktopProgramSettings: DEFAULT_DESKTOP_PROGRAM_SETTINGS,
+      hermesDispatchSettings: DEFAULT_HERMES_DISPATCH_SETTINGS,
       setUserNickname: (nickname) => set({ userNickname: nickname }),
       setActiveTeamOperatingTemplate: (activeTeamOperatingTemplateId) => set({ activeTeamOperatingTemplateId }),
       platformConfigs: Object.fromEntries(
@@ -1425,6 +1647,42 @@ export const useStore = create<Store>()(
               : s.desktopProgramSettings.inputControl,
           },
         })),
+      replaceHermesDispatchSettings: (updates) =>
+        set(s => ({
+          hermesDispatchSettings: normalizeHermesDispatchSettings(s.hermesDispatchSettings, updates),
+        })),
+      setHermesDispatchActivePlannerProfile: (id) =>
+        set(s => ({
+          hermesDispatchSettings: {
+            ...s.hermesDispatchSettings,
+            activePlannerProfileId: s.hermesDispatchSettings.plannerProfiles.some(profile => profile.id === id)
+              ? id
+              : s.hermesDispatchSettings.activePlannerProfileId,
+          },
+        })),
+      updateHermesDispatchPlannerProfile: (id, updates) =>
+        set(s => ({
+          hermesDispatchSettings: {
+            ...s.hermesDispatchSettings,
+            plannerProfiles: s.hermesDispatchSettings.plannerProfiles.map(profile => (
+              profile.id === id
+                ? {
+                    ...profile,
+                    ...(typeof updates.label === "string" ? { label: updates.label } : {}),
+                    ...(typeof updates.sessionStateFile === "string"
+                      ? { sessionStateFile: updates.sessionStateFile }
+                      : {}),
+                    ...(typeof updates.description === "string"
+                      ? { description: updates.description }
+                      : {}),
+                    ...(updates.models && typeof updates.models === "object"
+                      ? { models: updates.models }
+                      : {}),
+                  }
+                : profile
+            )),
+          },
+        })),
       saveDesktopFavorite: (payload) =>
         set(s => ({
           desktopProgramSettings: {
@@ -1459,6 +1717,8 @@ export const useStore = create<Store>()(
       rightOpen: true,
       activeTab: "dashboard",
       activeControlCenterSectionId: "overview",
+      focusedBusinessContentTaskId: null,
+      focusedWorkflowRunId: null,
       setTheme: (theme) => {
         if (typeof document !== "undefined") {
           document.documentElement.setAttribute("data-theme", theme === "dark" ? "" : theme);
@@ -1469,6 +1729,8 @@ export const useStore = create<Store>()(
       toggleRight: () => set(s => ({ rightOpen: !s.rightOpen })),
       setTab: (activeTab) => set({ activeTab }),
       setActiveControlCenterSection: (activeControlCenterSectionId) => set({ activeControlCenterSectionId }),
+      focusBusinessContentTask: (focusedBusinessContentTaskId) => set({ focusedBusinessContentTaskId }),
+      focusWorkflowRun: (focusedWorkflowRunId) => set({ focusedWorkflowRunId }),
 
       wsStatus: "disconnected",
       desktopRuntime: DEFAULT_DESKTOP_RUNTIME_STATE,
@@ -1939,6 +2201,54 @@ export const useStore = create<Store>()(
             ]),
           };
         }),
+      applyContentTaskApprovalDecision: ({ contentTaskId, decision }) => {
+        const state = get();
+        const contentTask = state.businessContentTasks.find(task => task.id === contentTaskId) ?? null;
+        if (!contentTask) return null;
+
+        const outcome = buildContentTaskApprovalOutcome(contentTask, decision);
+        get().setBusinessApprovalDecision({
+          entityType: "contentTask",
+          entityId: contentTaskId,
+          status: decision,
+          note: outcome.note,
+        });
+
+        const archivedWorkflowRunIds = outcome.archivePublishPrepWorkflows
+          ? get().workflowRuns
+              .filter(run =>
+                run.entityType === "contentTask"
+                && run.entityId === contentTaskId
+                && run.templateId === "content-publish-prep"
+                && (run.status === "queued" || run.status === "staged" || run.status === "in-progress"),
+              )
+              .map(run => run.id)
+          : [];
+
+        archivedWorkflowRunIds.forEach(workflowRunId => {
+          get().archiveWorkflowRun(workflowRunId);
+        });
+
+        if (outcome.nextStatus !== contentTask.status) {
+          get().updateBusinessContentTask(contentTaskId, {
+            status: outcome.nextStatus,
+            lastOperationAt: Date.now(),
+          });
+        }
+
+        const queuedWorkflowRunId = outcome.queuePublishPrepWorkflow
+          ? get().queueContentTaskWorkflowRun(contentTaskId)
+          : null;
+
+        return {
+          title: outcome.title,
+          note: outcome.note,
+          detail: outcome.detail,
+          nextStatus: outcome.nextStatus,
+          queuedWorkflowRunId,
+          archivedWorkflowRunIds,
+        };
+      },
       recordBusinessOperation: ({ entityType, entityId, eventType, trigger, status, title, detail, executionRunId, workflowRunId, externalRef, failureReason }) =>
         set(s => {
           const now = Date.now();
@@ -2476,10 +2786,24 @@ export const useStore = create<Store>()(
 
       executionRuns: [],
       activeExecutionRunId: null,
-      createExecutionRun: ({ id, sessionId, instruction, source = "chat", workflowRunId, entityType, entityId }) => {
+      createExecutionRun: ({
+        id,
+        sessionId,
+        instruction,
+        source = "chat",
+        workflowRunId,
+        entityType,
+        entityId,
+        retryOfRunId,
+        lastRecoveryHint,
+      }) => {
         const timestamp = Date.now();
         const runId = id ?? `run-${timestamp}-${Math.random().toString(36).slice(2, 8)}`;
-        const activeSession = useStore.getState().chatSessions.find(session => session.id === sessionId) ?? null;
+        const currentState = useStore.getState();
+        const activeSession = currentState.chatSessions.find(session => session.id === sessionId) ?? null;
+        const retrySourceRun = retryOfRunId
+          ? currentState.executionRuns.find(run => run.id === retryOfRunId) ?? null
+          : null;
         const nextRun: ExecutionRun = {
           id: runId,
           sessionId,
@@ -2490,6 +2814,10 @@ export const useStore = create<Store>()(
           entityType,
           entityId,
           status: "queued",
+          retryCount: retrySourceRun ? (retrySourceRun.retryCount ?? 0) + 1 : 0,
+          retryOfRunId,
+          recoveryState: "none",
+          ...(lastRecoveryHint ? { lastRecoveryHint } : {}),
           createdAt: timestamp,
           updatedAt: timestamp,
           totalTasks: 0,
@@ -2499,8 +2827,10 @@ export const useStore = create<Store>()(
             {
               id: `evt-${timestamp}`,
               type: "user",
-              title: "任务已创建",
-              detail: instruction,
+              title: retrySourceRun ? "重试任务已创建" : "任务已创建",
+              detail: retrySourceRun
+                ? `${instruction}\n\n重试来源: ${retrySourceRun.id} · 原因: ${retrySourceRun.lastFailureReason ?? retrySourceRun.lastRecoveryHint ?? "沿用原执行上下文继续处理"}`
+                : instruction,
               timestamp,
             },
           ]),
@@ -2548,6 +2878,11 @@ export const useStore = create<Store>()(
         verificationUpdatedAt,
         timestamp,
         completedAt,
+        retryCount,
+        retryOfRunId,
+        lastFailureReason,
+        recoveryState,
+        lastRecoveryHint,
         event,
       }) =>
         set(s => {
@@ -2565,6 +2900,8 @@ export const useStore = create<Store>()(
               entityType,
               entityId,
               status: "queued",
+              retryCount: 0,
+              recoveryState: "none",
               createdAt: updateTime,
               updatedAt: updateTime,
               totalTasks: 0,
@@ -2581,6 +2918,25 @@ export const useStore = create<Store>()(
             : baseRun.events;
 
           const resolvedStatus = status ?? baseRun.status;
+          const resolvedRecoveryState = deriveExecutionRecoveryState({
+            status: resolvedStatus,
+            explicitRecoveryState: recoveryState,
+            currentRecoveryState: baseRun.recoveryState,
+          });
+          const resolvedFailureReason =
+            lastFailureReason !== undefined
+              ? lastFailureReason || undefined
+              : resolvedStatus === "failed"
+                ? (event?.type === "error" ? event.detail : baseRun.lastFailureReason)
+                : resolvedRecoveryState === "none"
+                  ? undefined
+                  : baseRun.lastFailureReason;
+          const resolvedRecoveryHint =
+            lastRecoveryHint !== undefined
+              ? lastRecoveryHint || undefined
+              : resolvedRecoveryState === "none"
+                ? undefined
+                : baseRun.lastRecoveryHint;
           const nextRun: ExecutionRun = {
             ...baseRun,
             ...(sessionId ? { sessionId } : {}),
@@ -2590,6 +2946,11 @@ export const useStore = create<Store>()(
             ...(entityType === undefined ? {} : { entityType }),
             ...(entityId === undefined ? {} : { entityId }),
             ...(status ? { status } : {}),
+            ...(typeof retryCount === "number" ? { retryCount } : {}),
+            ...(retryOfRunId === undefined ? {} : { retryOfRunId }),
+            lastFailureReason: resolvedFailureReason,
+            recoveryState: resolvedRecoveryState,
+            lastRecoveryHint: resolvedRecoveryHint,
             ...(currentAgentId === undefined ? {} : { currentAgentId }),
             ...(typeof totalTasks === "number" ? { totalTasks } : {}),
             ...(typeof completedTasks === "number" ? { completedTasks } : {}),
@@ -2628,7 +2989,7 @@ export const useStore = create<Store>()(
             activeExecutionRunId: id,
           };
         }),
-      failExecutionRun: (runId, detail) =>
+      failExecutionRun: (runId, detail, options) =>
         set(s => {
           const now = Date.now();
           return {
@@ -2638,6 +2999,9 @@ export const useStore = create<Store>()(
                   ? {
                       ...run,
                       status: "failed",
+                      lastFailureReason: detail,
+                      recoveryState: options?.recoveryState ?? "retryable",
+                      lastRecoveryHint: options?.lastRecoveryHint ?? "可查看失败原因后重试，或回到聊天接管。",
                       updatedAt: now,
                       completedAt: now,
                       events: capExecutionEvents([
@@ -3098,6 +3462,7 @@ export const useStore = create<Store>()(
         activeTeamOperatingTemplateId: s.activeTeamOperatingTemplateId,
         semanticMemoryConfig: s.semanticMemoryConfig,
         desktopProgramSettings: s.desktopProgramSettings,
+        hermesDispatchSettings: s.hermesDispatchSettings,
         theme: s.theme,
         leftOpen: s.leftOpen,
         rightOpen: s.rightOpen,
@@ -3141,6 +3506,10 @@ export const useStore = create<Store>()(
           current.desktopProgramSettings,
           persistedStore.desktopProgramSettings,
         );
+        const hermesDispatchSettings = normalizeHermesDispatchSettings(
+          current.hermesDispatchSettings,
+          persistedStore.hermesDispatchSettings,
+        );
 
         return ensureChatHydration({
           ...merged,
@@ -3148,6 +3517,7 @@ export const useStore = create<Store>()(
           agents,
           semanticMemoryConfig,
           desktopProgramSettings,
+          hermesDispatchSettings,
           semanticKnowledgeDocs: Array.isArray(persistedStore.semanticKnowledgeDocs)
             ? persistedStore.semanticKnowledgeDocs
             : current.semanticKnowledgeDocs,

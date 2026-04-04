@@ -2,7 +2,7 @@
 
 import { sendWs } from "@/hooks/useWebSocket";
 import { useStore } from "@/store";
-import type { ExecutionRunSource } from "@/store/types";
+import type { ExecutionRun, ExecutionRunSource } from "@/store/types";
 import {
   buildDeskNoteCollectionSnippet,
   buildKnowledgeDocumentCollectionSnippet,
@@ -32,6 +32,8 @@ export function sendExecutionDispatch({
   workflowRunId,
   entityType,
   entityId,
+  retryOfRunId,
+  lastRecoveryHint,
 }: {
   instruction: string;
   source?: ExecutionRunSource;
@@ -43,6 +45,8 @@ export function sendExecutionDispatch({
   workflowRunId?: string;
   entityType?: "customer" | "lead" | "ticket" | "contentTask" | "channelSession";
   entityId?: string;
+  retryOfRunId?: string;
+  lastRecoveryHint?: string;
 }) {
   const trimmed = instruction.trim();
   const store = useStore.getState();
@@ -102,7 +106,18 @@ export function sendExecutionDispatch({
     workflowRunId,
     entityType,
     entityId,
+    retryOfRunId,
+    lastRecoveryHint,
   });
+
+  if (retryOfRunId) {
+    store.updateExecutionRun({
+      id: retryOfRunId,
+      recoveryState: "none",
+      lastRecoveryHint: `已转入新的恢复执行 ${executionRunId.slice(0, 12)}。`,
+      timestamp: Date.now(),
+    });
+  }
 
   if (resolvedProjectMemory) {
     store.updateExecutionRun({
@@ -182,8 +197,40 @@ export function sendExecutionDispatch({
   });
 
   if (!ok) {
-    store.failExecutionRun(executionRunId, "WebSocket 连接已断开，任务未成功发送。");
+    store.failExecutionRun(executionRunId, "WebSocket 连接已断开，任务未成功发送。", {
+      recoveryState: "blocked",
+      lastRecoveryHint: "重连 WebSocket 后可一键重试，或回到聊天接管这次执行。",
+    });
+    if (retryOfRunId) {
+      store.updateExecutionRun({
+        id: retryOfRunId,
+        recoveryState: "retryable",
+        lastRecoveryHint: lastRecoveryHint ?? "恢复执行发送失败，可再次重试或回到聊天接管。",
+        timestamp: Date.now(),
+      });
+    }
   }
 
   return { ok, executionRunId };
+}
+
+export function retryExecutionDispatch(
+  run: Pick<ExecutionRun, "id" | "instruction" | "source" | "sessionId">,
+  options?: {
+    includeUserMessage?: boolean;
+    taskDescription?: string;
+    includeActiveProjectMemory?: boolean;
+    lastRecoveryHint?: string;
+  },
+) {
+  return sendExecutionDispatch({
+    instruction: run.instruction,
+    source: run.source,
+    includeUserMessage: options?.includeUserMessage ?? true,
+    taskDescription: options?.taskDescription ?? `[重试执行] ${run.instruction}`,
+    includeActiveProjectMemory: options?.includeActiveProjectMemory ?? true,
+    sessionId: run.sessionId,
+    retryOfRunId: run.id,
+    lastRecoveryHint: options?.lastRecoveryHint,
+  });
 }

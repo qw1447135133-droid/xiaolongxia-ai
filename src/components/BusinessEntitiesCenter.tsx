@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useStore } from "@/store";
 import { filterByProjectScope, getSessionProjectLabel } from "@/lib/project-context";
 import {
@@ -20,6 +20,7 @@ import type { BusinessContentFormat, BusinessEntityType, BusinessOperationRecord
 import type { ControlCenterSectionId } from "@/store/types";
 
 export function BusinessEntitiesCenter() {
+  const contentTaskRefs = useRef<Record<string, HTMLElement | null>>({});
   const [creatorType, setCreatorType] = useState<"customer" | "lead" | "ticket" | "content" | "session">("customer");
   const [primaryText, setPrimaryText] = useState("");
   const [detailText, setDetailText] = useState("");
@@ -54,6 +55,9 @@ export function BusinessEntitiesCenter() {
   const setActiveExecutionRun = useStore(s => s.setActiveExecutionRun);
   const setActiveControlCenterSection = useStore(s => s.setActiveControlCenterSection);
   const setTab = useStore(s => s.setTab);
+  const focusedBusinessContentTaskId = useStore(s => s.focusedBusinessContentTaskId);
+  const focusBusinessContentTask = useStore(s => s.focusBusinessContentTask);
+  const [highlightedContentTaskId, setHighlightedContentTaskId] = useState<string | null>(null);
 
   const openControlCenterSection = (section: ControlCenterSectionId) => {
     setActiveControlCenterSection(section);
@@ -65,6 +69,17 @@ export function BusinessEntitiesCenter() {
       setActiveExecutionRun(runId);
     }
     openControlCenterSection("execution");
+  };
+
+  const focusContentTaskCard = (contentTaskId: string) => {
+    setHighlightedContentTaskId(contentTaskId);
+    contentTaskRefs.current[contentTaskId]?.scrollIntoView({
+      behavior: "smooth",
+      block: "center",
+    });
+    window.setTimeout(() => {
+      setHighlightedContentTaskId(current => (current === contentTaskId ? null : current));
+    }, 2200);
   };
 
   const activeSession = useMemo(
@@ -123,6 +138,12 @@ export function BusinessEntitiesCenter() {
     }
     return nextMap;
   }, [scopedOperationLogs]);
+
+  useEffect(() => {
+    if (!focusedBusinessContentTaskId) return;
+    focusContentTaskCard(focusedBusinessContentTaskId);
+    focusBusinessContentTask(null);
+  }, [focusBusinessContentTask, focusedBusinessContentTaskId]);
 
   const quantSummary = useMemo(() => {
     const decisions: QuantDecision[] = [
@@ -524,7 +545,18 @@ export function BusinessEntitiesCenter() {
             );
             const latestOperation = latestOperationByEntity[`contentTask:${task.id}`];
             return (
-              <article key={task.id} className="control-center__entity-card">
+              <article
+                key={task.id}
+                ref={node => {
+                  contentTaskRefs.current[task.id] = node;
+                }}
+                className="control-center__entity-card"
+                style={highlightedContentTaskId === task.id ? {
+                  borderColor: "rgba(125, 211, 252, 0.52)",
+                  background: "linear-gradient(180deg, rgba(125, 211, 252, 0.18), rgba(255,255,255,0.04))",
+                  boxShadow: "0 0 0 1px rgba(125, 211, 252, 0.12), 0 20px 50px rgba(15, 23, 42, 0.24)",
+                } : undefined}
+              >
                 <div className="control-center__entity-head">
                   <strong>{task.title}</strong>
                   <span className="control-center__entity-pill" style={{ color: getBusinessPriorityTone(task.priority) }}>
@@ -781,6 +813,13 @@ function getOperationLabel(operation: BusinessOperationRecord) {
 
   if (operation.eventType === "governance") {
     return "治理动作";
+  }
+
+  if (operation.eventType === "desktop") {
+    if (operation.status === "completed") return "桌面现场已记录";
+    if (operation.status === "blocked") return "桌面动作待接管";
+    if (operation.status === "failed") return "桌面动作失败";
+    return "桌面动作";
   }
 
   if (operation.status === "sent") {

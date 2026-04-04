@@ -1,11 +1,12 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { reconnectWebSocket } from "@/hooks/useWebSocket";
-import { sendExecutionDispatch } from "@/lib/execution-dispatch";
+import { reconnectWebSocket, sendWs } from "@/hooks/useWebSocket";
+import { retryExecutionDispatch, sendExecutionDispatch } from "@/lib/execution-dispatch";
 import { useStore } from "@/store";
 import { getDesktopRuntimeTone } from "./DesktopRuntimeBadge";
 import { requestDesktopRuntimeRefresh } from "./DesktopRuntimeBridge";
+import type { DesktopInputRetrySuggestion } from "@/types/electron-api";
 
 const DESKTOP_REPAIR_COMMAND = "npm run electron:dev:clean";
 
@@ -22,9 +23,13 @@ export function DesktopRuntimeDiagnosticsCard() {
   const chatSessions = useStore(s => s.chatSessions);
   const tasks = useStore(s => s.tasks);
   const executionRuns = useStore(s => s.executionRuns);
+  const workflowRuns = useStore(s => s.workflowRuns);
+  const businessContentTasks = useStore(s => s.businessContentTasks);
   const wsStatus = useStore(s => s.wsStatus);
   const setTab = useStore(s => s.setTab);
   const setActiveControlCenterSection = useStore(s => s.setActiveControlCenterSection);
+  const focusBusinessContentTask = useStore(s => s.focusBusinessContentTask);
+  const focusWorkflowRun = useStore(s => s.focusWorkflowRun);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   const [runtimeSource, setRuntimeSource] = useState("检测中");
   const [wsEndpoint, setWsEndpoint] = useState("ws://localhost:3001");
@@ -41,6 +46,36 @@ export function DesktopRuntimeDiagnosticsCard() {
     () => desktopInputSession.executionRunId ? executionRuns.find(run => run.id === desktopInputSession.executionRunId) ?? null : null,
     [desktopInputSession.executionRunId, executionRuns],
   );
+  const linkedWorkflowRun = useMemo(
+    () => linkedExecutionRun?.workflowRunId ? workflowRuns.find(run => run.id === linkedExecutionRun.workflowRunId) ?? null : null,
+    [linkedExecutionRun?.workflowRunId, workflowRuns],
+  );
+  const linkedContentTask = useMemo(
+    () =>
+      linkedExecutionRun?.entityType === "contentTask" && linkedExecutionRun.entityId
+        ? businessContentTasks.find(task => task.id === linkedExecutionRun.entityId) ?? null
+        : null,
+    [businessContentTasks, linkedExecutionRun?.entityId, linkedExecutionRun?.entityType],
+  );
+  const screenshotLinkedSession = useMemo(
+    () => desktopScreenshot.sessionId ? chatSessions.find(session => session.id === desktopScreenshot.sessionId) ?? null : null,
+    [chatSessions, desktopScreenshot.sessionId],
+  );
+  const screenshotLinkedExecutionRun = useMemo(
+    () => desktopScreenshot.executionRunId ? executionRuns.find(run => run.id === desktopScreenshot.executionRunId) ?? null : null,
+    [desktopScreenshot.executionRunId, executionRuns],
+  );
+  const screenshotLinkedWorkflowRun = useMemo(
+    () => screenshotLinkedExecutionRun?.workflowRunId ? workflowRuns.find(run => run.id === screenshotLinkedExecutionRun.workflowRunId) ?? null : null,
+    [screenshotLinkedExecutionRun?.workflowRunId, workflowRuns],
+  );
+  const screenshotLinkedContentTask = useMemo(
+    () =>
+      screenshotLinkedExecutionRun?.entityType === "contentTask" && screenshotLinkedExecutionRun.entityId
+        ? businessContentTasks.find(task => task.id === screenshotLinkedExecutionRun.entityId) ?? null
+        : null,
+    [businessContentTasks, screenshotLinkedExecutionRun?.entityId, screenshotLinkedExecutionRun?.entityType],
+  );
 
   const focusResumeContext = () => {
     if (linkedSession && linkedSession.id !== useStore.getState().activeSessionId) {
@@ -48,6 +83,14 @@ export function DesktopRuntimeDiagnosticsCard() {
     }
     setTab("tasks");
   };
+  const canResumeFromScreenshot =
+    desktopInputSession.state === "manual-required"
+    && Boolean(desktopInputSession.resumeInstruction)
+    && Boolean(screenshotLinkedExecutionRun)
+    && desktopInputSession.executionRunId === screenshotLinkedExecutionRun?.id;
+  const retryClickAction = desktopInputSession.lastAction === "double_click" || desktopInputSession.lastAction === "right_click"
+    ? desktopInputSession.lastAction
+    : "click";
 
   useEffect(() => {
     let cancelled = false;
@@ -155,6 +198,8 @@ export function DesktopRuntimeDiagnosticsCard() {
             setDesktopScreenshot({
               status: "ready",
               source: "manual",
+              sessionId: linkedSession?.id,
+              executionRunId: linkedExecutionRun?.id,
               imageDataUrl: result.dataUrl,
               width: result.width,
               height: result.height,
@@ -167,6 +212,8 @@ export function DesktopRuntimeDiagnosticsCard() {
             setDesktopScreenshot({
               status: "error",
               source: "manual",
+              sessionId: linkedSession?.id,
+              executionRunId: linkedExecutionRun?.id,
               message,
             });
             setActionMessage(message);
@@ -233,7 +280,31 @@ export function DesktopRuntimeDiagnosticsCard() {
     }
 
     return buttons;
-  }, [runtime.fetchState, runtime.totalClients, setActiveControlCenterSection, setDesktopScreenshot, setTab, wsStatus]);
+  }, [linkedExecutionRun?.id, linkedSession?.id, runtime.fetchState, runtime.totalClients, setActiveControlCenterSection, setDesktopScreenshot, setTab, wsStatus]);
+
+  const triggerRetrySuggestion = (suggestion: DesktopInputRetrySuggestion) => {
+    const ok = sendWs({
+      type: "desktop_input_request",
+      requestId: `desktop-retry-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      sessionId: desktopInputSession.sessionId,
+      executionRunId: desktopInputSession.executionRunId,
+      taskId: desktopInputSession.taskId,
+      payload: {
+        action: retryClickAction,
+        x: suggestion.nextX,
+        y: suggestion.nextY,
+        target: desktopInputSession.target,
+        intent: `${desktopInputSession.lastIntent || "桌面点击"} · 偏移重试 ${suggestion.label}`,
+        riskCategory: "normal",
+      },
+    });
+
+    if (ok) {
+      setActionMessage(`已发起偏移重试：${suggestion.label} (${suggestion.nextX}, ${suggestion.nextY})。`);
+    } else {
+      setActionMessage("偏移重试发送失败：当前 WebSocket 未连接。");
+    }
+  };
 
   return (
     <div
@@ -357,8 +428,12 @@ export function DesktopRuntimeDiagnosticsCard() {
             {desktopInputSession.lastAction ? <span className="badge badge-explorer">动作 {desktopInputSession.lastAction}</span> : null}
             {desktopInputSession.target ? <span className="badge badge-writer">目标 {desktopInputSession.target}</span> : null}
             {desktopInputSession.source ? <span className="badge badge-greeter">来源 {desktopInputSession.source === "agent" ? "agent" : "manual"}</span> : null}
+            {desktopInputSession.retryStrategy ? <span className="badge badge-performer">偏移重试</span> : null}
+            {desktopInputSession.cursor ? <span className="badge badge-explorer">坐标 {desktopInputSession.cursor.x},{desktopInputSession.cursor.y}</span> : null}
             {linkedSession ? <span className="badge badge-orchestrator">会话 {linkedSession.title}</span> : null}
             {linkedExecutionRun ? <span className="badge badge-designer">运行 {linkedExecutionRun.status}</span> : null}
+            {linkedWorkflowRun ? <span className="badge badge-performer">Workflow {linkedWorkflowRun.status}</span> : null}
+            {linkedContentTask ? <span className="badge badge-writer">内容 {linkedContentTask.status}</span> : null}
           </div>
           {desktopInputSession.lastIntent ? (
             <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.7 }}>
@@ -370,7 +445,75 @@ export function DesktopRuntimeDiagnosticsCard() {
               当前任务: {linkedTask.description}
             </div>
           ) : null}
+          {linkedWorkflowRun ? (
+            <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.7 }}>
+              绑定 Workflow: {linkedWorkflowRun.title}
+            </div>
+          ) : null}
+          {linkedContentTask ? (
+            <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.7 }}>
+              绑定内容任务: {linkedContentTask.title} · {linkedContentTask.status}
+            </div>
+          ) : null}
+          {desktopInputSession.retrySuggestions && desktopInputSession.retrySuggestions.length > 0 ? (
+            <div style={{ display: "grid", gap: 8 }}>
+              <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.7 }}>
+                偏移重试建议: 复核失败时优先尝试这些附近点击点。
+              </div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                {desktopInputSession.retrySuggestions.slice(0, 4).map(item => (
+                  <button
+                    key={`${item.label}-${item.nextX}-${item.nextY}`}
+                    type="button"
+                    className="btn-ghost"
+                    style={{ fontSize: 11 }}
+                    onClick={() => triggerRetrySuggestion(item)}
+                  >
+                    {item.label} · {item.nextX},{item.nextY}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
           <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+            {linkedWorkflowRun ? (
+              <button
+                type="button"
+                className="btn-ghost"
+                onClick={() => {
+                  focusWorkflowRun(linkedWorkflowRun.id);
+                  setActiveControlCenterSection("workflow");
+                  setTab("settings");
+                }}
+              >
+                定位到 Workflow
+              </button>
+            ) : null}
+            {linkedContentTask ? (
+              <button
+                type="button"
+                className="btn-ghost"
+                onClick={() => {
+                  focusBusinessContentTask(linkedContentTask.id);
+                  setActiveControlCenterSection("entities");
+                  setTab("settings");
+                }}
+              >
+                定位到内容实体
+              </button>
+            ) : null}
+            {linkedExecutionRun ? (
+              <button
+                type="button"
+                className="btn-ghost"
+                onClick={() => {
+                  setActiveControlCenterSection("execution");
+                  setTab("settings");
+                }}
+              >
+                查看对应执行
+              </button>
+            ) : null}
             {desktopInputSession.state === "manual-required" && desktopInputSession.resumeInstruction ? (
               <>
                 <button
@@ -389,13 +532,24 @@ export function DesktopRuntimeDiagnosticsCard() {
                   className="btn-primary"
                   onClick={() => {
                     focusResumeContext();
-                    const { ok } = sendExecutionDispatch({
-                      instruction: desktopInputSession.resumeInstruction!,
-                      source: "chat",
-                      includeUserMessage: false,
-                      includeActiveProjectMemory: true,
-                      sessionId: desktopInputSession.sessionId,
-                    });
+                    const resumeRun = linkedExecutionRun ?? screenshotLinkedExecutionRun;
+                    const dispatchResult = resumeRun
+                      ? retryExecutionDispatch(resumeRun, {
+                        includeUserMessage: false,
+                        includeActiveProjectMemory: true,
+                        taskDescription: "验证已完成，继续执行",
+                        lastRecoveryHint: "人工验证已完成，继续沿用原执行上下文。",
+                      })
+                      : sendExecutionDispatch({
+                        instruction: desktopInputSession.resumeInstruction!,
+                        source: "chat",
+                        includeUserMessage: false,
+                        includeActiveProjectMemory: true,
+                        sessionId: desktopInputSession.sessionId,
+                        retryOfRunId: desktopInputSession.executionRunId,
+                        lastRecoveryHint: "人工验证已完成，继续沿用原执行上下文。",
+                      });
+                    const { ok } = dispatchResult;
                     if (ok) {
                       setAutomationPaused(false);
                       setActionMessage("已恢复自动化，并把“验证已完成，请继续执行”发送回原会话。");
@@ -462,11 +616,55 @@ export function DesktopRuntimeDiagnosticsCard() {
             {desktopScreenshot.target ? (
               <span className="badge badge-writer">目标 {desktopScreenshot.target}</span>
             ) : null}
+            {screenshotLinkedSession ? (
+              <span className="badge badge-orchestrator">会话 {screenshotLinkedSession.title}</span>
+            ) : null}
+            {screenshotLinkedExecutionRun ? (
+              <span className="badge badge-designer">运行 {screenshotLinkedExecutionRun.status}</span>
+            ) : null}
+            {screenshotLinkedWorkflowRun ? (
+              <span className="badge badge-performer">Workflow {screenshotLinkedWorkflowRun.status}</span>
+            ) : null}
+            {screenshotLinkedContentTask ? (
+              <span className="badge badge-writer">内容 {screenshotLinkedContentTask.status}</span>
+            ) : null}
           </div>
 
           {desktopScreenshot.intent ? (
             <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.7 }}>
               用途: {desktopScreenshot.intent}
+            </div>
+          ) : null}
+
+          {screenshotLinkedWorkflowRun ? (
+            <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.7 }}>
+              绑定 Workflow: {screenshotLinkedWorkflowRun.title}
+            </div>
+          ) : null}
+
+          {screenshotLinkedContentTask ? (
+            <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.7 }}>
+              绑定内容任务: {screenshotLinkedContentTask.title} · {screenshotLinkedContentTask.status}
+            </div>
+          ) : null}
+          {desktopInputSession.retrySuggestions && desktopInputSession.retrySuggestions.length > 0 && desktopInputSession.executionRunId === screenshotLinkedExecutionRun?.id ? (
+            <div style={{ display: "grid", gap: 8 }}>
+              <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.7 }}>
+                当前截图关联的偏移重试点:
+              </div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                {desktopInputSession.retrySuggestions.slice(0, 4).map(item => (
+                  <button
+                    key={`shot-${item.label}-${item.nextX}-${item.nextY}`}
+                    type="button"
+                    className="btn-ghost"
+                    style={{ fontSize: 11 }}
+                    onClick={() => triggerRetrySuggestion(item)}
+                  >
+                    {item.label} · dx {item.dx} / dy {item.dy}
+                  </button>
+                ))}
+              </div>
             </div>
           ) : null}
 
@@ -493,7 +691,102 @@ export function DesktopRuntimeDiagnosticsCard() {
             </div>
           ) : null}
 
-          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, flexWrap: "wrap" }}>
+            {screenshotLinkedWorkflowRun ? (
+              <button
+                type="button"
+                className="btn-ghost"
+                onClick={() => {
+                  focusWorkflowRun(screenshotLinkedWorkflowRun.id);
+                  setActiveControlCenterSection("workflow");
+                  setTab("settings");
+                }}
+              >
+                定位到 Workflow
+              </button>
+            ) : null}
+            {screenshotLinkedContentTask ? (
+              <button
+                type="button"
+                className="btn-ghost"
+                onClick={() => {
+                  focusBusinessContentTask(screenshotLinkedContentTask.id);
+                  setActiveControlCenterSection("entities");
+                  setTab("settings");
+                }}
+              >
+                定位到内容实体
+              </button>
+            ) : null}
+            {screenshotLinkedExecutionRun ? (
+              <button
+                type="button"
+                className="btn-ghost"
+                onClick={() => {
+                  setActiveControlCenterSection("execution");
+                  setTab("settings");
+                }}
+              >
+                查看对应执行
+              </button>
+            ) : null}
+            {screenshotLinkedSession ? (
+              <button
+                type="button"
+                className="btn-ghost"
+                onClick={() => {
+                  if (screenshotLinkedSession.id !== useStore.getState().activeSessionId) {
+                    setActiveChatSession(screenshotLinkedSession.id);
+                  }
+                  setTab("tasks");
+                  if (desktopInputSession.resumeInstruction && desktopInputSession.executionRunId === screenshotLinkedExecutionRun?.id) {
+                    setCommandDraft(desktopInputSession.resumeInstruction);
+                    setActionMessage("已带着当前截图现场切回原聊天，并写入续跑提示。");
+                  } else {
+                    setActionMessage("已切回与当前截图关联的聊天会话。");
+                  }
+                }}
+              >
+                回聊天接管
+              </button>
+            ) : null}
+            {canResumeFromScreenshot ? (
+              <button
+                type="button"
+                className="btn-primary"
+                onClick={() => {
+                  focusResumeContext();
+                  const resumeRun = screenshotLinkedExecutionRun ?? linkedExecutionRun;
+                  const dispatchResult = resumeRun
+                    ? retryExecutionDispatch(resumeRun, {
+                        includeUserMessage: false,
+                        includeActiveProjectMemory: true,
+                        taskDescription: "截图确认后继续执行",
+                        lastRecoveryHint: "已基于最新桌面截图确认状态，继续沿用原执行上下文。",
+                      })
+                    : sendExecutionDispatch({
+                        instruction: desktopInputSession.resumeInstruction!,
+                        source: "chat",
+                        includeUserMessage: false,
+                        includeActiveProjectMemory: true,
+                        sessionId: desktopInputSession.sessionId,
+                        retryOfRunId: desktopInputSession.executionRunId,
+                        lastRecoveryHint: "已基于最新桌面截图确认状态，继续沿用原执行上下文。",
+                      });
+                  const { ok } = dispatchResult;
+                  if (ok) {
+                    setAutomationPaused(false);
+                    setActionMessage("已基于当前截图现场恢复自动化，并把继续执行指令发送回原会话。");
+                    clearDesktopInputSession();
+                  } else {
+                    setAutomationPaused(true);
+                    setActionMessage("恢复执行失败：当前 WebSocket 未连接，截图现场和人工接管状态都已保留。");
+                  }
+                }}
+              >
+                验证已完成，继续执行
+              </button>
+            ) : null}
             <button type="button" className="btn-ghost" onClick={clearDesktopScreenshot}>
               清空截图
             </button>

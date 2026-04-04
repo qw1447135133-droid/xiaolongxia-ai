@@ -3571,6 +3571,117 @@ body::after {
   color: var(--desktop-shell-muted);
 }
 
+.desktop-workspace-shell__run-inspector {
+  display: grid;
+  gap: 12px;
+}
+
+.desktop-workspace-shell__run-inspector-top,
+.desktop-workspace-shell__run-inspector-progress {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border-radius: 16px;
+  border: 1px solid var(--desktop-shell-border);
+  background: rgba(248, 250, 252, 0.52);
+}
+
+.desktop-workspace-shell__run-inspector-head {
+  display: grid;
+  gap: 6px;
+}
+
+.desktop-workspace-shell__run-inspector-head strong {
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.desktop-workspace-shell__run-inspector-progress-head,
+.desktop-workspace-shell__run-inspector-event-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.desktop-workspace-shell__run-inspector-progress-head span {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--desktop-shell-muted);
+}
+
+.desktop-workspace-shell__run-inspector-progress-head strong {
+  font-size: 13px;
+  color: var(--desktop-shell-text);
+}
+
+.desktop-workspace-shell__run-inspector-progress-bar {
+  width: 100%;
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.18);
+  overflow: hidden;
+}
+
+.desktop-workspace-shell__run-inspector-progress-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #38bdf8, #2563eb);
+  box-shadow: 0 0 18px rgba(37, 99, 235, 0.28);
+}
+
+.desktop-workspace-shell__run-inspector-timeline {
+  display: grid;
+  gap: 10px;
+}
+
+.desktop-workspace-shell__run-inspector-event {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 10px;
+}
+
+.desktop-workspace-shell__run-inspector-marker {
+  display: grid;
+  justify-items: center;
+  grid-template-rows: 12px auto;
+  gap: 4px;
+}
+
+.desktop-workspace-shell__run-inspector-marker span {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: linear-gradient(135deg, #38bdf8, #2563eb);
+  box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.12);
+}
+
+.desktop-workspace-shell__run-inspector-marker i {
+  width: 2px;
+  height: 100%;
+  min-height: 32px;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.22);
+}
+
+.desktop-workspace-shell__run-inspector-event-body {
+  display: grid;
+  gap: 6px;
+  padding: 2px 0 10px;
+}
+
+.desktop-workspace-shell__run-inspector-event-head strong {
+  font-size: 13px;
+  color: var(--desktop-shell-text);
+}
+
+.desktop-workspace-shell__run-inspector-event-head span {
+  font-size: 10px;
+  color: var(--desktop-shell-muted);
+}
+
 .desktop-workspace-shell__rail-prompt {
   min-height: 66px;
   padding: 14px;
@@ -3740,7 +3851,9 @@ body.runtime-electron .desktop-workspace-shell__rail-card.is-warning {
 }
 
 body.runtime-electron .desktop-workspace-shell__rail-list-item,
-body.runtime-electron .desktop-workspace-shell__rail-inline-panel {
+body.runtime-electron .desktop-workspace-shell__rail-inline-panel,
+body.runtime-electron .desktop-workspace-shell__run-inspector-top,
+body.runtime-electron .desktop-workspace-shell__run-inspector-progress {
   background: rgba(30, 41, 59, 0.88);
 }
 

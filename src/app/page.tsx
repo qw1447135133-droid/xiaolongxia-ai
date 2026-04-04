@@ -701,6 +701,7 @@ function DesktopChatWorkspace() {
     .slice(0, 3);
   const canTakeOver = desktopInputSession.state === "manual-required" && Boolean(desktopInputSession.resumeInstruction);
   const latestEvent = activeRun?.events[activeRun.events.length - 1] ?? null;
+  const activeRunTimeline = activeRun ? activeRun.events.slice(-3) : [];
   const scopedApprovals = useMemo(
     () => filterByProjectScope(businessApprovals, activeSession ?? {}),
     [activeSession, businessApprovals],
@@ -1001,28 +1002,73 @@ function DesktopChatWorkspace() {
         {activeRun ? (
           <section className="desktop-workspace-shell__rail-card">
             <div className="desktop-workspace-shell__section-eyebrow">当前执行</div>
-            <div className="desktop-workspace-shell__rail-run">
-              <strong>{activeRun.instruction}</strong>
-              <div className="desktop-workspace-shell__rail-run-meta">
-                <span>{getMobileExecutionLabel(activeRun.status)}</span>
-                <span>{timeAgo(activeRun.updatedAt)}</span>
-                <span>{activeRun.events.length} 条轨迹</span>
-                <span>{activeRun.completedTasks}/{activeRun.totalTasks || 0} 已完成</span>
-                {activeRun.verificationStatus ? (
-                  <span>验证 {getVerificationLabel(activeRun.verificationStatus)}</span>
-                ) : null}
+            <div className="desktop-workspace-shell__run-inspector">
+              <div className="desktop-workspace-shell__run-inspector-top">
+                <div className="desktop-workspace-shell__run-inspector-head">
+                  <strong>{activeRun.instruction}</strong>
+                  <div className="desktop-workspace-shell__rail-copy">
+                    {activeRun.currentAgentId
+                      ? `当前角色 ${AGENT_META[activeRun.currentAgentId].emoji} ${AGENT_META[activeRun.currentAgentId].name}`
+                      : "当前角色待分配"}
+                  </div>
+                </div>
+                <div className="desktop-workspace-shell__rail-run-meta">
+                  <span>{getMobileExecutionLabel(activeRun.status)}</span>
+                  <span>{timeAgo(activeRun.updatedAt)}</span>
+                  <span>{activeRun.events.length} 条轨迹</span>
+                </div>
               </div>
+
+              <div className="desktop-workspace-shell__run-inspector-progress">
+                <div className="desktop-workspace-shell__run-inspector-progress-head">
+                  <span>任务进度</span>
+                  <strong>{activeRun.completedTasks}/{activeRun.totalTasks || 0}</strong>
+                </div>
+                <div className="desktop-workspace-shell__run-inspector-progress-bar">
+                  <div
+                    className="desktop-workspace-shell__run-inspector-progress-fill"
+                    style={{ width: `${getExecutionProgressPercent(activeRun)}%` }}
+                  />
+                </div>
+                <div className="desktop-workspace-shell__rail-run-meta">
+                  <span>{activeRun.failedTasks > 0 ? `${activeRun.failedTasks} 个失败` : "暂无失败"}</span>
+                  <span>{activeRun.verificationStatus ? `验证 ${getVerificationLabel(activeRun.verificationStatus)}` : "尚未验证"}</span>
+                </div>
+              </div>
+
+              {activeRunTimeline.length > 0 ? (
+                <div className="desktop-workspace-shell__run-inspector-timeline">
+                  {activeRunTimeline.map((event, index) => (
+                    <div key={event.id} className="desktop-workspace-shell__run-inspector-event">
+                      <div className="desktop-workspace-shell__run-inspector-marker">
+                        <span />
+                        {index < activeRunTimeline.length - 1 ? <i /> : null}
+                      </div>
+                      <div className="desktop-workspace-shell__run-inspector-event-body">
+                        <div className="desktop-workspace-shell__run-inspector-event-head">
+                          <strong>{event.title}</strong>
+                          <span>{timeAgo(event.timestamp)}</span>
+                        </div>
+                        {event.detail ? (
+                          <div className="desktop-workspace-shell__rail-copy">{event.detail}</div>
+                        ) : null}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+
+              {latestEvent ? (
+                <div className="desktop-workspace-shell__rail-inline-panel">
+                  <div className="desktop-workspace-shell__rail-inline-label">最新节点摘要</div>
+                  <strong>{latestEvent.title}</strong>
+                  {latestEvent.detail ? (
+                    <div className="desktop-workspace-shell__rail-copy">{latestEvent.detail}</div>
+                  ) : null}
+                </div>
+              ) : null}
             </div>
-            {latestEvent ? (
-              <div className="desktop-workspace-shell__rail-inline-panel">
-                <div className="desktop-workspace-shell__rail-inline-label">最新节点</div>
-                <strong>{latestEvent.title}</strong>
-                {latestEvent.detail ? (
-                  <div className="desktop-workspace-shell__rail-copy">{latestEvent.detail}</div>
-                ) : null}
-              </div>
-            ) : null}
-            <div className="desktop-workspace-shell__rail-actions">
+            <div className="desktop-workspace-shell__rail-actions is-inline">
               <button type="button" className="desktop-workspace-shell__hero-action is-primary" onClick={() => openExecutionRun(activeRun.id)}>
                 查看轨迹
               </button>
@@ -2094,6 +2140,21 @@ function getVerificationLabel(status: NonNullable<ReturnType<typeof useStore.get
     default:
       return status;
   }
+}
+
+function getExecutionProgressPercent(run: ReturnType<typeof useStore.getState>["executionRuns"][number]) {
+  if (!run.totalTasks || run.totalTasks <= 0) {
+    if (run.status === "completed") return 100;
+    return run.status === "failed" ? 100 : 12;
+  }
+
+  const ratio = Math.max(0, Math.min(1, run.completedTasks / run.totalTasks));
+  const percent = Math.round(ratio * 100);
+
+  if (run.status === "completed") return 100;
+  if (run.status === "failed") return Math.max(percent, 18);
+  if (run.status === "running" || run.status === "analyzing") return Math.max(percent, 12);
+  return Math.max(percent, 6);
 }
 
 function getWorkflowStatusLabel(status: ReturnType<typeof useStore.getState>["workflowRuns"][number]["status"]) {

@@ -326,8 +326,8 @@ function PlatformCard({ def }: { def: PlatformDef }) {
               gap: 12,
               padding: "8px 10px",
               borderRadius: "var(--radius-sm)",
-              background: "rgba(255,255,255,0.03)",
-              border: "1px solid rgba(255,255,255,0.08)",
+              background: "rgba(247,249,253,0.96)",
+              border: "1px solid var(--border)",
             }}
           >
             <div style={{ display: "grid", gap: 4 }}>
@@ -438,8 +438,8 @@ function PlatformCard({ def }: { def: PlatformDef }) {
             gap: 8,
             padding: "10px 12px",
             borderRadius: "var(--radius-sm)",
-            background: "rgba(255,255,255,0.03)",
-            border: "1px solid rgba(255,255,255,0.08)",
+            background: "rgba(247,249,253,0.96)",
+            border: "1px solid var(--border)",
           }}>
             <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text)" }}>联调工具</div>
             <div style={{ fontSize: 11, color: "var(--text-muted)", lineHeight: 1.6 }}>
@@ -616,8 +616,8 @@ function PlatformCard({ def }: { def: PlatformDef }) {
                   gap: 6,
                   padding: "8px 10px",
                   borderRadius: "var(--radius-sm)",
-                  background: "rgba(255,255,255,0.03)",
-                  border: "1px solid rgba(255,255,255,0.06)",
+                  background: "rgba(247,249,253,0.96)",
+                  border: "1px solid var(--border)",
                 }}
               >
                 <div style={{ fontSize: 11, color: "var(--text)", fontWeight: 600 }}>最近联调记录</div>
@@ -657,8 +657,8 @@ function PlatformCard({ def }: { def: PlatformDef }) {
                   gap: 6,
                   padding: "8px 10px",
                   borderRadius: "var(--radius-sm)",
-                  background: "rgba(255,255,255,0.03)",
-                  border: "1px solid rgba(255,255,255,0.06)",
+                  background: "rgba(247,249,253,0.96)",
+                  border: "1px solid var(--border)",
                 }}
               >
                 <div style={{ fontSize: 11, color: "var(--text)", fontWeight: 600 }}>最近失败消息缓存</div>

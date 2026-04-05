@@ -2,6 +2,7 @@
 
 import { useMemo, type CSSProperties } from "react";
 import { retryExecutionDispatch, sendExecutionDispatch } from "@/lib/execution-dispatch";
+import { pickLocaleText } from "@/lib/ui-locale";
 import { useStore } from "@/store";
 import {
   filterByProjectScope,
@@ -10,13 +11,13 @@ import {
   getSessionProjectLabel,
   getSessionProjectScope,
 } from "@/lib/project-context";
-import { AGENT_META, type ExecutionRecoveryState, type ExecutionRun } from "@/store/types";
+import { AGENT_META, type ExecutionRecoveryState, type ExecutionRun, type UiLocale } from "@/store/types";
 import { timeAgo } from "@/lib/utils";
 import { runExecutionVerification } from "@/lib/execution-verification";
 import type { ControlCenterSectionId } from "@/store/types";
 
-function formatTimestamp(timestamp: number) {
-  return new Intl.DateTimeFormat("zh-CN", {
+function formatTimestamp(timestamp: number, locale: UiLocale) {
+  return new Intl.DateTimeFormat(locale, {
     month: "2-digit",
     day: "2-digit",
     hour: "2-digit",
@@ -24,33 +25,33 @@ function formatTimestamp(timestamp: number) {
   }).format(timestamp);
 }
 
-function statusTone(status: ExecutionRun["status"]) {
+function statusTone(locale: UiLocale, status: ExecutionRun["status"]) {
   switch (status) {
     case "queued":
-      return { label: "Queued", color: "#94a3b8" };
+      return { label: pickLocaleText(locale, { "zh-CN": "已排队", "zh-TW": "已排隊", en: "Queued", ja: "キュー済み" }), color: "#94a3b8" };
     case "analyzing":
-      return { label: "Analyzing", color: "#7dd3fc" };
+      return { label: pickLocaleText(locale, { "zh-CN": "分析中", "zh-TW": "分析中", en: "Analyzing", ja: "分析中" }), color: "#7dd3fc" };
     case "running":
-      return { label: "Running", color: "#fbbf24" };
+      return { label: pickLocaleText(locale, { "zh-CN": "执行中", "zh-TW": "執行中", en: "Running", ja: "実行中" }), color: "#fbbf24" };
     case "completed":
-      return { label: "Completed", color: "#86efac" };
+      return { label: pickLocaleText(locale, { "zh-CN": "已完成", "zh-TW": "已完成", en: "Completed", ja: "完了" }), color: "#86efac" };
     case "failed":
-      return { label: "Failed", color: "#fda4af" };
+      return { label: pickLocaleText(locale, { "zh-CN": "已失败", "zh-TW": "已失敗", en: "Failed", ja: "失敗" }), color: "#fda4af" };
     default:
       return { label: status, color: "var(--text-muted)" };
   }
 }
 
-function recoveryTone(state: ExecutionRecoveryState) {
+function recoveryTone(locale: UiLocale, state: ExecutionRecoveryState) {
   switch (state) {
     case "retryable":
-      return { label: "Retryable", color: "#fda4af" };
+      return { label: pickLocaleText(locale, { "zh-CN": "可重试", "zh-TW": "可重試", en: "Retryable", ja: "再試行可" }), color: "#fda4af" };
     case "manual-required":
-      return { label: "Manual Required", color: "#fbbf24" };
+      return { label: pickLocaleText(locale, { "zh-CN": "需要人工", "zh-TW": "需要人工", en: "Manual Required", ja: "手動対応が必要" }), color: "#fbbf24" };
     case "blocked":
-      return { label: "Blocked", color: "#fb7185" };
+      return { label: pickLocaleText(locale, { "zh-CN": "已阻断", "zh-TW": "已阻斷", en: "Blocked", ja: "ブロック済み" }), color: "#fb7185" };
     default:
-      return { label: "Stable", color: "#94a3b8" };
+      return { label: pickLocaleText(locale, { "zh-CN": "稳定", "zh-TW": "穩定", en: "Stable", ja: "安定" }), color: "#94a3b8" };
   }
 }
 
@@ -75,6 +76,7 @@ function getExecutionEntityLabel(
 }
 
 export function ExecutionCenter({ compact = false }: { compact?: boolean }) {
+  const locale = useStore(s => s.locale);
   const executionRuns = useStore(s => s.executionRuns);
   const activeExecutionRunId = useStore(s => s.activeExecutionRunId);
   const setActiveExecutionRun = useStore(s => s.setActiveExecutionRun);
@@ -121,8 +123,18 @@ export function ExecutionCenter({ compact = false }: { compact?: boolean }) {
     const { ok, executionRunId } = retryExecutionDispatch(run, {
       includeUserMessage: true,
       includeActiveProjectMemory: true,
-      taskDescription: `${run.instruction} [重试]`,
-      lastRecoveryHint: "从 Execution Center 的恢复队列重新发起。",
+      taskDescription: pickLocaleText(locale, {
+        "zh-CN": `${run.instruction} [重试]`,
+        "zh-TW": `${run.instruction} [重試]`,
+        en: `${run.instruction} [Retry]`,
+        ja: `${run.instruction} [再試行]`,
+      }),
+      lastRecoveryHint: pickLocaleText(locale, {
+        "zh-CN": "从执行日志的恢复队列重新发起。",
+        "zh-TW": "從執行日誌的恢復佇列重新發起。",
+        en: "Retried from the recovery queue in Execution Log.",
+        ja: "実行ログの復旧キューから再試行しました。",
+      }),
     });
 
     if (ok && executionRunId) {
@@ -147,9 +159,19 @@ export function ExecutionCenter({ compact = false }: { compact?: boolean }) {
       includeUserMessage: false,
       includeActiveProjectMemory: true,
       sessionId: run.sessionId,
-      taskDescription: "验证完成后继续执行",
+      taskDescription: pickLocaleText(locale, {
+        "zh-CN": "验证完成后继续执行",
+        "zh-TW": "驗證完成後繼續執行",
+        en: "Continue after verification",
+        ja: "確認後に続行",
+      }),
       retryOfRunId: run.id,
-      lastRecoveryHint: "人工验证已完成，继续沿用原执行上下文。",
+      lastRecoveryHint: pickLocaleText(locale, {
+        "zh-CN": "人工验证已完成，继续沿用原执行上下文。",
+        "zh-TW": "人工驗證已完成，繼續沿用原執行上下文。",
+        en: "Manual verification is done. Continue with the original execution context.",
+        ja: "手動確認が完了したため、元の実行コンテキストで続行します。",
+      }),
     });
 
     if (ok) {
@@ -210,44 +232,12 @@ export function ExecutionCenter({ compact = false }: { compact?: boolean }) {
 
   return (
     <div style={{ display: "grid", gap: 16 }}>
-      <div
-        className="card"
-        style={{
-          padding: 18,
-          borderColor: "rgba(125, 211, 252, 0.22)",
-          background: "linear-gradient(135deg, rgba(125, 211, 252, 0.14), rgba(255,255,255,0.02))",
-        }}
-      >
-        <div style={{ fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--text-muted)" }}>
-          Execution Center
-        </div>
-        <div style={{ marginTop: 6, fontSize: 22, lineHeight: 1.2, fontWeight: 700 }}>
-          把一次聊天请求变成一条可追踪的执行 run
-        </div>
-        <div style={{ marginTop: 8, fontSize: 13, lineHeight: 1.8, color: "var(--text-muted)" }}>
-          现在每轮请求都会记录分析、拆解、代理接手、完成或失败这些过程。后面接自动验证、代码库记忆和结果交付时，都可以挂在这条 run 上继续延展。
-        </div>
-        <div style={{ marginTop: 6, fontSize: 12, color: "var(--text-muted)" }}>
-          Current project: {activeSession ? getSessionProjectLabel(activeSession) : "General"}
-        </div>
-        {!compact ? (
-          <div style={{ marginTop: 14, display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <button type="button" className="btn-ghost" onClick={() => openControlSection("workflow")}>
-              打开工作流面板
-            </button>
-            <button type="button" className="btn-ghost" onClick={() => openControlSection("artifacts")}>
-              查看产物面板
-            </button>
-          </div>
-        ) : null}
-      </div>
-
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
-        <MetricCard label="Active Runs" value={activeRuns} accent="#fbbf24" />
-        <MetricCard label="Completed" value={completedRuns} accent="#86efac" />
-        <MetricCard label="Failed" value={failedRuns} accent="#fda4af" />
-        <MetricCard label="Recovery Queue" value={recoveryRuns.length} accent={recoveryRuns.length > 0 ? "#fbbf24" : "#94a3b8"} />
-        <MetricCard label="Trace Events" value={totalEvents} accent="#7dd3fc" />
+        <MetricCard label={pickLocaleText(locale, { "zh-CN": "运行中", "zh-TW": "運行中", en: "Active Runs", ja: "実行中" })} value={activeRuns} accent="#fbbf24" />
+        <MetricCard label={pickLocaleText(locale, { "zh-CN": "已完成", "zh-TW": "已完成", en: "Completed", ja: "完了" })} value={completedRuns} accent="#86efac" />
+        <MetricCard label={pickLocaleText(locale, { "zh-CN": "已失败", "zh-TW": "已失敗", en: "Failed", ja: "失敗" })} value={failedRuns} accent="#fda4af" />
+        <MetricCard label={pickLocaleText(locale, { "zh-CN": "恢复队列", "zh-TW": "恢復佇列", en: "Recovery Queue", ja: "復旧キュー" })} value={recoveryRuns.length} accent={recoveryRuns.length > 0 ? "#fbbf24" : "#94a3b8"} />
+        <MetricCard label={pickLocaleText(locale, { "zh-CN": "轨迹事件", "zh-TW": "軌跡事件", en: "Trace Events", ja: "トレースイベント" })} value={totalEvents} accent="#7dd3fc" />
       </div>
 
       {visibleRecoveryRuns.length > 0 ? (
@@ -264,13 +254,18 @@ export function ExecutionCenter({ compact = false }: { compact?: boolean }) {
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
             <div>
               <div style={{ fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--text-muted)" }}>
-                Recovery Queue
+                {pickLocaleText(locale, { "zh-CN": "恢复队列", "zh-TW": "恢復佇列", en: "Recovery Queue", ja: "復旧キュー" })}
               </div>
               <div style={{ marginTop: 4, fontSize: 16, fontWeight: 700 }}>
-                最近需要恢复、重试或人工接管的执行 run
+                {pickLocaleText(locale, {
+                  "zh-CN": "最近需要恢复、重试或人工接管的执行 run",
+                  "zh-TW": "最近需要恢復、重試或人工接管的執行 run",
+                  en: "Runs that recently need recovery, retry, or manual takeover",
+                  ja: "直近で復旧、再試行、手動引き継ぎが必要な実行 run",
+                })}
               </div>
             </div>
-            <span style={badgeStyle("#fbbf24")}>{recoveryRuns.length} Pending</span>
+            <span style={badgeStyle("#fbbf24")}>{recoveryRuns.length} {pickLocaleText(locale, { "zh-CN": "待处理", "zh-TW": "待處理", en: "Pending", ja: "対応待ち" })}</span>
           </div>
 
           <div style={{ display: "grid", gap: 10 }}>
@@ -280,7 +275,7 @@ export function ExecutionCenter({ compact = false }: { compact?: boolean }) {
                 : run.recoveryState;
               const matchingResumeInstruction =
                 desktopInputSession.executionRunId === run.id ? desktopInputSession.resumeInstruction : undefined;
-              const tone = recoveryTone(state);
+              const tone = recoveryTone(locale, state);
               return (
                 <div
                   key={`recovery-${run.id}`}
@@ -297,7 +292,19 @@ export function ExecutionCenter({ compact = false }: { compact?: boolean }) {
                     <div style={{ minWidth: 0 }}>
                       <div style={{ fontSize: 13, fontWeight: 700, lineHeight: 1.5 }}>{run.instruction}</div>
                       <div style={{ marginTop: 4, fontSize: 11, color: "var(--text-muted)" }}>
-                        {timeAgo(run.updatedAt)} · {run.retryCount ? `第 ${run.retryCount} 次恢复链` : "首轮执行"}
+                        {timeAgo(run.updatedAt, locale)} · {run.retryCount
+                          ? pickLocaleText(locale, {
+                              "zh-CN": `第 ${run.retryCount} 次恢复链`,
+                              "zh-TW": `第 ${run.retryCount} 次恢復鏈`,
+                              en: `Recovery pass ${run.retryCount}`,
+                              ja: `復旧 ${run.retryCount} 回目`,
+                            })
+                          : pickLocaleText(locale, {
+                              "zh-CN": "首轮执行",
+                              "zh-TW": "首輪執行",
+                              en: "First attempt",
+                              ja: "初回実行",
+                            })}
                       </div>
                     </div>
                     <span style={badgeStyle(tone.color)}>{tone.label}</span>
@@ -306,12 +313,12 @@ export function ExecutionCenter({ compact = false }: { compact?: boolean }) {
                   <div style={{ display: "grid", gap: 6 }}>
                     {run.lastFailureReason ? (
                       <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.7 }}>
-                        Failure: {run.lastFailureReason}
+                        {pickLocaleText(locale, { "zh-CN": "失败原因", "zh-TW": "失敗原因", en: "Failure", ja: "失敗理由" })}: {run.lastFailureReason}
                       </div>
                     ) : null}
                     {run.lastRecoveryHint ? (
                       <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.7 }}>
-                        Hint: {run.lastRecoveryHint}
+                        {pickLocaleText(locale, { "zh-CN": "恢复提示", "zh-TW": "恢復提示", en: "Hint", ja: "ヒント" })}: {run.lastRecoveryHint}
                       </div>
                     ) : null}
                   </div>
@@ -319,7 +326,7 @@ export function ExecutionCenter({ compact = false }: { compact?: boolean }) {
                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                     {state === "retryable" || state === "blocked" ? (
                       <button type="button" className="btn-ghost" onClick={() => retryRun(run)}>
-                        一键重试
+                        {pickLocaleText(locale, { "zh-CN": "一键重试", "zh-TW": "一鍵重試", en: "Retry", ja: "再試行" })}
                       </button>
                     ) : state === "manual-required" ? (
                       <button
@@ -328,18 +335,18 @@ export function ExecutionCenter({ compact = false }: { compact?: boolean }) {
                         onClick={() => continueAfterManualRecovery(run)}
                         disabled={!matchingResumeInstruction}
                       >
-                        验证完成继续
+                        {pickLocaleText(locale, { "zh-CN": "验证完成继续", "zh-TW": "驗證完成繼續", en: "Continue After Verification", ja: "確認後に続行" })}
                       </button>
                     ) : (
                       <button type="button" className="btn-ghost" onClick={() => handoffToChat(run)}>
-                        回聊天接管
+                        {pickLocaleText(locale, { "zh-CN": "回聊天接管", "zh-TW": "回聊天接管", en: "Back to Chat", ja: "チャットへ戻る" })}
                       </button>
                     )}
                     <button type="button" className="btn-ghost" onClick={() => handoffToChat(run)}>
-                      去聊天接管
+                      {pickLocaleText(locale, { "zh-CN": "去聊天接管", "zh-TW": "去聊天接管", en: "Take Over in Chat", ja: "チャットで引き継ぐ" })}
                     </button>
                     <button type="button" className="btn-ghost" onClick={() => openExecutionRun(run.id)}>
-                      查看执行
+                      {pickLocaleText(locale, { "zh-CN": "查看执行", "zh-TW": "查看執行", en: "Open Run", ja: "実行を見る" })}
                     </button>
                     <button
                       type="button"
@@ -347,7 +354,9 @@ export function ExecutionCenter({ compact = false }: { compact?: boolean }) {
                       onClick={() => void runExecutionVerification(run.id)}
                       disabled={run.verificationStatus === "running"}
                     >
-                      {run.verificationStatus === "running" ? "验证中..." : "重新验证"}
+                      {run.verificationStatus === "running"
+                        ? pickLocaleText(locale, { "zh-CN": "验证中...", "zh-TW": "驗證中...", en: "Verifying...", ja: "検証中..." })
+                        : pickLocaleText(locale, { "zh-CN": "重新验证", "zh-TW": "重新驗證", en: "Verify Again", ja: "再検証" })}
                     </button>
                   </div>
                 </div>
@@ -359,18 +368,23 @@ export function ExecutionCenter({ compact = false }: { compact?: boolean }) {
 
       {visibleRuns.length === 0 ? (
         <div style={emptyPanelStyle}>
-          还没有执行 run。发出一条聊天消息或快捷任务后，这里会开始累积执行轨迹。
+          {pickLocaleText(locale, {
+            "zh-CN": "还没有执行日志。发出一条聊天消息或快捷任务后，这里会开始累积执行轨迹。",
+            "zh-TW": "還沒有執行日誌。發出一條聊天消息或快捷任務後，這裡會開始累積執行軌跡。",
+            en: "There are no execution logs yet. Send a chat message or quick task and traces will start accumulating here.",
+            ja: "まだ実行ログはありません。チャットやクイックタスクを送ると、ここに実行トレースが蓄積されます。",
+          })}
         </div>
       ) : (
         <div style={{ display: "grid", gap: 12 }}>
           {visibleRuns.map(run => {
-            const tone = statusTone(run.status);
+            const tone = statusTone(locale, run.status);
             const currentAgent = run.currentAgentId ? AGENT_META[run.currentAgentId] : null;
             const lastEvent = run.events[run.events.length - 1];
             const events = compact ? run.events.slice(-4) : run.events.slice(-8);
             const semanticEvents = getSemanticRecallEvents(run);
             const isActive = activeExecutionRunId === run.id;
-            const verificationTone = run.verificationStatus ? verificationStatusTone(run.verificationStatus) : null;
+            const verificationTone = run.verificationStatus ? verificationStatusTone(locale, run.verificationStatus) : null;
             const linkedContentTask = run.entityType === "contentTask" && run.entityId ? contentTaskMap[run.entityId] ?? null : null;
             const linkedWorkflowRun = run.workflowRunId ? workflowRunMap[run.workflowRunId] ?? null : null;
             const executionEntityLabel = getExecutionEntityLabel(run, {
@@ -396,18 +410,18 @@ export function ExecutionCenter({ compact = false }: { compact?: boolean }) {
                   <div style={{ minWidth: 0 }}>
                     <div style={{ fontSize: 15, fontWeight: 700, lineHeight: 1.35 }}>{run.instruction}</div>
                     <div style={{ marginTop: 6, fontSize: 11, color: "var(--text-muted)" }}>
-                      {formatTimestamp(run.createdAt)} · 更新于 {timeAgo(run.updatedAt)}
+                      {formatTimestamp(run.createdAt, locale)} · {pickLocaleText(locale, { "zh-CN": "更新于", "zh-TW": "更新於", en: "Updated", ja: "更新" })} {timeAgo(run.updatedAt, locale)}
                     </div>
                   </div>
                   <span style={badgeStyle(tone.color)}>{tone.label}</span>
                 </div>
 
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 8 }}>
-                  <TraceStat label="Source" value={run.source} />
-                  <TraceStat label="Session" value={run.sessionId.slice(0, 8)} />
-                  <TraceStat label="Tasks" value={`${run.completedTasks}/${run.totalTasks || 0}`} />
-                  <TraceStat label="Failed" value={String(run.failedTasks)} />
-                  <TraceStat label="Current" value={currentAgent ? `${currentAgent.emoji} ${currentAgent.name}` : "待分配"} />
+                  <TraceStat label={pickLocaleText(locale, { "zh-CN": "来源", "zh-TW": "來源", en: "Source", ja: "ソース" })} value={run.source} />
+                  <TraceStat label={pickLocaleText(locale, { "zh-CN": "会话", "zh-TW": "會話", en: "Session", ja: "セッション" })} value={run.sessionId.slice(0, 8)} />
+                  <TraceStat label={pickLocaleText(locale, { "zh-CN": "任务", "zh-TW": "任務", en: "Tasks", ja: "タスク" })} value={`${run.completedTasks}/${run.totalTasks || 0}`} />
+                  <TraceStat label={pickLocaleText(locale, { "zh-CN": "失败", "zh-TW": "失敗", en: "Failed", ja: "失敗" })} value={String(run.failedTasks)} />
+                  <TraceStat label={pickLocaleText(locale, { "zh-CN": "当前", "zh-TW": "目前", en: "Current", ja: "現在" })} value={currentAgent ? `${currentAgent.emoji} ${currentAgent.name}` : pickLocaleText(locale, { "zh-CN": "待分配", "zh-TW": "待分配", en: "Unassigned", ja: "未割当" })} />
                 </div>
 
                 {executionEntityLabel ? (
@@ -421,7 +435,7 @@ export function ExecutionCenter({ compact = false }: { compact?: boolean }) {
                       color: "var(--text-muted)",
                     }}
                   >
-                    Bound to {executionEntityLabel}
+                    {pickLocaleText(locale, { "zh-CN": "已绑定", "zh-TW": "已綁定", en: "Bound to", ja: "紐付け先" })} {executionEntityLabel}
                   </div>
                 ) : null}
 
@@ -438,12 +452,17 @@ export function ExecutionCenter({ compact = false }: { compact?: boolean }) {
                   >
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
                       <div>
-                        <div style={{ fontSize: 11, color: "var(--text-muted)" }}>Semantic Context</div>
+                        <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{pickLocaleText(locale, { "zh-CN": "语义上下文", "zh-TW": "語義上下文", en: "Semantic Context", ja: "意味コンテキスト" })}</div>
                         <div style={{ marginTop: 4, fontSize: 13, fontWeight: 700 }}>
-                          本次执行已召回 {semanticEvents.length} 项语义资产
+                          {pickLocaleText(locale, {
+                            "zh-CN": `本次执行已召回 ${semanticEvents.length} 项语义资产`,
+                            "zh-TW": `本次執行已召回 ${semanticEvents.length} 項語義資產`,
+                            en: `${semanticEvents.length} semantic assets were recalled for this run`,
+                            ja: `この実行では ${semanticEvents.length} 件の意味資産が呼び出されました`,
+                          })}
                         </div>
                       </div>
-                      <span style={badgeStyle("#38bdf8")}>Memory Recall</span>
+                      <span style={badgeStyle("#38bdf8")}>{pickLocaleText(locale, { "zh-CN": "记忆召回", "zh-TW": "記憶召回", en: "Memory Recall", ja: "記憶呼び出し" })}</span>
                     </div>
 
                     <div style={{ display: "grid", gap: 8 }}>
@@ -460,7 +479,7 @@ export function ExecutionCenter({ compact = false }: { compact?: boolean }) {
                           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
                             <strong style={{ fontSize: 12 }}>{event.title}</strong>
                             <span style={{ fontSize: 10, color: "var(--text-muted)" }}>
-                              {formatTimestamp(event.timestamp)}
+                              {formatTimestamp(event.timestamp, locale)}
                             </span>
                           </div>
                           {event.detail && (
@@ -487,14 +506,14 @@ export function ExecutionCenter({ compact = false }: { compact?: boolean }) {
                   >
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
                       <div>
-                        <div style={{ fontSize: 11, color: "var(--text-muted)" }}>Verification</div>
+                        <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{pickLocaleText(locale, { "zh-CN": "验证", "zh-TW": "驗證", en: "Verification", ja: "検証" })}</div>
                         <div style={{ marginTop: 4, fontSize: 13, fontWeight: 700, color: verificationTone.color }}>
                           {verificationTone.label}
                         </div>
                       </div>
                       {run.verificationUpdatedAt && (
                         <div style={{ fontSize: 10, color: "var(--text-muted)" }}>
-                          {formatTimestamp(run.verificationUpdatedAt)}
+                          {formatTimestamp(run.verificationUpdatedAt, locale)}
                         </div>
                       )}
                     </div>
@@ -516,7 +535,12 @@ export function ExecutionCenter({ compact = false }: { compact?: boolean }) {
                             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
                               <strong style={{ fontSize: 12 }}>{step.label}</strong>
                               <span style={badgeStyle(step.status === "passed" ? "#86efac" : step.status === "failed" ? "#fda4af" : "#94a3b8")}>
-                                {step.status}
+                                {pickLocaleText(locale, {
+                                  "zh-CN": step.status === "passed" ? "通过" : step.status === "failed" ? "失败" : "跳过",
+                                  "zh-TW": step.status === "passed" ? "通過" : step.status === "failed" ? "失敗" : "跳過",
+                                  en: step.status === "passed" ? "Passed" : step.status === "failed" ? "Failed" : "Skipped",
+                                  ja: step.status === "passed" ? "合格" : step.status === "failed" ? "失敗" : "スキップ",
+                                })}
                               </span>
                             </div>
                             <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{step.command}</div>
@@ -530,7 +554,12 @@ export function ExecutionCenter({ compact = false }: { compact?: boolean }) {
                       </div>
                     ) : (
                       <div style={{ fontSize: 11, color: "var(--text-muted)", lineHeight: 1.7 }}>
-                        尚未产出具体验证步骤结果。
+                        {pickLocaleText(locale, {
+                          "zh-CN": "尚未产出具体验证步骤结果。",
+                          "zh-TW": "尚未產出具體驗證步驟結果。",
+                          en: "No detailed verification step results yet.",
+                          ja: "詳細な検証ステップ結果はまだありません。",
+                        })}
                       </div>
                     )}
                   </div>
@@ -545,7 +574,7 @@ export function ExecutionCenter({ compact = false }: { compact?: boolean }) {
                       background: "rgba(255,255,255,0.04)",
                     }}
                   >
-                    <div style={{ fontSize: 11, color: "var(--text-muted)" }}>Latest</div>
+                    <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{pickLocaleText(locale, { "zh-CN": "最新节点", "zh-TW": "最新節點", en: "Latest", ja: "最新" })}</div>
                     <div style={{ marginTop: 4, fontSize: 13, fontWeight: 700 }}>{lastEvent.title}</div>
                     {lastEvent.detail && (
                       <div style={{ marginTop: 6, fontSize: 12, lineHeight: 1.75, color: "var(--text-muted)", whiteSpace: "pre-wrap" }}>
@@ -588,7 +617,7 @@ export function ExecutionCenter({ compact = false }: { compact?: boolean }) {
                           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
                             <div style={{ fontSize: 12, fontWeight: 700 }}>{event.title}</div>
                             <div style={{ fontSize: 10, color: "var(--text-muted)", flexShrink: 0 }}>
-                              {formatTimestamp(event.timestamp)}
+                              {formatTimestamp(event.timestamp, locale)}
                             </div>
                           </div>
                           {event.detail && (
@@ -604,7 +633,9 @@ export function ExecutionCenter({ compact = false }: { compact?: boolean }) {
 
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                   <button type="button" className="btn-ghost" onClick={() => setActiveExecutionRun(run.id)}>
-                    {isActive ? "当前正在查看" : "设为当前"}
+                    {isActive
+                      ? pickLocaleText(locale, { "zh-CN": "当前正在查看", "zh-TW": "目前正在查看", en: "Viewing Now", ja: "現在表示中" })
+                      : pickLocaleText(locale, { "zh-CN": "设为当前", "zh-TW": "設為目前", en: "Set Current", ja: "現在の実行にする" })}
                   </button>
                   {linkedWorkflowRun ? (
                     <button
@@ -615,7 +646,7 @@ export function ExecutionCenter({ compact = false }: { compact?: boolean }) {
                         openControlSection("workflow");
                       }}
                     >
-                      定位到 Workflow
+                      {pickLocaleText(locale, { "zh-CN": "定位到工作流", "zh-TW": "定位到工作流", en: "Open Workflow", ja: "ワークフローを見る" })}
                     </button>
                   ) : null}
                   {linkedContentTask ? (
@@ -627,11 +658,11 @@ export function ExecutionCenter({ compact = false }: { compact?: boolean }) {
                         openControlSection("entities");
                       }}
                     >
-                      定位到内容实体
+                      {pickLocaleText(locale, { "zh-CN": "定位到内容实体", "zh-TW": "定位到內容實體", en: "Open Content Entity", ja: "コンテンツ実体を見る" })}
                     </button>
                   ) : null}
                   <button type="button" className="btn-ghost" onClick={() => openControlSection("artifacts")}>
-                    查看相关产物
+                    {pickLocaleText(locale, { "zh-CN": "查看相关产物", "zh-TW": "查看相關產物", en: "Open Artifacts", ja: "関連成果物を見る" })}
                   </button>
                   <button
                     type="button"
@@ -639,7 +670,9 @@ export function ExecutionCenter({ compact = false }: { compact?: boolean }) {
                     onClick={() => void runExecutionVerification(run.id)}
                     disabled={run.verificationStatus === "running"}
                   >
-                    {run.verificationStatus === "running" ? "验证中..." : "重新验证"}
+                    {run.verificationStatus === "running"
+                      ? pickLocaleText(locale, { "zh-CN": "验证中...", "zh-TW": "驗證中...", en: "Verifying...", ja: "検証中..." })
+                      : pickLocaleText(locale, { "zh-CN": "重新验证", "zh-TW": "重新驗證", en: "Verify Again", ja: "再検証" })}
                   </button>
                 </div>
               </article>
@@ -691,16 +724,16 @@ function badgeStyle(color: string): CSSProperties {
   };
 }
 
-function verificationStatusTone(status: NonNullable<ExecutionRun["verificationStatus"]>) {
+function verificationStatusTone(locale: UiLocale, status: NonNullable<ExecutionRun["verificationStatus"]>) {
   switch (status) {
     case "running":
-      return { label: "Running", color: "#fbbf24" };
+      return { label: pickLocaleText(locale, { "zh-CN": "验证中", "zh-TW": "驗證中", en: "Running", ja: "検証中" }), color: "#fbbf24" };
     case "passed":
-      return { label: "Passed", color: "#86efac" };
+      return { label: pickLocaleText(locale, { "zh-CN": "通过", "zh-TW": "通過", en: "Passed", ja: "合格" }), color: "#86efac" };
     case "failed":
-      return { label: "Failed", color: "#fda4af" };
+      return { label: pickLocaleText(locale, { "zh-CN": "失败", "zh-TW": "失敗", en: "Failed", ja: "失敗" }), color: "#fda4af" };
     case "skipped":
-      return { label: "Skipped", color: "#94a3b8" };
+      return { label: pickLocaleText(locale, { "zh-CN": "跳过", "zh-TW": "跳過", en: "Skipped", ja: "スキップ" }), color: "#94a3b8" };
     default:
       return { label: status, color: "var(--text-muted)" };
   }

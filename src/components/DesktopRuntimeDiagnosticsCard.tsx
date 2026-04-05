@@ -26,13 +26,11 @@ export function DesktopRuntimeDiagnosticsCard() {
   const chatSessions = useStore(s => s.chatSessions);
   const tasks = useStore(s => s.tasks);
   const executionRuns = useStore(s => s.executionRuns);
-  const workflowRuns = useStore(s => s.workflowRuns);
   const businessContentTasks = useStore(s => s.businessContentTasks);
   const wsStatus = useStore(s => s.wsStatus);
   const setTab = useStore(s => s.setTab);
   const setActiveControlCenterSection = useStore(s => s.setActiveControlCenterSection);
   const focusBusinessContentTask = useStore(s => s.focusBusinessContentTask);
-  const focusWorkflowRun = useStore(s => s.focusWorkflowRun);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   const [runtimeSource, setRuntimeSource] = useState("检测中");
   const [wsEndpoint, setWsEndpoint] = useState("ws://localhost:3001");
@@ -49,10 +47,6 @@ export function DesktopRuntimeDiagnosticsCard() {
     () => desktopInputSession.executionRunId ? executionRuns.find(run => run.id === desktopInputSession.executionRunId) ?? null : null,
     [desktopInputSession.executionRunId, executionRuns],
   );
-  const linkedWorkflowRun = useMemo(
-    () => linkedExecutionRun?.workflowRunId ? workflowRuns.find(run => run.id === linkedExecutionRun.workflowRunId) ?? null : null,
-    [linkedExecutionRun?.workflowRunId, workflowRuns],
-  );
   const linkedContentTask = useMemo(
     () =>
       linkedExecutionRun?.entityType === "contentTask" && linkedExecutionRun.entityId
@@ -67,10 +61,6 @@ export function DesktopRuntimeDiagnosticsCard() {
   const screenshotLinkedExecutionRun = useMemo(
     () => desktopScreenshot.executionRunId ? executionRuns.find(run => run.id === desktopScreenshot.executionRunId) ?? null : null,
     [desktopScreenshot.executionRunId, executionRuns],
-  );
-  const screenshotLinkedWorkflowRun = useMemo(
-    () => screenshotLinkedExecutionRun?.workflowRunId ? workflowRuns.find(run => run.id === screenshotLinkedExecutionRun.workflowRunId) ?? null : null,
-    [screenshotLinkedExecutionRun?.workflowRunId, workflowRuns],
   );
   const screenshotLinkedContentTask = useMemo(
     () =>
@@ -464,7 +454,6 @@ export function DesktopRuntimeDiagnosticsCard() {
             {desktopInputSession.cursor ? <span className="badge badge-explorer">坐标 {desktopInputSession.cursor.x},{desktopInputSession.cursor.y}</span> : null}
             {linkedSession ? <span className="badge badge-orchestrator">会话 {linkedSession.title}</span> : null}
             {linkedExecutionRun ? <span className="badge badge-designer">运行 {linkedExecutionRun.status}</span> : null}
-            {linkedWorkflowRun ? <span className="badge badge-performer">Workflow {linkedWorkflowRun.status}</span> : null}
             {linkedContentTask ? <span className="badge badge-writer">内容 {linkedContentTask.status}</span> : null}
           </div>
           {desktopInputSession.lastIntent ? (
@@ -475,11 +464,6 @@ export function DesktopRuntimeDiagnosticsCard() {
           {linkedTask ? (
             <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.7 }}>
               当前任务: {linkedTask.description}
-            </div>
-          ) : null}
-          {linkedWorkflowRun ? (
-            <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.7 }}>
-              绑定 Workflow: {linkedWorkflowRun.title}
             </div>
           ) : null}
           {linkedContentTask ? (
@@ -508,19 +492,6 @@ export function DesktopRuntimeDiagnosticsCard() {
             </div>
           ) : null}
           <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
-            {linkedWorkflowRun ? (
-              <button
-                type="button"
-                className="btn-ghost"
-                onClick={() => {
-                  focusWorkflowRun(linkedWorkflowRun.id);
-                  setActiveControlCenterSection("workflow");
-                  setTab("settings");
-                }}
-              >
-                定位到 Workflow
-              </button>
-            ) : null}
             {linkedContentTask ? (
               <button
                 type="button"
@@ -696,9 +667,6 @@ export function DesktopRuntimeDiagnosticsCard() {
             {screenshotLinkedExecutionRun ? (
               <span className="badge badge-designer">运行 {screenshotLinkedExecutionRun.status}</span>
             ) : null}
-            {screenshotLinkedWorkflowRun ? (
-              <span className="badge badge-performer">Workflow {screenshotLinkedWorkflowRun.status}</span>
-            ) : null}
             {screenshotLinkedContentTask ? (
               <span className="badge badge-writer">内容 {screenshotLinkedContentTask.status}</span>
             ) : null}
@@ -707,12 +675,6 @@ export function DesktopRuntimeDiagnosticsCard() {
           {desktopScreenshot.intent ? (
             <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.7 }}>
               用途: {desktopScreenshot.intent}
-            </div>
-          ) : null}
-
-          {screenshotLinkedWorkflowRun ? (
-            <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.7 }}>
-              绑定 Workflow: {screenshotLinkedWorkflowRun.title}
             </div>
           ) : null}
 
@@ -747,8 +709,9 @@ export function DesktopRuntimeDiagnosticsCard() {
               style={{
                 borderRadius: 16,
                 overflow: "hidden",
-                border: "1px solid rgba(255,255,255,0.08)",
-                background: "rgba(15, 23, 42, 0.55)",
+                border: "1px solid var(--border)",
+                background: "linear-gradient(180deg, rgba(255,255,255,0.98), rgba(247,249,253,0.96))",
+                boxShadow: "0 12px 26px rgba(15, 23, 42, 0.06)",
               }}
             >
               <img
@@ -759,26 +722,13 @@ export function DesktopRuntimeDiagnosticsCard() {
                   width: "100%",
                   maxHeight: 360,
                   objectFit: "contain",
-                  background: "rgba(15,23,42,0.55)",
+                  background: "transparent",
                 }}
               />
             </div>
           ) : null}
 
           <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, flexWrap: "wrap" }}>
-            {screenshotLinkedWorkflowRun ? (
-              <button
-                type="button"
-                className="btn-ghost"
-                onClick={() => {
-                  focusWorkflowRun(screenshotLinkedWorkflowRun.id);
-                  setActiveControlCenterSection("workflow");
-                  setTab("settings");
-                }}
-              >
-                定位到 Workflow
-              </button>
-            ) : null}
             {screenshotLinkedContentTask ? (
               <button
                 type="button"
@@ -928,8 +878,9 @@ export function DesktopRuntimeDiagnosticsCard() {
             marginTop: 12,
             padding: "12px 14px",
             borderRadius: 16,
-            background: "rgba(255,255,255,0.05)",
-            border: "1px solid rgba(255,255,255,0.08)",
+            background: "linear-gradient(180deg, rgba(255,255,255,0.98), rgba(247,249,253,0.96))",
+            border: "1px solid var(--border)",
+            boxShadow: "0 12px 26px rgba(15, 23, 42, 0.05)",
             display: "grid",
             gap: 8,
           }}

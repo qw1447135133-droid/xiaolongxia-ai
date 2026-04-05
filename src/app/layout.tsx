@@ -11,7 +11,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   const electronRuntimeKeys = JSON.stringify(ELECTRON_RUNTIME_QUERY_KEYS);
   return (
     <html lang="zh" suppressHydrationWarning>
-      <body>
+      <body suppressHydrationWarning>
         <script
           dangerouslySetInnerHTML={{
             __html: `

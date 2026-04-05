@@ -216,9 +216,6 @@ export function ArtifactsCenter() {
         <div style={{ fontSize: 22, fontWeight: 700, marginTop: 6, lineHeight: 1.2 }}>
           Unified output shelf for task results, images, meeting conclusions, and desk context
         </div>
-        <div style={{ fontSize: 13, color: "var(--text-muted)", lineHeight: 1.8, marginTop: 8 }}>
-          This is the lightweight bridge toward openhanako-style artifact workflows: a single place to revisit what the team has already produced and push it back into the main flow.
-        </div>
         <div style={{ marginTop: 14, display: "flex", gap: 8, flexWrap: "wrap" }}>
           <button type="button" className="btn-ghost" onClick={() => openControlSection("execution")}>
             查看执行面板
@@ -323,7 +320,8 @@ export function ArtifactsCenter() {
                       padding: 12,
                       borderRadius: 14,
                       border: "1px solid var(--border)",
-                      background: "rgba(8, 12, 20, 0.35)",
+                      background: "linear-gradient(180deg, rgba(255,255,255,0.98), rgba(247,249,253,0.96))",
+                      boxShadow: "inset 0 1px 0 rgba(255,255,255,0.82)",
                     }}
                   >
                     {item.body}
@@ -337,7 +335,8 @@ export function ArtifactsCenter() {
                       padding: 12,
                       borderRadius: 14,
                       border: "1px solid var(--border)",
-                      background: "rgba(8, 12, 20, 0.35)",
+                      background: "linear-gradient(180deg, rgba(255,255,255,0.98), rgba(247,249,253,0.96))",
+                      boxShadow: "inset 0 1px 0 rgba(255,255,255,0.82)",
                     }}
                   >
                     <img

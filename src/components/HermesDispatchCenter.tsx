@@ -409,7 +409,7 @@ export function HermesDispatchCenter() {
   };
 
   return (
-    <div style={{ display: "grid", gap: 16 }}>
+    <div className="hermes-dispatch-center" style={{ display: "grid", gap: 16 }}>
       <section
         className="card"
         style={{

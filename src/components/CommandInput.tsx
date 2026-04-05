@@ -88,10 +88,14 @@ export function CommandInput({
   variant = "dock",
   title,
   hint,
+  showHeader = true,
+  showFooter = true,
 }: {
   variant?: "dock" | "panel";
   title?: string;
   hint?: string;
+  showHeader?: boolean;
+  showFooter?: boolean;
 }) {
   const [error, setError] = useState("");
   const [attachments, setAttachments] = useState<AttachmentItem[]>([]);
@@ -314,12 +318,14 @@ export function CommandInput({
         </div>
       )}
 
-      <div className="command-input__header">
-        <div className="command-input__title">{title ?? "给小龙虾团队发送消息"}</div>
-        <div className="command-input__hint">
-          {hint ?? "像 ChatGPT 一样直接发问题、任务或文件上下文，系统会自动派发给合适的角色。"}
+      {showHeader ? (
+        <div className="command-input__header">
+          <div className="command-input__title">{title ?? "给小龙虾团队发送消息"}</div>
+          <div className="command-input__hint">
+            {hint ?? "像 ChatGPT 一样直接发问题、任务或文件上下文，系统会自动派发给合适的角色。"}
+          </div>
         </div>
-      </div>
+      ) : null}
 
       {activeProjectMemory && (
         <div className="command-input__memory">
@@ -418,7 +424,7 @@ export function CommandInput({
                 padding: "6px 10px",
                 borderRadius: "var(--radius-sm)",
                 border: "1px solid var(--border)",
-                background: "var(--bg-secondary)",
+                background: "rgba(247,249,253,0.96)",
                 fontSize: 11,
               }}
             >
@@ -433,7 +439,7 @@ export function CommandInput({
         </div>
       )}
 
-      <div style={{ display: "flex", gap: 10, alignItems: "flex-end", marginTop: 12 }}>
+      <div className="command-input__row">
         <input
           ref={fileInputRef}
           type="file"
@@ -444,24 +450,22 @@ export function CommandInput({
         />
         <button
           type="button"
-          className="btn-ghost"
+          className="command-input__upload command-input__send2"
           onClick={openFilePicker}
           disabled={isDispatching}
-          style={{ padding: "10px 12px" }}
           title="添加附件"
         >
           +
         </button>
         <textarea
-          className="input"
+          className="input command-input__field"
           value={commandDraft}
           onChange={(event) => setCommandDraft(event.target.value)}
           placeholder="输入你的任务、问题、网页研究需求或桌面执行目标"
           rows={4}
-          style={{ flex: 1, resize: "vertical", minHeight: 96 }}
         />
         <button
-          className={`command-input__send ${commandDraft.trim() && !isDispatching ? "is-ready" : ""}`}
+          className={`command-input__send command-input__send2 ${commandDraft.trim() && !isDispatching ? "is-ready" : ""}`}
           onClick={() => void dispatch()}
           disabled={isDispatching || !commandDraft.trim()}
           title="Send message"
@@ -477,19 +481,21 @@ export function CommandInput({
         </button>
       </div>
 
-      <div className="command-input__footer">
-        {attachments.length > 0
-          ? `${attachments.length} attachment(s) ready.${activeProjectMemory && includeProjectMemory ? ` Active memory: ${activeProjectMemory.name}.` : ""} You can also inject file context directly from Desk preview tabs.`
-          : activeProjectMemory && includeProjectMemory
-            ? `当前发送会自动附带项目记忆「${activeProjectMemory.name}」，也可以在上方随时关闭。`
-            : recommendedProjectMemories.length > 0
-              ? `未手动激活项目记忆时，系统会优先参考推荐结果，并在命中足够高时自动召回。`
-              : recommendedDeskNotes.length > 0
-                ? `系统已找到相关 Desk Notes，可一键注入输入框作为语义上下文。`
-                : recommendedKnowledgeDocuments.length > 0
-                  ? `系统已命中可复用知识文档，可直接注入输入框或在发送时自动参与召回。`
-              : "Use the + button for attachments, or send file path/context from Desk with one click."}
-      </div>
+      {showFooter ? (
+        <div className="command-input__footer">
+          {attachments.length > 0
+            ? `${attachments.length} attachment(s) ready.${activeProjectMemory && includeProjectMemory ? ` Active memory: ${activeProjectMemory.name}.` : ""} You can also inject file context directly from Desk preview tabs.`
+            : activeProjectMemory && includeProjectMemory
+              ? `当前发送会自动附带项目记忆「${activeProjectMemory.name}」，也可以在上方随时关闭。`
+              : recommendedProjectMemories.length > 0
+                ? `未手动激活项目记忆时，系统会优先参考推荐结果，并在命中足够高时自动召回。`
+                : recommendedDeskNotes.length > 0
+                  ? `系统已找到相关 Desk Notes，可一键注入输入框作为语义上下文。`
+                  : recommendedKnowledgeDocuments.length > 0
+                    ? `系统已命中可复用知识文档，可直接注入输入框或在发送时自动参与召回。`
+                    : "Use the + button for attachments, or send file path/context from Desk with one click."}
+        </div>
+      ) : null}
     </div>
   );
 }

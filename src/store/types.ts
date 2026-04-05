@@ -5,6 +5,7 @@ export type AgentStatus = "idle" | "running" | "error";
 export type TaskComplexity = "high" | "medium" | "low";
 export type TaskStatus = "pending" | "running" | "done" | "failed";
 export type AppTab = "dashboard" | "tasks" | "workspace" | "dispatch" | "meeting" | "settings";
+export type UiLocale = "zh-CN" | "zh-TW" | "en" | "ja";
 export type AutomationMode = "manual" | "supervised" | "autonomous";
 export type ControlCenterSectionId =
   | "overview"
@@ -14,7 +15,6 @@ export type ControlCenterSectionId =
   | "execution"
   | "desktop"
   | "workspace"
-  | "workflow"
   | "skills"
   | "plugins"
   | "artifacts"
@@ -591,8 +591,8 @@ export const TEAM_OPERATING_TEMPLATES: TeamOperatingTemplate[] = [
 export const TEAM_OPERATING_SURFACES: Record<TeamOperatingTemplateId, TeamOperatingSurface> = {
   engineering: {
     statusLabel: "研发推进",
-    statusCopy: "优先盯执行链路、工作流和工作区上下文，适合产品搭建、联调和交付闭环。",
-    recommendedSectionIds: ["execution", "workflow", "workspace", "settings"],
+    statusCopy: "优先盯执行链路和工作区上下文，适合产品搭建、联调和交付闭环。",
+    recommendedSectionIds: ["execution", "workspace", "settings"],
     quickActions: [
       {
         id: "engineering-chat",
@@ -613,11 +613,11 @@ export const TEAM_OPERATING_SURFACES: Record<TeamOperatingTemplateId, TeamOperat
       {
         id: "engineering-control",
         eyebrow: "Control",
-        title: "检查模型与工作流",
-        copy: "确认团队档位、插件与工作流是否适合当前开发阶段。",
+        title: "检查模型与执行配置",
+        copy: "确认团队档位、插件与执行设置是否适合当前开发阶段。",
         actionLabel: "打开控制台",
         tab: "settings",
-        controlCenterSectionId: "workflow",
+        controlCenterSectionId: "execution",
       },
     ],
     homePrompts: [
@@ -691,8 +691,8 @@ export const TEAM_OPERATING_SURFACES: Record<TeamOperatingTemplateId, TeamOperat
   },
   content: {
     statusLabel: "内容矩阵",
-    statusCopy: "优先看工作流、内容任务和产物输出，适合脚本、视觉和发布协同。",
-    recommendedSectionIds: ["workflow", "entities", "artifacts", "execution"],
+    statusCopy: "优先看内容任务和产物输出，适合脚本、视觉和发布协同。",
+    recommendedSectionIds: ["entities", "artifacts", "execution"],
     quickActions: [
       {
         id: "content-chat",
@@ -713,11 +713,11 @@ export const TEAM_OPERATING_SURFACES: Record<TeamOperatingTemplateId, TeamOperat
       {
         id: "content-control",
         eyebrow: "Control",
-        title: "查看工作流与产物面板",
+        title: "查看产物与实体面板",
         copy: "把内容工单、产物货架和执行记录串起来看，形成发布闭环。",
         actionLabel: "打开控制台",
         tab: "settings",
-        controlCenterSectionId: "workflow",
+        controlCenterSectionId: "artifacts",
       },
     ],
     homePrompts: [

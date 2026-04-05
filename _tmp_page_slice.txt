@@ -1,0 +1,3 @@
+$lines = Get-Content 'src/app/page.tsx'
+$start=420; $end=2200
+for($i=$start;$i -le $end;$i++){ if($i -le $lines.Length){ '{0}:{1}' -f $i,$lines[$i-1] } }

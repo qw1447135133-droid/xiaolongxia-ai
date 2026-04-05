@@ -43,7 +43,6 @@ export function ChannelsCenter() {
   const setTab = useStore(s => s.setTab);
   const setActiveExecutionRun = useStore(s => s.setActiveExecutionRun);
   const focusBusinessContentTask = useStore(s => s.focusBusinessContentTask);
-  const focusWorkflowRun = useStore(s => s.focusWorkflowRun);
   const launchContentTaskNextCycle = useStore(s => s.launchContentTaskNextCycle);
   const applyContentChannelGovernance = useStore(s => s.applyContentChannelGovernance);
   const markBusinessChannelSessionHandled = useStore(s => s.markBusinessChannelSessionHandled);
@@ -93,7 +92,6 @@ export function ChannelsCenter() {
           task: contentTaskMap[log.entityId],
           latestPublishResult: resolveLatestPublishResult(contentTaskMap[log.entityId], log),
           fallbackExecutionRunId: log.executionRunId ?? contentTaskMap[log.entityId].lastExecutionRunId,
-          fallbackWorkflowRunId: log.workflowRunId ?? contentTaskMap[log.entityId].lastWorkflowRunId,
         })),
     [contentTaskMap, scopedOperationLogs],
   );
@@ -302,34 +300,6 @@ export function ChannelsCenter() {
         </div>
       </div>
 
-      {channelActionResult ? (
-        <div
-          className="card"
-          style={{
-            padding: 14,
-            borderColor: channelActionResult.ok ? "rgba(34, 197, 94, 0.24)" : "rgba(239, 68, 68, 0.24)",
-            background: channelActionResult.ok
-              ? "linear-gradient(135deg, rgba(34, 197, 94, 0.1), rgba(255,255,255,0.02))"
-              : "linear-gradient(135deg, rgba(239, 68, 68, 0.1), rgba(255,255,255,0.02))",
-          }}
-        >
-          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", flexWrap: "wrap" }}>
-            <div style={{ display: "grid", gap: 6 }}>
-              <div style={{ fontSize: 13, fontWeight: 700 }}>
-                {channelActionResult.ok ? "渠道动作已完成" : "渠道动作失败"}
-              </div>
-              <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.7 }}>
-                {channelActionResult.message}
-                {channelActionResult.failureReason ? ` · ${channelActionResult.failureReason}` : ""}
-              </div>
-            </div>
-            <span style={eventBadgeStyle(channelActionResult.ok ? "completed" : "failed")}>
-              {channelActionResult.ok ? "OK" : "失败"}
-            </span>
-          </div>
-        </div>
-      ) : null}
-
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
         <ChannelMetric label="Channels" value={PLATFORM_DEFINITIONS.length} accent="var(--accent)" />
         <ChannelMetric label="Enabled" value={enabledCount} accent="#60a5fa" />
@@ -346,14 +316,6 @@ export function ChannelsCenter() {
         </div>
 
         <div style={{ display: "grid", gap: 10, marginTop: 14 }}>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-            <span style={inlineTagStyle}>WebSocket {wsStatus}</span>
-            <span style={inlineTagStyle}>已启用 {enabledCount}</span>
-            <span style={inlineTagStyle}>可运行 {connectedCount}</span>
-            <span style={inlineTagStyle}>待回调 {webhookPendingCount}</span>
-            <span style={inlineTagStyle}>待回复 {pendingRepliesCount}</span>
-          </div>
-
           <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.8 }}>
             {wsStatus !== "connected"
               ? "如果 WebSocket 是 disconnected，先修实时链路，否则平台状态和动作回执都不会及时回流。"
@@ -404,80 +366,6 @@ export function ChannelsCenter() {
           </div>
         </div>
       ) : null}
-
-      <div className="card" style={{ padding: 16 }}>
-        <div style={{ fontSize: 14, fontWeight: 700 }}>Platform Health Snapshot</div>
-        <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 4 }}>
-          把凭证状态、实时会话流量、待回复压力和失败发送放进同一张平台健康图里。
-        </div>
-
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 12, marginTop: 14 }}>
-          {platformSnapshots.map(({ def, config, snapshot }) => {
-            const statusColor =
-              snapshot.tone === "ready" ? "var(--success)"
-                : snapshot.tone === "partial" ? "var(--warning)"
-                  : snapshot.tone === "blocked" ? "var(--danger)"
-                    : "var(--text-muted)";
-
-            return (
-              <article
-                key={`platform-health-${def.id}`}
-                style={{
-                  display: "grid",
-                  gap: 10,
-                  padding: 14,
-                  borderRadius: 18,
-                  border: "1px solid var(--border)",
-                  background: config.enabled ? "rgba(255,255,255,0.03)" : "rgba(255,255,255,0.02)",
-                }}
-              >
-                <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start" }}>
-                  <div>
-                    <div style={{ fontSize: 15, fontWeight: 700 }}>{def.emoji} {def.name}</div>
-                    <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 4 }}>
-                      {config.accountLabel ?? snapshot.detail}
-                    </div>
-                  </div>
-                  <span style={buildStatusChipStyle(statusColor)}>
-                    {snapshot.label}
-                  </span>
-                </div>
-
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 8, fontSize: 12, color: "var(--text-muted)" }}>
-                  <span>健康度 {snapshot.healthScore}%</span>
-                  <span>会话 {snapshot.sessionCount}</span>
-                  <span>待回复 {snapshot.needsReplyCount}</span>
-                  <span>失败 {snapshot.failedSessionCount}</span>
-                </div>
-
-                {snapshot.missingRequiredFields.length > 0 ? (
-                  <div style={{ fontSize: 11, color: "var(--warning)", lineHeight: 1.7 }}>
-                    缺少字段: {snapshot.missingRequiredFields.join(" / ")}
-                  </div>
-                ) : null}
-
-                {snapshot.lastActivityAt ? (
-                  <div style={{ fontSize: 11, color: "var(--text-muted)" }}>
-                    最近活动 {formatEventTime(snapshot.lastActivityAt)}
-                  </div>
-                ) : null}
-
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  <button type="button" className="btn-ghost" onClick={() => openControlSection("settings")}>
-                    去配置字段
-                  </button>
-                  <button type="button" className="btn-ghost" onClick={() => openControlSection("remote")}>
-                    去远程值守
-                  </button>
-                  <button type="button" className="btn-ghost" onClick={() => toggleChannel(def.id)}>
-                    {config.enabled ? "重新同步" : "启用连接器"}
-                  </button>
-                </div>
-              </article>
-            );
-          })}
-        </div>
-      </div>
 
       <div className="card" style={{ padding: 16 }}>
         <div style={{ fontSize: 14, fontWeight: 700 }}>Attention Queue</div>
@@ -862,7 +750,7 @@ export function ChannelsCenter() {
               当前项目还没有可用于渠道回跳的业务事件。
             </div>
           ) : (
-            recentChannelEvents.map(({ log, task, latestPublishResult, fallbackExecutionRunId, fallbackWorkflowRunId }) => {
+            recentChannelEvents.map(({ log, task, latestPublishResult, fallbackExecutionRunId }) => {
               const highlights = buildChannelEventHighlights(task, log, latestPublishResult);
               const contextLine = buildChannelEventContext(task, log, latestPublishResult);
 
@@ -907,9 +795,9 @@ export function ChannelsCenter() {
                           style={{
                             padding: "4px 8px",
                             borderRadius: 999,
-                            border: "1px solid rgba(255,255,255,0.08)",
-                            background: "rgba(255,255,255,0.04)",
-                            color: "var(--text-muted)",
+                            border: "1px solid var(--border)",
+                            background: "rgba(247,249,253,0.96)",
+                            color: "var(--text)",
                             fontSize: 11,
                           }}
                         >
@@ -945,18 +833,13 @@ export function ChannelsCenter() {
                         type="button"
                         className="btn-ghost"
                         onClick={() => {
-                          const workflowRunId = launchContentTaskNextCycle({
+                          launchContentTaskNextCycle({
                             contentTaskId: task.id,
                             recommendation: task.nextCycleRecommendation ?? "retry",
                             detail: "从渠道事件卡恢复失败发布，系统已按下一轮建议重新排队内容 workflow。",
                             trigger: "manual",
                           });
-                          if (workflowRunId) {
-                            focusWorkflowRun(workflowRunId);
-                            openControlSection("workflow");
-                          } else {
-                            setTab("tasks");
-                          }
+                          setTab("tasks");
                         }}
                       >
                         按建议重试
@@ -990,18 +873,6 @@ export function ChannelsCenter() {
                         }}
                       >
                         查看对应执行
-                      </button>
-                    ) : null}
-                    {fallbackWorkflowRunId ? (
-                      <button
-                        type="button"
-                        className="btn-ghost"
-                        onClick={() => {
-                          focusWorkflowRun(fallbackWorkflowRunId);
-                          openControlSection("workflow");
-                        }}
-                      >
-                        定位到 Workflow
                       </button>
                     ) : null}
                     <button
@@ -1054,7 +925,7 @@ export function ChannelsCenter() {
                   padding: 14,
                   borderRadius: 18,
                   border: `1px solid ${config.enabled ? "rgba(var(--accent-rgb), 0.28)" : "var(--border)"}`,
-                  background: config.enabled ? "rgba(var(--accent-rgb), 0.08)" : "rgba(255,255,255,0.025)",
+                  background: config.enabled ? "rgba(var(--accent-rgb), 0.08)" : "rgba(247,249,253,0.96)",
                 }}
               >
                 <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
@@ -1224,18 +1095,6 @@ function eventBadgeStyle(status: string) {
   };
 }
 
-function buildStatusChipStyle(color: string) {
-  return {
-    padding: "3px 8px",
-    borderRadius: 999,
-    border: `1px solid ${color}33`,
-    background: `${color}1f`,
-    color,
-    fontSize: 10,
-    fontWeight: 700,
-  };
-}
-
 const inlineTagStyle = {
   padding: "4px 8px",
   borderRadius: 999,
@@ -1348,7 +1207,6 @@ function buildChannelEventContext(
 
   if (log.eventType === "desktop") {
     return [
-      task.lastWorkflowRunId ? `最近 Workflow: ${task.lastWorkflowRunId}` : "",
       task.lastExecutionRunId ? `最近执行: ${task.lastExecutionRunId}` : "",
       task.latestDraftSummary ?? "",
     ].filter(Boolean).join(" · ");

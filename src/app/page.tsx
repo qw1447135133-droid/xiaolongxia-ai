@@ -39,33 +39,22 @@ import {
   resetSemanticMemoryProvider,
 } from "@/lib/semantic-memory";
 import { timeAgo } from "@/lib/utils";
-import { AGENT_META, getTeamOperatingTemplate, TEAM_OPERATING_SURFACES } from "@/store/types";
-import type { AppTab, ControlCenterSectionId } from "@/store/types";
+import { AGENT_META, getTeamOperatingTemplate, PLATFORM_DEFINITIONS, TEAM_OPERATING_SURFACES } from "@/store/types";
+import type { AppTab, ControlCenterSectionId, UiLocale } from "@/store/types";
 import { retryExecutionDispatch, sendExecutionDispatch } from "@/lib/execution-dispatch";
 import { detectElectronRuntimeWindow } from "@/lib/electron-runtime";
 import { runExecutionVerification } from "@/lib/execution-verification";
 import { syncRuntimeSettings } from "@/lib/runtime-settings-sync";
-
-const NAV_ITEMS: Array<{ id: AppTab; label: string; eyebrow: string }> = [
-  { id: "dashboard", label: "首页", eyebrow: "Home" },
-  { id: "tasks", label: "聊天", eyebrow: "Chat" },
-  { id: "workspace", label: "工作区", eyebrow: "Desk" },
-  { id: "dispatch", label: "Hermes", eyebrow: "Dispatch" },
-  { id: "meeting", label: "会议", eyebrow: "Meet" },
-  { id: "settings", label: "控制台", eyebrow: "Control" },
-];
-
-const HOME_PROMPTS = [
-  "帮我梳理今天最值得推进的一项任务，并自动拆成执行步骤。",
-  "从当前会话和工作区上下文里，给我一版可以直接开工的开发计划。",
-  "检查一下团队配置、插件和工作流，告诉我哪里还不顺手。",
-];
-
-const CHAT_STARTERS = [
-  "基于当前工程上下文，先告诉我最值得做的下一步。",
-  "帮我 review 当前方案，优先指出风险和遗漏。",
-  "把这个任务拆成 3 个可以立即执行的小步骤。",
-];
+import {
+  UI_LOCALE_OPTIONS,
+  formatAutomationModeLabel,
+  formatWsStatusLabel,
+  getDefaultChatStarters,
+  getDefaultHomePrompts,
+  getPrimaryNavItems,
+  getUiText,
+  pickLocaleText,
+} from "@/lib/ui-locale";
 
 function detectElectronRuntime() {
   if (typeof window === "undefined") return false;
@@ -106,6 +95,9 @@ export default function App() {
   const shouldRenderDesktopWorkspace =
     runtimeTarget === "electron"
     || (typeof window !== "undefined" && detectElectronRuntime());
+  const locale = useStore(s => s.locale);
+  const navItems = useMemo(() => getPrimaryNavItems(locale), [locale]);
+  const uiText = useMemo(() => getUiText(locale), [locale]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -113,6 +105,12 @@ export default function App() {
     }, 1500);
     return () => window.clearTimeout(timer);
   }, []);
+
+  useEffect(() => {
+    if (typeof document !== "undefined") {
+      document.documentElement.lang = locale;
+    }
+  }, [locale]);
 
   useEffect(() => {
     const checkBusinessQueue = () => {
@@ -261,12 +259,12 @@ export default function App() {
     [desktopRuntime],
   );
   const desktopRuntimeSummary = useMemo(() => {
-    if (desktopRuntimeTone.tone === "ready") return "已连接";
-    if (desktopRuntimeTone.tone === "partial") return "部分";
-    return "未连接";
-  }, [desktopRuntimeTone.tone]);
+    if (desktopRuntimeTone.tone === "ready") return uiText.common.online;
+    if (desktopRuntimeTone.tone === "partial") return uiText.common.partial;
+    return uiText.common.offline;
+  }, [desktopRuntimeTone.tone, uiText.common.offline, uiText.common.online, uiText.common.partial]);
 
-  const activeNav = NAV_ITEMS.find(item => item.id === activeTab) ?? NAV_ITEMS[0];
+  const activeNav = navItems.find(item => item.id === activeTab) ?? navItems[0];
   const preferredControlSection = activeTeamOperatingTemplateId
     ? TEAM_OPERATING_SURFACES[activeTeamOperatingTemplateId]?.recommendedSectionIds[0] ?? "overview"
     : "overview";
@@ -293,8 +291,15 @@ export default function App() {
             <div className="ios-chat-shell__brand">
               <div className="ios-chat-shell__brand-mark">龙</div>
               <div>
-                <div className="ios-chat-shell__brand-eyebrow">Lobster Crew OS</div>
-                <div className="ios-chat-shell__brand-title">小龙虾 AI</div>
+                <div className="ios-chat-shell__brand-eyebrow">{uiText.common.brandEyebrow}</div>
+                <div className="ios-chat-shell__brand-title">
+                  {pickLocaleText(locale, {
+                    "zh-CN": "小龙虾 AI",
+                    "zh-TW": "小龍蝦 AI",
+                    en: "Lobster AI",
+                    ja: "ロブスター AI",
+                  })}
+                </div>
               </div>
             </div>
 
@@ -306,12 +311,12 @@ export default function App() {
                 setTab("tasks");
               }}
             >
-              新对话
+              {uiText.common.newChat}
             </button>
           </div>
 
           <nav className="ios-chat-shell__nav">
-            {NAV_ITEMS.map(item => (
+            {navItems.map(item => (
               <button
                 key={item.id}
                 type="button"
@@ -325,29 +330,29 @@ export default function App() {
           </nav>
 
           <div className="ios-chat-shell__status-grid">
-            <StatusPill label="连接" value={wsStatus === "connected" ? "在线" : wsStatus === "connecting" ? "连接中" : "离线"} />
-            <StatusPill label="桌面态" value={desktopRuntimeSummary} />
-            <StatusPill label="运行中" value={String(runningCount)} />
-            <StatusPill label="模式" value={automationPaused ? "已暂停" : automationMode === "manual" ? "人工" : automationMode === "supervised" ? "监督" : "自治"} />
-            <StatusPill label="Tokens" value={cost.totalTokens.toLocaleString()} />
-            <StatusPill label="工作流" value={String(workflowRuns.length)} />
+            <StatusPill label={uiText.common.connection} value={formatWsStatusLabel(locale, wsStatus)} />
+            <StatusPill label={uiText.common.desktop} value={desktopRuntimeSummary} />
+            <StatusPill label={uiText.common.running} value={String(runningCount)} />
+            <StatusPill label={uiText.common.mode} value={formatAutomationModeLabel(locale, automationPaused, automationMode)} />
+            <StatusPill label={uiText.common.tokens} value={cost.totalTokens.toLocaleString(locale)} />
+            <StatusPill label={uiText.common.workflows} value={String(workflowRuns.length)} />
           </div>
 
           <div className="ios-chat-shell__sidebar-scroll">
-            <SidebarSection title="当前项目" subtitle="当前会话所属项目摘要">
+            <SidebarSection title={uiText.common.currentProject} subtitle={uiText.common.currentProjectSubtitle}>
               <ProjectHubCard compact />
             </SidebarSection>
 
-            <SidebarSection title="会话" subtitle="最近聊天与草稿">
+            <SidebarSection title={uiText.common.sessions} subtitle={uiText.common.sessionsSubtitle}>
               <ChatSessionsPanel showHeader={false} />
             </SidebarSection>
 
             {activeTab === "tasks" && (
               <>
-                <SidebarSection title="快捷任务" subtitle="一键派发常用动作">
+                <SidebarSection title={uiText.common.quickTasks} subtitle={uiText.common.quickTasksSubtitle}>
                   <PresetTasksPanel onSelectTask={dispatchInstruction} />
                 </SidebarSection>
-                <SidebarSection title="计划任务" subtitle="定时与补跑入口">
+                <SidebarSection title={uiText.common.scheduledTasks} subtitle={uiText.common.scheduledTasksSubtitle}>
                   <ScheduledTasksPanel onExecuteTask={dispatchInstruction} />
                 </SidebarSection>
               </>
@@ -355,39 +360,52 @@ export default function App() {
 
             {activeTab === "dashboard" && (
               <>
-                <SidebarSection title="团队状态" subtitle="当前角色与负载">
+                <SidebarSection title={uiText.common.teamStatus} subtitle={uiText.common.teamStatusSubtitle}>
                   <AgentGrid />
                 </SidebarSection>
-                <SidebarSection title="动态记录" subtitle="最近执行结果">
+                <SidebarSection title={uiText.common.activity} subtitle={uiText.common.activitySubtitle}>
                   <ActivityPanel />
                 </SidebarSection>
               </>
             )}
 
             {activeTab === "meeting" && (
-              <SidebarSection title="会议记录" subtitle="最近一轮结论">
+              <SidebarSection
+                title={pickLocaleText(locale, {
+                  "zh-CN": "会议记录",
+                  "zh-TW": "會議記錄",
+                  en: "Meeting Notes",
+                  ja: "会議記録",
+                })}
+                subtitle={pickLocaleText(locale, {
+                  "zh-CN": "最近一轮结论",
+                  "zh-TW": "最近一輪結論",
+                  en: "Latest round summary",
+                  ja: "直近ラウンドの結論",
+                })}
+              >
                 <MeetingRecordPanel />
               </SidebarSection>
             )}
 
             {activeTab === "dispatch" && (
-              <SidebarSection title="执行轨迹" subtitle="复用现有 run 与活动流观察 dispatch">
+              <SidebarSection title={uiText.common.executionTrail} subtitle={uiText.common.executionTrailSubtitle}>
                 <ExecutionCenter compact />
               </SidebarSection>
             )}
 
-            <SidebarSection title="系统摘要" subtitle="当前工作台能力">
+            <SidebarSection title={uiText.common.systemSummary} subtitle={uiText.common.systemSummarySubtitle}>
               <div className="ios-chat-shell__summary-list">
                 <div className="ios-chat-shell__summary-item">
-                  <span>Provider</span>
+                  <span>{uiText.common.provider}</span>
                   <strong>{providers.length}</strong>
                 </div>
                 <div className="ios-chat-shell__summary-item">
-                  <span>平台</span>
+                  <span>{uiText.common.platforms}</span>
                   <strong>{enabledPlatforms}</strong>
                 </div>
                 <div className="ios-chat-shell__summary-item">
-                  <span>当前模式</span>
+                  <span>{uiText.common.currentMode}</span>
                   <strong>{activeNav.label}</strong>
                 </div>
               </div>
@@ -399,7 +417,7 @@ export default function App() {
           <div className="ios-chat-shell__topbar">
             <div className="ios-chat-shell__topbar-left">
               <button type="button" className="ios-chat-shell__menu-btn" onClick={() => toggleLeft()}>
-                {leftOpen ? "隐藏侧栏" : "打开侧栏"}
+                {leftOpen ? uiText.common.hideSidebar : uiText.common.openSidebar}
               </button>
               <div>
                 <div className="ios-chat-shell__page-eyebrow">{activeNav.eyebrow}</div>
@@ -408,11 +426,12 @@ export default function App() {
             </div>
 
             <div className="ios-chat-shell__topbar-right">
+              <LanguageSwitcher />
               <DesktopRuntimeBadge compact />
-              <div className="ios-chat-shell__capsule">iOS Glass</div>
-              <div className="ios-chat-shell__capsule">GPT-style Flow</div>
+              <div className="ios-chat-shell__capsule">{uiText.common.iosCapsule}</div>
+              <div className="ios-chat-shell__capsule">{uiText.common.gptCapsule}</div>
               <button type="button" className="ios-chat-shell__capsule is-button" onClick={openTopbarControlCenter}>
-                打开控制台
+                {uiText.common.openControlCenter}
               </button>
             </div>
           </div>
@@ -435,6 +454,7 @@ export default function App() {
 
 function DesktopWorkspaceApp() {
   const activeTab = useStore(s => s.activeTab);
+  const locale = useStore(s => s.locale);
   const setTab = useStore(s => s.setTab);
   const createChatSession = useStore(s => s.createChatSession);
   const wsStatus = useStore(s => s.wsStatus);
@@ -443,8 +463,15 @@ function DesktopWorkspaceApp() {
   const cost = useStore(s => s.cost);
   const agents = useStore(s => s.agents);
   const desktopRuntime = useStore(s => s.desktopRuntime);
-  const activeNav = NAV_ITEMS.find(item => item.id === activeTab) ?? NAV_ITEMS[0];
+  const navItems = useMemo(() => getPrimaryNavItems(locale), [locale]);
+  const uiText = useMemo(() => getUiText(locale), [locale]);
+  const activeNav = navItems.find(item => item.id === activeTab) ?? navItems[0];
   const desktopRuntimeTone = getDesktopRuntimeTone(desktopRuntime);
+  const desktopRuntimeLabel = useMemo(() => {
+    if (desktopRuntimeTone.tone === "ready") return uiText.common.desktopOnline;
+    if (desktopRuntimeTone.tone === "partial") return uiText.common.partial;
+    return uiText.common.offline;
+  }, [desktopRuntimeTone.tone, uiText.common.desktopOnline, uiText.common.offline, uiText.common.partial]);
   const runningCount = useMemo(
     () => Object.values(agents).filter(agent => agent.status === "running").length,
     [agents],
@@ -464,18 +491,19 @@ function DesktopWorkspaceApp() {
             className="desktop-workspace-shell__menu-btn"
             onClick={() => toggleLeft()}
           >
-            {leftOpen ? "隐藏侧栏" : "显示侧栏"}
+            {leftOpen ? uiText.common.hideSidebar : uiText.common.showSidebar}
           </button>
           <div className="desktop-workspace-shell__brand">
             <div className="desktop-workspace-shell__brand-mark">龙</div>
             <div>
-              <div className="desktop-workspace-shell__eyebrow">Desktop Workspace</div>
-              <div className="desktop-workspace-shell__title">小龙虾 AI 团队</div>
+              <div className="desktop-workspace-shell__eyebrow">{uiText.common.desktopBrandEyebrow}</div>
+              <div className="desktop-workspace-shell__title">{uiText.common.desktopBrandTitle}</div>
             </div>
           </div>
         </div>
 
         <div className="desktop-workspace-shell__topbar-right">
+          <LanguageSwitcher />
           <button
             type="button"
             className="desktop-workspace-shell__new-chat"
@@ -484,24 +512,24 @@ function DesktopWorkspaceApp() {
               setTab("tasks");
             }}
           >
-            新对话
+            {uiText.common.newChat}
           </button>
           <div className="desktop-workspace-shell__status-rail">
             <div className={`desktop-workspace-shell__pill ${offline ? "is-warning" : "is-good"}`}>
-              <span>连接</span>
-              <strong>{wsStatus === "connected" ? "在线" : wsStatus}</strong>
+              <span>{uiText.common.connection}</span>
+              <strong>{formatWsStatusLabel(locale, wsStatus)}</strong>
             </div>
             <div className={`desktop-workspace-shell__pill ${desktopRuntimeTone.tone === "ready" ? "is-good" : "is-warning"}`}>
-              <span>桌面</span>
-              <strong>{desktopRuntimeTone.label}</strong>
+              <span>{uiText.common.desktop}</span>
+              <strong>{desktopRuntimeLabel}</strong>
             </div>
             <div className="desktop-workspace-shell__pill">
-              <span>运行中</span>
+              <span>{uiText.common.running}</span>
               <strong>{runningCount}</strong>
             </div>
             <div className="desktop-workspace-shell__pill">
-              <span>Tokens</span>
-              <strong>{cost.totalTokens.toLocaleString()}</strong>
+              <span>{uiText.common.tokens}</span>
+              <strong>{cost.totalTokens.toLocaleString(locale)}</strong>
             </div>
           </div>
         </div>
@@ -511,9 +539,9 @@ function DesktopWorkspaceApp() {
         {leftOpen ? (
           <aside className="desktop-workspace-shell__sidebar">
             <section className="desktop-workspace-shell__section">
-              <div className="desktop-workspace-shell__section-eyebrow">导航</div>
+              <div className="desktop-workspace-shell__section-eyebrow">{uiText.common.navigation}</div>
               <div className="desktop-workspace-shell__nav">
-                {NAV_ITEMS.map(item => (
+                {navItems.map(item => (
                   <button
                     key={item.id}
                     type="button"
@@ -528,7 +556,7 @@ function DesktopWorkspaceApp() {
             </section>
 
             <section className="desktop-workspace-shell__section">
-              <div className="desktop-workspace-shell__section-eyebrow">会话</div>
+              <div className="desktop-workspace-shell__section-eyebrow">{uiText.common.sessions}</div>
               <div className="desktop-workspace-shell__panel">
                 <ChatSessionsPanel showHeader={false} />
               </div>
@@ -536,7 +564,7 @@ function DesktopWorkspaceApp() {
 
             {activeTab === "tasks" ? (
               <section className="desktop-workspace-shell__section">
-                <div className="desktop-workspace-shell__section-eyebrow">快捷任务</div>
+                <div className="desktop-workspace-shell__section-eyebrow">{uiText.common.quickTasks}</div>
                 <div className="desktop-workspace-shell__panel">
                   <PresetTasksPanel onSelectTask={dispatchInstruction} />
                 </div>
@@ -545,7 +573,7 @@ function DesktopWorkspaceApp() {
 
             {activeTab === "dashboard" ? (
               <section className="desktop-workspace-shell__section">
-                <div className="desktop-workspace-shell__section-eyebrow">动态记录</div>
+                <div className="desktop-workspace-shell__section-eyebrow">{uiText.common.activity}</div>
                 <div className="desktop-workspace-shell__panel">
                   <ActivityPanel />
                 </div>
@@ -554,7 +582,7 @@ function DesktopWorkspaceApp() {
 
             {activeTab === "dispatch" ? (
               <section className="desktop-workspace-shell__section">
-                <div className="desktop-workspace-shell__section-eyebrow">执行轨迹</div>
+                <div className="desktop-workspace-shell__section-eyebrow">{uiText.common.executionTrail}</div>
                 <div className="desktop-workspace-shell__panel">
                   <ExecutionCenter compact />
                 </div>
@@ -562,19 +590,19 @@ function DesktopWorkspaceApp() {
             ) : null}
 
             <section className="desktop-workspace-shell__section">
-              <div className="desktop-workspace-shell__section-eyebrow">桌面态摘要</div>
+              <div className="desktop-workspace-shell__section-eyebrow">{uiText.common.desktopSummary}</div>
               <div className="desktop-workspace-shell__summary-grid">
                 <article className="desktop-workspace-shell__summary-card">
-                  <span>当前场景</span>
+                  <span>{uiText.common.currentScene}</span>
                   <strong>{activeNav.label}</strong>
                 </article>
                 <article className="desktop-workspace-shell__summary-card">
-                  <span>侧栏</span>
-                  <strong>{leftOpen ? "展开" : "收起"}</strong>
+                  <span>{uiText.common.sidebar}</span>
+                  <strong>{leftOpen ? uiText.common.expanded : uiText.common.collapsed}</strong>
                 </article>
                 <article className="desktop-workspace-shell__summary-card">
-                  <span>工作模式</span>
-                  <strong>{desktopRuntimeTone.tone === "ready" ? "桌面在线" : "等待接管"}</strong>
+                  <span>{uiText.common.workingMode}</span>
+                  <strong>{desktopRuntimeTone.tone === "ready" ? uiText.common.desktopOnline : uiText.common.waitingTakeover}</strong>
                 </article>
               </div>
             </section>
@@ -582,50 +610,62 @@ function DesktopWorkspaceApp() {
         ) : null}
 
         <main className="desktop-workspace-shell__main">
-          <section className="desktop-workspace-shell__hero">
+          {activeTab !== "tasks" ? (
+            <section className="desktop-workspace-shell__hero">
             <div>
               <div className="desktop-workspace-shell__hero-eyebrow">{activeNav.eyebrow}</div>
               <h1 className="desktop-workspace-shell__hero-title">{activeNav.label}</h1>
               <p className="desktop-workspace-shell__hero-copy">
-                桌面端保持稳定渲染优先，同时把聊天、工作台和控制面板收敛到同一条工作流里。
+                {pickLocaleText(locale, {
+                  "zh-CN": "桌面端保持稳定渲染优先，同时把聊天、工作台和控制面板收敛到同一条工作流里。",
+                  "zh-TW": "桌面端優先保持穩定渲染，同時把聊天、工作台與控制面板收斂到同一條工作流裡。",
+                  en: "Keep desktop rendering stable first while bringing chat, workspace, and control surfaces into one flow.",
+                  ja: "デスクトップでは安定した描画を優先しつつ、チャット・ワークスペース・制御面を一つの流れにまとめます。",
+                })}
               </p>
               <div className="desktop-workspace-shell__hero-actions">
                 <button type="button" className="desktop-workspace-shell__hero-action is-primary" onClick={() => setTab("tasks")}>
-                  回到聊天
+                  {uiText.common.backToChat}
                 </button>
                 <button type="button" className="desktop-workspace-shell__hero-action" onClick={() => setTab("settings")}>
-                  打开控制台
+                  {uiText.common.openControlCenter}
                 </button>
               </div>
             </div>
             <div className="desktop-workspace-shell__hero-meta">
               <div className="desktop-workspace-shell__hero-meta-card">
-                <span>桌面连接</span>
-                <strong>{desktopRuntimeTone.label}</strong>
+                <span>{uiText.common.desktopConnection}</span>
+                <strong>{desktopRuntimeLabel}</strong>
               </div>
               <div className="desktop-workspace-shell__hero-meta-card">
-                <span>消息链路</span>
-                <strong>{offline ? "待恢复" : "已同步"}</strong>
+                <span>{uiText.common.messagePipeline}</span>
+                <strong>{offline ? uiText.common.recoveryNeeded : uiText.common.synced}</strong>
               </div>
             </div>
-          </section>
+            </section>
+          ) : null}
 
           {offline || desktopRuntimeTone.tone !== "ready" ? (
             <section className="desktop-workspace-shell__alert">
               <div>
-                <strong>{offline ? "消息链路需要恢复" : "桌面能力尚未完全接入"}</strong>
+                <strong>{offline ? uiText.common.pipelineRecoveryTitle : uiText.common.desktopCapabilityTitle}</strong>
                 <p>
                   {offline
-                    ? "当前 WebSocket 未在线，自动派发和执行状态同步会受影响。"
+                    ? pickLocaleText(locale, {
+                        "zh-CN": "当前 WebSocket 未在线，自动派发和执行状态同步会受影响。",
+                        "zh-TW": "目前 WebSocket 未在線，自動派發與執行同步會受到影響。",
+                        en: "WebSocket is offline, so auto-dispatch and execution sync are affected.",
+                        ja: "現在 WebSocket がオフラインのため、自動配信と実行同期に影響があります。",
+                      })
                     : desktopRuntimeTone.detail}
                 </p>
               </div>
               <div className="desktop-workspace-shell__alert-actions">
                 <button type="button" className="desktop-workspace-shell__hero-action" onClick={() => setTab("settings")}>
-                  去检查设置
+                  {uiText.common.checkSettings}
                 </button>
                 <button type="button" className="desktop-workspace-shell__hero-action" onClick={() => setTab("tasks")}>
-                  手动接管
+                  {uiText.common.manualTakeover}
                 </button>
               </div>
             </section>
@@ -662,916 +702,23 @@ function DesktopWorkspaceApp() {
 }
 
 function DesktopChatWorkspace() {
-  const setTab = useStore(s => s.setTab);
-  const setCommandDraft = useStore(s => s.setCommandDraft);
-  const setActiveChatSession = useStore(s => s.setActiveChatSession);
-  const setActiveControlCenterSection = useStore(s => s.setActiveControlCenterSection);
-  const setAutomationPaused = useStore(s => s.setAutomationPaused);
-  const setBusinessApprovalDecision = useStore(s => s.setBusinessApprovalDecision);
-  const recordBusinessOperation = useStore(s => s.recordBusinessOperation);
-  const clearDesktopInputSession = useStore(s => s.clearDesktopInputSession);
-  const tasks = useStore(s => s.tasks);
-  const workflowRuns = useStore(s => s.workflowRuns);
-  const restageWorkflowRun = useStore(s => s.restageWorkflowRun);
-  const startWorkflowRun = useStore(s => s.startWorkflowRun);
-  const completeWorkflowRun = useStore(s => s.completeWorkflowRun);
-  const executionRuns = useStore(s => s.executionRuns);
-  const activeExecutionRunId = useStore(s => s.activeExecutionRunId);
-  const desktopInputSession = useStore(s => s.desktopInputSession);
-  const setActiveExecutionRun = useStore(s => s.setActiveExecutionRun);
-  const businessApprovals = useStore(s => s.businessApprovals);
-  const businessOperationLogs = useStore(s => s.businessOperationLogs);
-  const businessCustomers = useStore(s => s.businessCustomers);
-  const businessLeads = useStore(s => s.businessLeads);
-  const businessTickets = useStore(s => s.businessTickets);
-  const businessContentTasks = useStore(s => s.businessContentTasks);
-  const businessChannelSessions = useStore(s => s.businessChannelSessions);
-  const chatSessions = useStore(s => s.chatSessions);
-  const activeSessionId = useStore(s => s.activeSessionId);
-  const activeTeamOperatingTemplateId = useStore(s => s.activeTeamOperatingTemplateId);
-  const wsStatus = useStore(s => s.wsStatus);
-  const automationPaused = useStore(s => s.automationPaused);
-  const automationMode = useStore(s => s.automationMode);
-  const remoteSupervisorEnabled = useStore(s => s.remoteSupervisorEnabled);
-  const activeSurface = activeTeamOperatingTemplateId
-    ? TEAM_OPERATING_SURFACES[activeTeamOperatingTemplateId]
-    : null;
-  const chatStarters = activeSurface?.chatStarters ?? CHAT_STARTERS;
-  const [desktopApprovalFeedback, setDesktopApprovalFeedback] = useState<string | null>(null);
-  const activeSession = useMemo(
-    () => chatSessions.find(session => session.id === activeSessionId) ?? null,
-    [activeSessionId, chatSessions],
-  );
-  const currentProjectKey = useMemo(
-    () => (activeSession ? getRunProjectScopeKey(activeSession, chatSessions) : "project:general"),
-    [activeSession, chatSessions],
-  );
-  const scopedExecutionRuns = useMemo(
-    () =>
-      executionRuns
-        .filter(run => getRunProjectScopeKey(run, chatSessions) === currentProjectKey)
-        .sort((left, right) => right.updatedAt - left.updatedAt),
-    [chatSessions, currentProjectKey, executionRuns],
-  );
-  const runningExecutions = scopedExecutionRuns.filter(run => run.status === "analyzing" || run.status === "running").length;
-  const recentRuns = scopedExecutionRuns.slice(0, 3);
-  const activeRun = scopedExecutionRuns.find(run => run.id === activeExecutionRunId) ?? scopedExecutionRuns[0] ?? null;
-  const recentRun = scopedExecutionRuns[0] ?? null;
-  const recentFailedRun = scopedExecutionRuns.find(run => run.status === "failed") ?? null;
-  const workflowQueue = workflowRuns
-    .filter(run => run.status === "queued" || run.status === "staged" || run.status === "in-progress")
-    .slice(0, 3);
-  const pendingWorkbenchQueue = useMemo(() => {
-    const executionItems = recentRuns
-      .filter(run => run.id !== activeRun?.id)
-      .map(run => ({
-        kind: "execution" as const,
-        id: run.id,
-        title: run.instruction,
-        updatedAt: run.updatedAt,
-        meta: [
-          getMobileExecutionLabel(run.status),
-          `${run.events.length} 条轨迹`,
-          run.verificationStatus ? `验证 ${getVerificationLabel(run.verificationStatus)}` : null,
-        ].filter(Boolean) as string[],
-        summary: null as string | null,
-        primaryLabel: "查看轨迹",
-        onPrimary: () => openExecutionRun(run.id),
-        secondaryLabel: "回到聊天",
-        onSecondary: () => handoffToChat(run.sessionId),
-      }));
-
-    const workflowItems = workflowQueue.map(run => ({
-      kind: "workflow" as const,
-      id: run.id,
-      title: run.title,
-      updatedAt: run.updatedAt,
-      meta: [
-        getWorkflowStatusLabel(run.status),
-        `${run.launchCount} 次启动`,
-        run.nextTab === "tasks" ? "聊天页继续" : "工作区继续",
-      ],
-      summary: run.summary,
-      primaryLabel: run.status === "in-progress" ? "标记完成" : run.status === "queued" || run.status === "staged" ? "启动" : "回填草稿",
-      onPrimary: () => {
-        if (run.status === "in-progress") {
-          completeWorkflowRun(run.id);
-          return;
-        }
-        if (run.status === "queued" || run.status === "staged") {
-          startWorkflowRun(run.id);
-          setCommandDraft(run.draft);
-          setTab(run.nextTab);
-          return;
-        }
-        restageWorkflowRun(run.id);
-        setCommandDraft(run.draft);
-        setTab(run.nextTab);
-      },
-      secondaryLabel: "回填草稿",
-      onSecondary: () => {
-        restageWorkflowRun(run.id);
-        setCommandDraft(run.draft);
-        setTab(run.nextTab);
-      },
-    }));
-
-    return [...executionItems, ...workflowItems]
-      .sort((left, right) => right.updatedAt - left.updatedAt)
-      .slice(0, 4);
-  }, [
-    activeRun?.id,
-    completeWorkflowRun,
-    recentRuns,
-    restageWorkflowRun,
-    setCommandDraft,
-    setTab,
-    startWorkflowRun,
-    workflowQueue,
-  ]);
-  const canTakeOver = desktopInputSession.state === "manual-required" && Boolean(desktopInputSession.resumeInstruction);
-  const latestEvent = activeRun?.events[activeRun.events.length - 1] ?? null;
-  const activeRunTimeline = activeRun ? activeRun.events.slice(-3) : [];
-  const scopedApprovals = useMemo(
-    () => filterByProjectScope(businessApprovals, activeSession ?? {}),
-    [activeSession, businessApprovals],
-  );
-  const scopedOperationLogs = useMemo(
-    () =>
-      [...filterByProjectScope(businessOperationLogs, activeSession ?? {})].sort(
-        (left, right) => right.updatedAt - left.updatedAt,
-      ),
-    [activeSession, businessOperationLogs],
-  );
-  const scopedCustomers = useMemo(
-    () => filterByProjectScope(businessCustomers, activeSession ?? {}),
-    [activeSession, businessCustomers],
-  );
-  const scopedLeads = useMemo(
-    () => filterByProjectScope(businessLeads, activeSession ?? {}),
-    [activeSession, businessLeads],
-  );
-  const scopedTickets = useMemo(
-    () => filterByProjectScope(businessTickets, activeSession ?? {}),
-    [activeSession, businessTickets],
-  );
-  const scopedContentTasks = useMemo(
-    () => filterByProjectScope(businessContentTasks, activeSession ?? {}),
-    [activeSession, businessContentTasks],
-  );
-  const scopedChannelSessions = useMemo(
-    () => filterByProjectScope(businessChannelSessions, activeSession ?? {}),
-    [activeSession, businessChannelSessions],
-  );
-  const railApprovalQueue = useMemo(
-    () =>
-      buildBusinessAutomationQueue({
-        approvals: scopedApprovals,
-        customers: scopedCustomers,
-        leads: scopedLeads,
-        tickets: scopedTickets,
-        contentTasks: scopedContentTasks,
-        channelSessions: scopedChannelSessions,
-      }).filter(item => item.approvalState === "pending").slice(0, 2),
-    [
-      scopedApprovals,
-      scopedChannelSessions,
-      scopedContentTasks,
-      scopedCustomers,
-      scopedLeads,
-      scopedTickets,
-    ],
-  );
-  const pendingApprovalCount = scopedApprovals.filter(item => item.status === "pending").length;
-  const latestOperation = scopedOperationLogs[0] ?? null;
-
-  const openExecutionRun = (runId: string) => {
-    setActiveExecutionRun(runId);
-    setActiveControlCenterSection("execution");
-    setTab("settings");
-  };
-
-  const focusChatSession = (sessionId?: string | null) => {
-    if (sessionId) {
-      setActiveChatSession(sessionId);
-    }
-  };
-
-  const openControlSection = (section: ControlCenterSectionId) => {
-    setActiveControlCenterSection(section);
-    setTab("settings");
-  };
-
-  const handoffToChat = (sessionId?: string | null) => {
-    focusChatSession(sessionId ?? desktopInputSession.sessionId ?? recentFailedRun?.sessionId ?? null);
-    if (desktopInputSession.resumeInstruction) {
-      setCommandDraft(desktopInputSession.resumeInstruction);
-    } else if (recentFailedRun) {
-      setCommandDraft(`继续处理这次失败执行，并优先给出接管建议：\n${recentFailedRun.instruction}`);
-    }
-    setTab("tasks");
-  };
-
-  const retryRun = (run: NonNullable<typeof recentFailedRun>) => {
-    const { ok, executionRunId } = retryExecutionDispatch(run, {
-      includeUserMessage: true,
-      includeActiveProjectMemory: true,
-      taskDescription: `${run.instruction} [重试]`,
-      lastRecoveryHint: "重试上一条失败执行，并优先复用原会话上下文。",
-    });
-    if (ok && executionRunId) {
-      focusChatSession(run.sessionId);
-      setActiveExecutionRun(executionRunId);
-      setActiveControlCenterSection("execution");
-      setTab("settings");
-    } else {
-      focusChatSession(run.sessionId);
-      setCommandDraft(`重试这次失败执行，并先分析失败原因后再继续：\n${run.instruction}`);
-      setTab("tasks");
-    }
-  };
-
-  const continueAfterTakeover = () => {
-    if (!desktopInputSession.resumeInstruction) return;
-
-    focusChatSession(desktopInputSession.sessionId);
-    const { ok, executionRunId } = sendExecutionDispatch({
-      instruction: desktopInputSession.resumeInstruction,
-      source: "chat",
-      includeUserMessage: false,
-      includeActiveProjectMemory: true,
-      sessionId: desktopInputSession.sessionId,
-      taskDescription: "验证完成后继续执行",
-      retryOfRunId: desktopInputSession.executionRunId,
-      lastRecoveryHint: "人工验证已完成，继续沿用原执行上下文。",
-    });
-
-    if (ok) {
-      setAutomationPaused(false);
-      clearDesktopInputSession();
-      if (executionRunId) {
-        setActiveExecutionRun(executionRunId);
-        setActiveControlCenterSection("execution");
-        setTab("settings");
-        return;
-      }
-    }
-
-    setTab("tasks");
-  };
-
-  const retryDesktopSuggestion = (label: string, nextX: number, nextY: number) => {
-    const retryAction = desktopInputSession.lastAction === "double_click" || desktopInputSession.lastAction === "right_click"
-      ? desktopInputSession.lastAction
-      : "click";
-    const ok = sendWs({
-      type: "desktop_input_request",
-      requestId: `desktop-retry-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-      sessionId: desktopInputSession.sessionId,
-      executionRunId: desktopInputSession.executionRunId,
-      taskId: desktopInputSession.taskId,
-      payload: {
-        action: retryAction,
-        x: nextX,
-        y: nextY,
-        target: desktopInputSession.target,
-        intent: `${desktopInputSession.lastIntent || "桌面点击"} · 偏移重试 ${label}`,
-        riskCategory: "normal",
-      },
-    });
-
-    if (ok) {
-      setDesktopApprovalFeedback(`已发起偏移重试：${label} (${nextX}, ${nextY})。`);
-    } else {
-      setDesktopApprovalFeedback("偏移重试发送失败：当前 WebSocket 未连接。");
-    }
-  };
-
-  const approveRailItem = (item: BusinessAutomationQueueItem) => {
-    setBusinessApprovalDecision({
-      entityType: item.entityType,
-      entityId: item.entityId,
-      status: "approved",
-    });
-
-    const canAutoDispatch =
-      wsStatus === "connected"
-      && !automationPaused
-      && automationMode !== "manual"
-      && remoteSupervisorEnabled
-      && item.decision.autoRunEligible;
-
-    if (!canAutoDispatch) {
-      const blockedReason =
-        wsStatus !== "connected"
-          ? "远程通道还没连上"
-          : automationPaused
-            ? "自动化当前已暂停"
-            : automationMode === "manual"
-              ? "当前仍是人工模式"
-              : !remoteSupervisorEnabled
-                ? "远程值守当前关闭"
-                : "量化结果仍建议先观察";
-      setDesktopApprovalFeedback(`已批准 ${item.title}，但这次没有自动派发，因为${blockedReason}。`);
-      return;
-    }
-
-    const { ok, executionRunId } = sendExecutionDispatch({
-      instruction: item.instruction,
-      source: "remote-ops",
-      includeUserMessage: true,
-      taskDescription: item.taskDescription,
-      includeActiveProjectMemory: true,
-    });
-
-    recordBusinessOperation({
-      entityType: item.entityType,
-      entityId: item.entityId,
-      eventType: "dispatch",
-      trigger: "manual",
-      status: ok ? "sent" : "blocked",
-      title: item.title,
-      detail: ok
-        ? "人工在 Electron 聊天工作台批准后立即派发了该业务对象。"
-        : "人工在 Electron 聊天工作台批准了该业务对象，但发送链路未成功建立。",
-      executionRunId: ok ? executionRunId : undefined,
-    });
-
-    if (ok && executionRunId) {
-      setActiveExecutionRun(executionRunId);
-      setActiveControlCenterSection("execution");
-      setTab("settings");
-      setDesktopApprovalFeedback(`已批准 ${item.title}，并已直接送入执行链路。`);
-      return;
-    }
-
-    setDesktopApprovalFeedback(`已批准 ${item.title}，但派发链路没有成功建立。`);
-  };
-
-  const rejectRailItem = (item: BusinessAutomationQueueItem) => {
-    setBusinessApprovalDecision({
-      entityType: item.entityType,
-      entityId: item.entityId,
-      status: "rejected",
-    });
-    setDesktopApprovalFeedback(`已驳回 ${item.title}，审计记录会保留这次处理。`);
-  };
-
-  const operatorAlerts = useMemo(() => {
-    const alerts: Array<{
-      id: string;
-      severity: "critical" | "warning" | "info";
-      title: string;
-      detail: string;
-      meta: string[];
-      primaryLabel: string;
-      onPrimary: () => void;
-      secondaryLabel?: string;
-      onSecondary?: () => void;
-    }> = [];
-
-    if (canTakeOver) {
-      alerts.push({
-        id: "desktop-takeover",
-        severity: "critical",
-        title: "桌面交互等待人工接管",
-        detail: desktopInputSession.message || "当前桌面交互需要你先人工确认，再继续自动执行。",
-        meta: [
-          desktopInputSession.lastAction ? `动作 ${desktopInputSession.lastAction}` : "",
-          desktopInputSession.target ? `目标 ${desktopInputSession.target}` : "",
-          desktopInputSession.cursor ? `坐标 ${desktopInputSession.cursor.x},${desktopInputSession.cursor.y}` : "",
-        ].filter(Boolean),
-        primaryLabel: "回聊天接管",
-        onPrimary: () => handoffToChat(desktopInputSession.sessionId),
-        secondaryLabel: "验证完成继续",
-        onSecondary: continueAfterTakeover,
-      });
-    }
-
-    if (recentFailedRun) {
-      alerts.push({
-        id: `failed-run-${recentFailedRun.id}`,
-        severity: "critical",
-        title: "最近一次执行失败",
-        detail: recentFailedRun.instruction,
-        meta: [
-          getMobileExecutionLabel(recentFailedRun.status),
-          `${recentFailedRun.events.length} 条轨迹`,
-          recentFailedRun.verificationStatus ? `验证 ${getVerificationLabel(recentFailedRun.verificationStatus)}` : "",
-        ].filter(Boolean),
-        primaryLabel: "一键重试",
-        onPrimary: () => retryRun(recentFailedRun),
-        secondaryLabel: "看失败轨迹",
-        onSecondary: () => openExecutionRun(recentFailedRun.id),
-      });
-    }
-
-    railApprovalQueue.forEach(item => {
-      alerts.push({
-        id: `approval-${item.entityType}-${item.entityId}`,
-        severity: "warning",
-        title: `${item.title} 待审批`,
-        detail: item.summary,
-        meta: [item.subtitle, item.nextAction, item.requiresApproval ? "需人工审批" : ""].filter(Boolean),
-        primaryLabel: "批准",
-        onPrimary: () => approveRailItem(item),
-        secondaryLabel: "驳回",
-        onSecondary: () => rejectRailItem(item),
-      });
-    });
-
-    const desktopOperationAlert = scopedOperationLogs.find(log =>
-      log.eventType === "desktop" && (log.status === "failed" || log.status === "blocked"),
-    );
-    if (desktopOperationAlert) {
-      alerts.push({
-        id: `desktop-op-${desktopOperationAlert.id}`,
-        severity: desktopOperationAlert.status === "failed" ? "critical" : "warning",
-        title: desktopOperationAlert.title,
-        detail: desktopOperationAlert.detail,
-        meta: [
-          desktopOperationAlert.status === "blocked" ? "待人工恢复" : "桌面动作失败",
-          desktopOperationAlert.failureReason || "",
-        ].filter(Boolean),
-        primaryLabel: "打开桌面诊断",
-        onPrimary: () => openControlSection("desktop"),
-        secondaryLabel: desktopOperationAlert.executionRunId ? "查看对应执行" : "打开远程值守",
-        onSecondary: desktopOperationAlert.executionRunId
-          ? () => openExecutionRun(desktopOperationAlert.executionRunId!)
-          : () => openControlSection("remote"),
-      });
-    }
-
-    const publishFailureAlert = scopedOperationLogs.find(log =>
-      log.eventType === "publish" && log.status === "failed",
-    );
-    if (publishFailureAlert) {
-      alerts.push({
-        id: `publish-failure-${publishFailureAlert.id}`,
-        severity: "warning",
-        title: "内容发布失败需要处理",
-        detail: publishFailureAlert.detail,
-        meta: [
-          publishFailureAlert.title,
-          publishFailureAlert.failureReason || "",
-        ].filter(Boolean),
-        primaryLabel: "打开渠道面板",
-        onPrimary: () => openControlSection("channels"),
-        secondaryLabel: publishFailureAlert.executionRunId ? "查看对应执行" : "打开远程值守",
-        onSecondary: publishFailureAlert.executionRunId
-          ? () => openExecutionRun(publishFailureAlert.executionRunId!)
-          : () => openControlSection("remote"),
-      });
-    }
-
-    const blockedDispatchAlert = scopedOperationLogs.find(log =>
-      log.eventType === "dispatch" && log.status === "blocked",
-    );
-    if (blockedDispatchAlert) {
-      alerts.push({
-        id: `dispatch-blocked-${blockedDispatchAlert.id}`,
-        severity: "warning",
-        title: "业务派发被阻断",
-        detail: blockedDispatchAlert.detail,
-        meta: [
-          blockedDispatchAlert.title,
-          blockedDispatchAlert.failureReason || "",
-        ].filter(Boolean),
-        primaryLabel: "打开远程值守",
-        onPrimary: () => openControlSection("remote"),
-        secondaryLabel: blockedDispatchAlert.executionRunId ? "查看对应执行" : "回聊天接管",
-        onSecondary: blockedDispatchAlert.executionRunId
-          ? () => openExecutionRun(blockedDispatchAlert.executionRunId!)
-          : () => handoffToChat(activeSessionId),
-      });
-    }
-
-    return alerts.slice(0, 6);
-  }, [
-    activeSessionId,
-    canTakeOver,
-    continueAfterTakeover,
-    desktopInputSession.cursor,
-    desktopInputSession.lastAction,
-    desktopInputSession.message,
-    desktopInputSession.sessionId,
-    desktopInputSession.target,
-    openControlSection,
-    railApprovalQueue,
-    recentFailedRun,
-    scopedOperationLogs,
-  ]);
-
-  const criticalAlertCount = operatorAlerts.filter(alert => alert.severity === "critical").length;
-
   return (
     <div className="desktop-workspace-shell__chat-layout">
       <section className="desktop-workspace-shell__chat-main">
         <TasksTab />
       </section>
-
-      <aside className="desktop-workspace-shell__chat-rail">
-        <section className="desktop-workspace-shell__rail-card">
-          <div className="desktop-workspace-shell__section-eyebrow">执行总览</div>
-          <div className="desktop-workspace-shell__rail-stats">
-            <article className="desktop-workspace-shell__summary-card">
-              <span>消息数</span>
-              <strong>{tasks.length}</strong>
-            </article>
-            <article className="desktop-workspace-shell__summary-card">
-              <span>运行中</span>
-              <strong>{runningExecutions}</strong>
-            </article>
-            <article className="desktop-workspace-shell__summary-card">
-              <span>工作流</span>
-              <strong>{workflowQueue.length}</strong>
-            </article>
-          </div>
-          <div className="desktop-workspace-shell__rail-copy">
-            当前项目: {activeSession ? getSessionProjectLabel(activeSession) : "General"}
-          </div>
-          <div className="desktop-workspace-shell__rail-actions">
-            <button type="button" className="desktop-workspace-shell__hero-action" onClick={() => openControlSection("execution")}>
-              打开执行中心
-            </button>
-            <button type="button" className="desktop-workspace-shell__hero-action" onClick={() => openControlSection("workflow")}>
-              打开工作流中心
-            </button>
-          </div>
-        </section>
-
-        <section className="desktop-workspace-shell__rail-card">
-          <div className="desktop-workspace-shell__section-eyebrow">审批与值守</div>
-          <div className="desktop-workspace-shell__rail-stats">
-            <article className="desktop-workspace-shell__summary-card">
-              <span>待审批</span>
-              <strong>{pendingApprovalCount}</strong>
-            </article>
-            <article className="desktop-workspace-shell__summary-card">
-              <span>值守</span>
-              <strong>{remoteSupervisorEnabled ? "已开启" : "已关闭"}</strong>
-            </article>
-            <article className="desktop-workspace-shell__summary-card">
-              <span>模式</span>
-              <strong>{automationPaused ? "已暂停" : automationMode === "manual" ? "人工" : automationMode === "supervised" ? "监督" : "自治"}</strong>
-            </article>
-          </div>
-          {desktopApprovalFeedback ? (
-            <div className="desktop-workspace-shell__rail-inline-panel">
-              <div className="desktop-workspace-shell__rail-inline-label">刚刚处理</div>
-              <div className="desktop-workspace-shell__rail-copy">{desktopApprovalFeedback}</div>
-            </div>
-          ) : null}
-          {railApprovalQueue.length > 0 ? (
-            <div className="desktop-workspace-shell__rail-stack">
-              {railApprovalQueue.map(item => (
-                <article key={`${item.entityType}-${item.entityId}`} className="desktop-workspace-shell__rail-list-item">
-                  <div className="desktop-workspace-shell__rail-run">
-                    <strong>{item.title}</strong>
-                    <div className="desktop-workspace-shell__rail-copy">{item.subtitle}</div>
-                    <div className="desktop-workspace-shell__rail-copy">{item.summary}</div>
-                  </div>
-                  <div className="desktop-workspace-shell__rail-actions is-inline">
-                    <button type="button" className="desktop-workspace-shell__hero-action" onClick={() => approveRailItem(item)}>
-                      批准
-                    </button>
-                    <button type="button" className="desktop-workspace-shell__hero-action" onClick={() => rejectRailItem(item)}>
-                      驳回
-                    </button>
-                  </div>
-                </article>
-              ))}
-            </div>
-          ) : (
-            <div className="desktop-workspace-shell__rail-copy">
-              当前项目没有等待人工确认的业务对象，可以直接盯执行和桌面接管状态。
-            </div>
-          )}
-          {latestOperation ? (
-            <div className="desktop-workspace-shell__rail-inline-panel">
-              <div className="desktop-workspace-shell__rail-inline-label">最近审计动作</div>
-              <strong>{latestOperation.title}</strong>
-              <div className="desktop-workspace-shell__rail-copy">{latestOperation.detail}</div>
-              <div className="desktop-workspace-shell__rail-actions is-inline">
-                <button type="button" className="desktop-workspace-shell__hero-action" onClick={() => openControlSection("remote")}>
-                  打开远程值守
-                </button>
-                {latestOperation.executionRunId ? (
-                  <button type="button" className="desktop-workspace-shell__hero-action" onClick={() => openExecutionRun(latestOperation.executionRunId!)}>
-                    查看对应执行
-                  </button>
-                ) : null}
-              </div>
-            </div>
-          ) : null}
-        </section>
-
-        {operatorAlerts.length > 0 ? (
-          <section className="desktop-workspace-shell__rail-card is-warning">
-            <div className="desktop-workspace-shell__section-eyebrow">待处理告警</div>
-            <div className="desktop-workspace-shell__rail-run-meta">
-              <span>{operatorAlerts.length} 条待处理</span>
-              <span>{criticalAlertCount} 条高优先级</span>
-            </div>
-            <div className="desktop-workspace-shell__rail-stack">
-              {operatorAlerts.map(alert => (
-                <article key={alert.id} className="desktop-workspace-shell__rail-list-item">
-                  <div className="desktop-workspace-shell__rail-run">
-                    <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                      <strong>{alert.title}</strong>
-                      <span className={`control-center__scenario-badge is-${alert.severity === "critical" ? "blocked" : alert.severity === "warning" ? "partial" : "ready"}`}>
-                        {alert.severity === "critical" ? "高优先级" : alert.severity === "warning" ? "处理中" : "提醒"}
-                      </span>
-                    </div>
-                    <div className="desktop-workspace-shell__rail-copy">{alert.detail}</div>
-                    {alert.meta.length > 0 ? (
-                      <div className="desktop-workspace-shell__rail-run-meta">
-                        {alert.meta.map(item => (
-                          <span key={`${alert.id}-${item}`}>{item}</span>
-                        ))}
-                      </div>
-                    ) : null}
-                  </div>
-                  <div className="desktop-workspace-shell__rail-actions is-inline">
-                    <button type="button" className="desktop-workspace-shell__hero-action is-primary" onClick={alert.onPrimary}>
-                      {alert.primaryLabel}
-                    </button>
-                    {alert.secondaryLabel && alert.onSecondary ? (
-                      <button type="button" className="desktop-workspace-shell__hero-action" onClick={alert.onSecondary}>
-                        {alert.secondaryLabel}
-                      </button>
-                    ) : null}
-                  </div>
-                </article>
-              ))}
-            </div>
-          </section>
-        ) : null}
-
-        {activeRun ? (
-          <section className="desktop-workspace-shell__rail-card">
-            <div className="desktop-workspace-shell__section-eyebrow">当前执行</div>
-            <div className="desktop-workspace-shell__run-inspector">
-              <div className="desktop-workspace-shell__run-inspector-top">
-                <div className="desktop-workspace-shell__run-inspector-head">
-                  <strong>{activeRun.instruction}</strong>
-                  <div className="desktop-workspace-shell__rail-copy">
-                    {activeRun.currentAgentId
-                      ? `当前角色 ${AGENT_META[activeRun.currentAgentId].emoji} ${AGENT_META[activeRun.currentAgentId].name}`
-                      : "当前角色待分配"}
-                  </div>
-                </div>
-                <div className="desktop-workspace-shell__rail-run-meta">
-                  <span>{getMobileExecutionLabel(activeRun.status)}</span>
-                  <span>{timeAgo(activeRun.updatedAt)}</span>
-                  <span>{activeRun.events.length} 条轨迹</span>
-                </div>
-              </div>
-
-              <div className="desktop-workspace-shell__run-inspector-progress">
-                <div className="desktop-workspace-shell__run-inspector-progress-head">
-                  <span>任务进度</span>
-                  <strong>{activeRun.completedTasks}/{activeRun.totalTasks || 0}</strong>
-                </div>
-                <div className="desktop-workspace-shell__run-inspector-progress-bar">
-                  <div
-                    className="desktop-workspace-shell__run-inspector-progress-fill"
-                    style={{ width: `${getExecutionProgressPercent(activeRun)}%` }}
-                  />
-                </div>
-                <div className="desktop-workspace-shell__rail-run-meta">
-                  <span>{activeRun.failedTasks > 0 ? `${activeRun.failedTasks} 个失败` : "暂无失败"}</span>
-                  <span>{activeRun.verificationStatus ? `验证 ${getVerificationLabel(activeRun.verificationStatus)}` : "尚未验证"}</span>
-                </div>
-              </div>
-
-              {activeRunTimeline.length > 0 ? (
-                <div className="desktop-workspace-shell__run-inspector-timeline">
-                  {activeRunTimeline.map((event, index) => (
-                    <div key={event.id} className="desktop-workspace-shell__run-inspector-event">
-                      <div className="desktop-workspace-shell__run-inspector-marker">
-                        <span />
-                        {index < activeRunTimeline.length - 1 ? <i /> : null}
-                      </div>
-                      <div className="desktop-workspace-shell__run-inspector-event-body">
-                        <div className="desktop-workspace-shell__run-inspector-event-head">
-                          <strong>{event.title}</strong>
-                          <span>{timeAgo(event.timestamp)}</span>
-                        </div>
-                        {event.detail ? (
-                          <div className="desktop-workspace-shell__rail-copy">{event.detail}</div>
-                        ) : null}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : null}
-
-              {latestEvent ? (
-                <div className="desktop-workspace-shell__rail-inline-panel">
-                  <div className="desktop-workspace-shell__rail-inline-label">最新节点摘要</div>
-                  <strong>{latestEvent.title}</strong>
-                  {latestEvent.detail ? (
-                    <div className="desktop-workspace-shell__rail-copy">{latestEvent.detail}</div>
-                  ) : null}
-                </div>
-              ) : null}
-            </div>
-            <div className="desktop-workspace-shell__rail-actions is-inline">
-              <button type="button" className="desktop-workspace-shell__hero-action is-primary" onClick={() => openExecutionRun(activeRun.id)}>
-                查看轨迹
-              </button>
-              <button type="button" className="desktop-workspace-shell__hero-action" onClick={() => void runExecutionVerification(activeRun.id)}>
-                重新验证
-              </button>
-              <button type="button" className="desktop-workspace-shell__hero-action" onClick={() => handoffToChat(activeRun.sessionId)}>
-                去聊天接管
-              </button>
-            </div>
-          </section>
-        ) : null}
-
-        {pendingWorkbenchQueue.length > 0 ? (
-          <section className="desktop-workspace-shell__rail-card">
-            <div className="desktop-workspace-shell__section-eyebrow">待处理队列</div>
-            <div className="desktop-workspace-shell__rail-stack">
-              {pendingWorkbenchQueue.map(item => (
-                <article key={`${item.kind}-${item.id}`} className="desktop-workspace-shell__rail-list-item">
-                  <div className="desktop-workspace-shell__rail-run">
-                    <strong>{item.title}</strong>
-                    <div className="desktop-workspace-shell__rail-run-meta">
-                      <span>{item.kind === "execution" ? "执行" : "工作流"}</span>
-                      {item.meta.map(label => (
-                        <span key={label}>{label}</span>
-                      ))}
-                      <span>{timeAgo(item.updatedAt)}</span>
-                    </div>
-                    {item.summary ? (
-                      <div className="desktop-workspace-shell__rail-copy">{item.summary}</div>
-                    ) : null}
-                  </div>
-                  <div className="desktop-workspace-shell__rail-actions is-inline">
-                    <button type="button" className="desktop-workspace-shell__hero-action" onClick={item.onPrimary}>
-                      {item.primaryLabel}
-                    </button>
-                    <button type="button" className="desktop-workspace-shell__hero-action" onClick={item.onSecondary}>
-                      {item.secondaryLabel}
-                    </button>
-                  </div>
-                </article>
-              ))}
-            </div>
-          </section>
-        ) : null}
-
-        {recentFailedRun ? (
-          <section className="desktop-workspace-shell__rail-card is-danger">
-            <div className="desktop-workspace-shell__section-eyebrow">失败恢复</div>
-            <div className="desktop-workspace-shell__rail-run">
-              <strong>最近一次失败执行需要处理</strong>
-              <div className="desktop-workspace-shell__rail-copy">
-                {recentFailedRun.instruction}
-              </div>
-            </div>
-            <div className="desktop-workspace-shell__rail-actions">
-              <button type="button" className="desktop-workspace-shell__hero-action" onClick={() => retryRun(recentFailedRun)}>
-                一键重试
-              </button>
-              <button type="button" className="desktop-workspace-shell__hero-action" onClick={() => openExecutionRun(recentFailedRun.id)}>
-                看失败轨迹
-              </button>
-              <button type="button" className="desktop-workspace-shell__hero-action" onClick={() => handoffToChat(recentFailedRun.sessionId)}>
-                回到聊天接管
-              </button>
-            </div>
-          </section>
-        ) : null}
-
-        {canTakeOver ? (
-          <section className="desktop-workspace-shell__rail-card is-warning">
-            <div className="desktop-workspace-shell__section-eyebrow">人工接管</div>
-            <div className="desktop-workspace-shell__rail-copy">
-              {desktopInputSession.message || "当前桌面交互需要你人工确认后再继续。"}
-            </div>
-            <div className="desktop-workspace-shell__rail-run-meta">
-              {desktopInputSession.lastAction ? <span>动作 {desktopInputSession.lastAction}</span> : null}
-              {desktopInputSession.target ? <span>目标 {desktopInputSession.target}</span> : null}
-              {desktopInputSession.cursor ? <span>坐标 {desktopInputSession.cursor.x},{desktopInputSession.cursor.y}</span> : null}
-              {desktopInputSession.lastIntent ? <span>意图已记录</span> : null}
-            </div>
-            {desktopInputSession.retrySuggestions && desktopInputSession.retrySuggestions.length > 0 ? (
-              <>
-                <div className="desktop-workspace-shell__rail-copy">
-                  偏移重试建议：
-                  {desktopInputSession.retrySuggestions.slice(0, 3).map(item => ` ${item.label}(${item.nextX},${item.nextY})`).join(" / ")}
-                </div>
-                <div className="desktop-workspace-shell__rail-actions is-inline">
-                  {desktopInputSession.retrySuggestions.slice(0, 3).map(item => (
-                    <button
-                      key={`${item.label}-${item.nextX}-${item.nextY}`}
-                      type="button"
-                      className="desktop-workspace-shell__hero-action"
-                      onClick={() => retryDesktopSuggestion(item.label, item.nextX, item.nextY)}
-                    >
-                      重试 {item.label}
-                    </button>
-                  ))}
-                </div>
-              </>
-            ) : null}
-            <div className="desktop-workspace-shell__rail-actions">
-              <button
-                type="button"
-                className="desktop-workspace-shell__hero-action is-primary"
-                onClick={() => handoffToChat(desktopInputSession.sessionId)}
-              >
-                回到聊天接管
-              </button>
-              <button
-                type="button"
-                className="desktop-workspace-shell__hero-action"
-                onClick={continueAfterTakeover}
-              >
-                验证完成继续
-              </button>
-              {desktopInputSession.executionRunId ? (
-                <button
-                  type="button"
-                  className="desktop-workspace-shell__hero-action"
-                  onClick={() => openExecutionRun(desktopInputSession.executionRunId!)}
-                >
-                  看当前执行
-                </button>
-              ) : null}
-              <button
-                type="button"
-                className="desktop-workspace-shell__hero-action"
-                onClick={clearDesktopInputSession}
-              >
-                清空接管
-              </button>
-            </div>
-          </section>
-        ) : null}
-
-        <section className="desktop-workspace-shell__rail-card">
-          <div className="desktop-workspace-shell__section-eyebrow">桌面诊断</div>
-          <div className="desktop-workspace-shell__rail-copy">
-            当下一个动作依赖本机程序、截图定位或人工验证时，从这里直接跳到对应控制面板，不再在聊天页里来回找入口。
-          </div>
-          <div className="desktop-workspace-shell__rail-actions is-inline">
-            <button type="button" className="desktop-workspace-shell__hero-action" onClick={() => openControlSection("desktop")}>
-              桌面程序中心
-            </button>
-            <button type="button" className="desktop-workspace-shell__hero-action" onClick={() => openControlSection("execution")}>
-              执行追踪
-            </button>
-            <button type="button" className="desktop-workspace-shell__hero-action" onClick={() => openControlSection("artifacts")}>
-              产物面板
-            </button>
-          </div>
-        </section>
-
-        <section className="desktop-workspace-shell__rail-card">
-          <div className="desktop-workspace-shell__section-eyebrow">推荐起手式</div>
-          <div className="desktop-workspace-shell__rail-prompts">
-            {chatStarters.map(prompt => (
-              <button
-                key={prompt}
-                type="button"
-                className="desktop-workspace-shell__rail-prompt"
-                onClick={() => {
-                  setCommandDraft(prompt);
-                  setTab("tasks");
-                }}
-              >
-                {prompt}
-              </button>
-            ))}
-          </div>
-        </section>
-
-        <section className="desktop-workspace-shell__rail-card">
-          <div className="desktop-workspace-shell__section-eyebrow">切换工作流</div>
-          <div className="desktop-workspace-shell__rail-actions">
-            <button type="button" className="desktop-workspace-shell__hero-action" onClick={() => setTab("workspace")}>
-              打开工作区
-            </button>
-            <button type="button" className="desktop-workspace-shell__hero-action" onClick={() => setTab("settings")}>
-              打开控制台
-            </button>
-          </div>
-        </section>
-      </aside>
     </div>
   );
 }
 
 function DashboardTab({ onOpenTab }: { onOpenTab: (tab: AppTab) => void }) {
-  const tasks = useStore(s => s.tasks);
   const agents = useStore(s => s.agents);
-  const workflowRuns = useStore(s => s.workflowRuns);
+  const activities = useStore(s => s.activities);
+  const locale = useStore(s => s.locale);
   const executionRuns = useStore(s => s.executionRuns);
+  const workflowRuns = useStore(s => s.workflowRuns);
+  const platformConfigs = useStore(s => s.platformConfigs);
+  const desktopRuntime = useStore(s => s.desktopRuntime);
   const workspacePinnedPreviews = useStore(s => s.workspacePinnedPreviews);
   const workspaceDeskNotes = useStore(s => s.workspaceDeskNotes);
   const workspaceProjectMemories = useStore(s => s.workspaceProjectMemories);
@@ -1648,16 +795,16 @@ function DashboardTab({ onOpenTab }: { onOpenTab: (tab: AppTab) => void }) {
   );
 
   const runningCount = Object.values(agents).filter(agent => agent.status === "running").length;
-  const completedCount = tasks.filter(task => task.status === "done" && !task.isUserMessage).length;
   const activeTemplate = activeTeamOperatingTemplateId
     ? getTeamOperatingTemplate(activeTeamOperatingTemplateId)
     : null;
   const activeSurface = activeTeamOperatingTemplateId
     ? TEAM_OPERATING_SURFACES[activeTeamOperatingTemplateId]
     : null;
-  const homePrompts = activeSurface?.homePrompts ?? HOME_PROMPTS;
+  const uiText = useMemo(() => getUiText(locale), [locale]);
+  const homePrompts = activeSurface?.homePrompts ?? getDefaultHomePrompts(locale);
   const businessFocusCards = useMemo(
-    () => getDashboardBusinessFocus(activeTeamOperatingTemplateId, {
+    () => getDashboardBusinessFocus(locale, activeTeamOperatingTemplateId, {
       customers: scopedCustomers.length,
       leads: scopedLeads.length,
       tickets: scopedTickets.length,
@@ -1665,6 +812,7 @@ function DashboardTab({ onOpenTab }: { onOpenTab: (tab: AppTab) => void }) {
       channelSessions: scopedChannelSessions.length,
     }),
     [
+      locale,
       activeTeamOperatingTemplateId,
       scopedChannelSessions.length,
       scopedContentTasks.length,
@@ -1697,13 +845,70 @@ function DashboardTab({ onOpenTab }: { onOpenTab: (tab: AppTab) => void }) {
   const latestRun = scopedExecutionRuns[0] ?? null;
   const latestOperation = scopedOperationLogs[0] ?? null;
   const deskContextCount = workspacePinnedPreviews.length + scopedDeskNotes.length + scopedProjectMemories.length;
+  const totalAgentCount = Object.keys(agents).length;
+  const businessEntityCount =
+    scopedCustomers.length + scopedLeads.length + scopedTickets.length + scopedContentTasks.length + scopedChannelSessions.length;
+  const enabledPlatformEntries = useMemo(
+    () => PLATFORM_DEFINITIONS.filter(platform => platformConfigs[platform.id]?.enabled),
+    [platformConfigs],
+  );
+  const runningAgents = useMemo(
+    () =>
+      Object.values(agents)
+        .filter(agent => agent.status === "running")
+        .sort((left, right) => right.lastUpdated - left.lastUpdated),
+    [agents],
+  );
+  const agentSnapshots = useMemo(
+    () =>
+      Object.values(agents)
+        .map(agent => {
+          const latestAgentActivity = activities.find(activity => activity.agentId === agent.id);
+          return {
+            ...agent,
+            latestAgentActivity,
+            summary: agent.currentTask
+              || latestAgentActivity?.summary
+              || pickLocaleText(locale, {
+                "zh-CN": "当前没有挂载任务",
+                "zh-TW": "目前沒有掛載任務",
+                en: "No task is mounted right now",
+                ja: "現在は担当タスクがありません",
+              }),
+          };
+        })
+        .sort((left, right) => {
+          const leftRank = left.status === "running" ? 0 : left.status === "error" ? 1 : 2;
+          const rightRank = right.status === "running" ? 0 : right.status === "error" ? 1 : 2;
+          if (leftRank !== rightRank) return leftRank - rightRank;
+          return right.lastUpdated - left.lastUpdated;
+        }),
+    [activities, agents, locale],
+  );
+  const highlightedAgents = (runningAgents.length > 0 ? agentSnapshots.filter(agent => agent.status === "running") : agentSnapshots).slice(0, 4);
+  const workflowRunCount = workflowRuns.filter(run => run.status === "queued" || run.status === "staged" || run.status === "in-progress").length;
+  const latestRunAgentMeta = latestRun?.currentAgentId ? AGENT_META[latestRun.currentAgentId] : null;
+  const desktopRuntimeTone = getDesktopRuntimeTone(desktopRuntime);
+  const desktopRuntimeSummary = desktopRuntimeTone.tone === "ready"
+    ? pickLocaleText(locale, { "zh-CN": "桌面可用", "zh-TW": "桌面可用", en: "Desktop Ready", ja: "デスクトップ準備完了" })
+    : desktopRuntimeTone.tone === "partial"
+      ? pickLocaleText(locale, { "zh-CN": "桌面部分可用", "zh-TW": "桌面部分可用", en: "Desktop Partial", ja: "デスクトップ一部可用" })
+      : pickLocaleText(locale, { "zh-CN": "桌面离线", "zh-TW": "桌面離線", en: "Desktop Offline", ja: "デスクトップオフライン" });
   const supervisionModeLabel = automationPaused
-    ? "已暂停"
+    ? uiText.common.paused
     : automationMode === "manual"
-      ? "人工"
+      ? uiText.common.manual
       : automationMode === "supervised"
-        ? "监督"
-        : "自治";
+        ? uiText.common.supervised
+        : uiText.common.autonomous;
+  const homeActionCards = useMemo(
+    () =>
+      [
+        ...businessFocusCards.slice(0, 2),
+        ...(activeTemplate && activeSurface ? activeSurface.quickActions : []),
+      ].slice(0, 2),
+    [activeSurface, activeTemplate, businessFocusCards],
+  );
   const [homeRailFeedback, setHomeRailFeedback] = useState<string | null>(null);
 
   const approveDashboardItem = (item: BusinessAutomationQueueItem) => {
@@ -1721,18 +926,8 @@ function DashboardTab({ onOpenTab }: { onOpenTab: (tab: AppTab) => void }) {
       && item.decision.autoRunEligible;
 
     if (!canAutoDispatch) {
-      const blockedReason =
-        wsStatus !== "connected"
-          ? "远程通道还没连上"
-          : automationPaused
-            ? "自动化当前已暂停"
-            : automationMode === "manual"
-              ? "当前仍是人工模式"
-              : !remoteSupervisorEnabled
-                ? "远程值守当前关闭"
-                : "量化结果仍建议先观察";
-
-      setHomeRailFeedback(`已批准 ${item.title}，但这次没有自动派发，因为${blockedReason}。`);
+      const blockedReason = getDispatchBlockedReason(locale, wsStatus, automationPaused, automationMode, remoteSupervisorEnabled);
+      setHomeRailFeedback(formatApprovalFeedback(locale, "blocked", item.title, blockedReason));
       return;
     }
 
@@ -1752,18 +947,28 @@ function DashboardTab({ onOpenTab }: { onOpenTab: (tab: AppTab) => void }) {
       status: ok ? "sent" : "blocked",
       title: item.title,
       detail: ok
-        ? "人工在桌面首页监督侧轨批准后立即派发了该业务对象。"
-        : "人工在桌面首页监督侧轨批准了该业务对象，但发送链路未成功建立。",
+        ? pickLocaleText(locale, {
+            "zh-CN": "人工在桌面首页监督侧轨批准后立即派发了该业务对象。",
+            "zh-TW": "人工在桌面首頁監督側軌批准後立即派發了該業務對象。",
+            en: "The item was dispatched immediately after approval from the desktop home supervision rail.",
+            ja: "デスクトップホームの監督レールで承認後、すぐにこの業務対象が派信されました。",
+          })
+        : pickLocaleText(locale, {
+            "zh-CN": "人工在桌面首页监督侧轨批准了该业务对象，但发送链路未成功建立。",
+            "zh-TW": "人工在桌面首頁監督側軌批准了該業務對象，但發送鏈路未成功建立。",
+            en: "The item was approved from the desktop home supervision rail, but the dispatch link was not established.",
+            ja: "デスクトップホームの監督レールで承認されましたが、配信リンクの確立に失敗しました。",
+          }),
       executionRunId: ok ? executionRunId : undefined,
     });
 
     if (ok && executionRunId) {
       setActiveExecutionRun(executionRunId);
-      setHomeRailFeedback(`已批准 ${item.title}，并已直接送入执行链路。`);
+      setHomeRailFeedback(formatApprovalFeedback(locale, "sent", item.title));
       return;
     }
 
-    setHomeRailFeedback(`已批准 ${item.title}，但派发链路没有成功建立。`);
+    setHomeRailFeedback(formatApprovalFeedback(locale, "failed", item.title));
   };
 
   const rejectDashboardItem = (item: BusinessAutomationQueueItem) => {
@@ -1772,24 +977,44 @@ function DashboardTab({ onOpenTab }: { onOpenTab: (tab: AppTab) => void }) {
       entityId: item.entityId,
       status: "rejected",
     });
-    setHomeRailFeedback(`已驳回 ${item.title}，审计记录会保留这次处理。`);
+    setHomeRailFeedback(formatApprovalFeedback(locale, "rejected", item.title));
   };
 
   const retryLatestExecution = (run: NonNullable<typeof latestRun>) => {
     const { ok, executionRunId } = retryExecutionDispatch(run, {
       includeUserMessage: true,
       includeActiveProjectMemory: true,
-      taskDescription: `[重试执行] ${run.instruction}`,
-      lastRecoveryHint: "从首页监督轨重新发起失败执行。",
+      taskDescription: pickLocaleText(locale, {
+        "zh-CN": `[重试执行] ${run.instruction}`,
+        "zh-TW": `[重試執行] ${run.instruction}`,
+        en: `[Retry Run] ${run.instruction}`,
+        ja: `[実行を再試行] ${run.instruction}`,
+      }),
+      lastRecoveryHint: pickLocaleText(locale, {
+        "zh-CN": "从首页监督轨重新发起失败执行。",
+        "zh-TW": "從首頁監督軌重新發起失敗執行。",
+        en: "Retry the failed run again from the home supervision rail.",
+        ja: "ホーム監督レールから失敗した実行を再度開始します。",
+      }),
     });
 
     if (ok && executionRunId) {
       setActiveExecutionRun(executionRunId);
-      setHomeRailFeedback("已重新发起这条执行指令。");
+      setHomeRailFeedback(pickLocaleText(locale, {
+        "zh-CN": "已重新发起这条执行指令。",
+        "zh-TW": "已重新發起這條執行指令。",
+        en: "The execution instruction has been sent again.",
+        ja: "実行指示を再送しました。",
+      }));
       return;
     }
 
-    setHomeRailFeedback("重试已发起，但发送链路没有成功建立。");
+    setHomeRailFeedback(pickLocaleText(locale, {
+      "zh-CN": "重试已发起，但发送链路没有成功建立。",
+      "zh-TW": "重試已發起，但發送鏈路沒有成功建立。",
+      en: "Retry was requested, but the dispatch link was not established.",
+      ja: "再試行を要求しましたが、配信リンクの確立に失敗しました。",
+    }));
   };
 
   return (
@@ -1797,55 +1022,326 @@ function DashboardTab({ onOpenTab }: { onOpenTab: (tab: AppTab) => void }) {
       <div className="ios-home__workspace ios-home__desktop-layout">
         <div className="ios-home__main ios-home__desktop-main">
           <section className="ios-home__hero">
-            <div className="ios-home__eyebrow">A ChatGPT-like command center</div>
-            <h1 className="ios-home__title">今天想让小龙虾团队帮你完成什么？</h1>
-            <p className="ios-home__copy">
-              主界面只保留一个清晰的对话入口，其他工具和状态都收进侧栏。你可以像用 ChatGPT 一样先说目标，再从工作区、会议、控制台继续深挖。
-            </p>
-            <p className="ios-home__copy" style={{ marginTop: 6 }}>
-              当前项目: {activeSession ? getSessionProjectLabel(activeSession) : "General"}
-            </p>
-            {activeTemplate && activeSurface ? (
-              <div
-                style={{
-                  display: "flex",
-                  gap: 10,
-                  alignItems: "center",
-                  flexWrap: "wrap",
-                  marginTop: 14,
-                }}
-              >
-                <span
-                  style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    padding: "6px 12px",
-                    borderRadius: 999,
-                    border: "1px solid rgba(var(--accent-rgb), 0.24)",
-                    background: "rgba(var(--accent-rgb), 0.08)",
-                    color: "var(--accent)",
-                    fontSize: 12,
-                    fontWeight: 700,
-                  }}
-                >
-                  当前团队模式 · {activeTemplate.label}
-                </span>
-                <span style={{ color: "var(--text-muted)", fontSize: 12, lineHeight: 1.7 }}>
-                  {activeSurface.statusCopy}
-                </span>
+            <div className="ios-home__hero-heading">
+              <div className="ios-home__hero-title-group">
+                <div className="ios-home__eyebrow">{uiText.dashboard.eyebrow}</div>
+                <h1 className="ios-home__title">{uiText.dashboard.title}</h1>
+                <p className="ios-home__copy">
+                  {pickLocaleText(locale, {
+                    "zh-CN": "首页现在只保留值守中最关键的状态：谁在工作、当前主任务、连接是否健康。",
+                    "zh-TW": "首頁現在只保留值守中最關鍵的狀態：誰在工作、目前主任務、連接是否健康。",
+                    en: "Home now keeps only the critical watch data: who is working, the current priority task, and whether the stack is healthy.",
+                    ja: "ホームには監視で本当に重要な状態だけを残しました。誰が動いているか、最優先タスクは何か、接続が健全かです。",
+                  })}
+                </p>
               </div>
-            ) : null}
+              <div className="ios-home__hero-meta">
+                <span className="ios-home__hero-meta-pill">
+                  {uiText.common.currentProject}: {activeSession ? getSessionProjectLabel(activeSession) : uiText.common.generalProject}
+                </span>
+                <span className="ios-home__hero-meta-pill">
+                  {pickLocaleText(locale, {
+                    "zh-CN": `值守模式 ${supervisionModeLabel}`,
+                    "zh-TW": `值守模式 ${supervisionModeLabel}`,
+                    en: `Supervision ${supervisionModeLabel}`,
+                    ja: `監督 ${supervisionModeLabel}`,
+                  })}
+                </span>
+                {activeTemplate && activeSurface ? (
+                  <span className="ios-home__hero-meta-pill ios-home__hero-meta-pill--accent">
+                    {uiText.dashboard.teamModePrefix} · {activeTemplate.label}
+                  </span>
+                ) : null}
+              </div>
+            </div>
+
+            <div className="ios-home__status">
+              <StatusCard
+                label={pickLocaleText(locale, { "zh-CN": "在岗 Agent", "zh-TW": "在線 Agent", en: "Active Agents", ja: "稼働 Agent" })}
+                value={pickLocaleText(locale, {
+                  "zh-CN": `${runningCount}/${totalAgentCount}`,
+                  "zh-TW": `${runningCount}/${totalAgentCount}`,
+                  en: `${runningCount}/${totalAgentCount}`,
+                  ja: `${runningCount}/${totalAgentCount}`,
+                })}
+                hint={pickLocaleText(locale, {
+                  "zh-CN": runningCount > 0 ? `${runningCount} 个 agent 正在处理任务` : "当前没有 agent 在主动处理任务",
+                  "zh-TW": runningCount > 0 ? `${runningCount} 個 agent 正在處理任務` : "目前沒有 agent 在主動處理任務",
+                  en: runningCount > 0 ? `${runningCount} agents are actively processing work` : "No agent is actively processing work",
+                  ja: runningCount > 0 ? `${runningCount} 体の agent が作業中です` : "現在アクティブに作業中の agent はいません",
+                })}
+              />
+              <StatusCard
+                label={pickLocaleText(locale, { "zh-CN": "执行链路", "zh-TW": "執行鏈路", en: "Execution Flow", ja: "実行フロー" })}
+                value={pickLocaleText(locale, {
+                  "zh-CN": `${activeRunCount} 运行中`,
+                  "zh-TW": `${activeRunCount} 運行中`,
+                  en: `${activeRunCount} running`,
+                  ja: `${activeRunCount} 件実行中`,
+                })}
+                hint={latestRun
+                  ? pickLocaleText(locale, {
+                      "zh-CN": `最近一条：${latestRun.instruction}`,
+                      "zh-TW": `最近一條：${latestRun.instruction}`,
+                      en: `Latest: ${latestRun.instruction}`,
+                      ja: `最新: ${latestRun.instruction}`,
+                    })
+                  : pickLocaleText(locale, {
+                      "zh-CN": "当前项目还没有执行 run",
+                      "zh-TW": "目前專案還沒有執行 run",
+                      en: "There is no execution run in this project yet",
+                      ja: "このプロジェクトにはまだ実行 run がありません",
+                    })}
+              />
+              <StatusCard
+                label={pickLocaleText(locale, { "zh-CN": "审批与值守", "zh-TW": "審批與值守", en: "Approvals", ja: "承認と監督" })}
+                value={pickLocaleText(locale, {
+                  "zh-CN": `${pendingApprovalsCount} 待处理`,
+                  "zh-TW": `${pendingApprovalsCount} 待處理`,
+                  en: `${pendingApprovalsCount} pending`,
+                  ja: `${pendingApprovalsCount} 件待ち`,
+                })}
+                hint={pickLocaleText(locale, {
+                  "zh-CN": `当前模式 ${supervisionModeLabel}，远程值守 ${remoteSupervisorEnabled ? "开启" : "关闭"}`,
+                  "zh-TW": `目前模式 ${supervisionModeLabel}，遠程值守 ${remoteSupervisorEnabled ? "開啟" : "關閉"}`,
+                  en: `Mode ${supervisionModeLabel}, remote supervision ${remoteSupervisorEnabled ? "enabled" : "disabled"}`,
+                  ja: `モード ${supervisionModeLabel}、遠隔監督 ${remoteSupervisorEnabled ? "有効" : "無効"}`,
+                })}
+              />
+              <StatusCard
+                label={pickLocaleText(locale, { "zh-CN": "系统接入", "zh-TW": "系統接入", en: "System Access", ja: "接続状況" })}
+                value={pickLocaleText(locale, {
+                  "zh-CN": `${enabledPlatformEntries.length} 平台 / ${workflowRunCount} 工作流`,
+                  "zh-TW": `${enabledPlatformEntries.length} 平台 / ${workflowRunCount} 工作流`,
+                  en: `${enabledPlatformEntries.length} platforms / ${workflowRunCount} workflows`,
+                  ja: `${enabledPlatformEntries.length} プラットフォーム / ${workflowRunCount} ワークフロー`,
+                })}
+                hint={pickLocaleText(locale, {
+                  "zh-CN": `${formatWsStatusLabel(locale, wsStatus)} · ${desktopRuntimeSummary}`,
+                  "zh-TW": `${formatWsStatusLabel(locale, wsStatus)} · ${desktopRuntimeSummary}`,
+                  en: `${formatWsStatusLabel(locale, wsStatus)} · ${desktopRuntimeSummary}`,
+                  ja: `${formatWsStatusLabel(locale, wsStatus)} · ${desktopRuntimeSummary}`,
+                })}
+              />
+            </div>
+
+            <section className="ios-home__mission-card">
+              <div className="ios-home__mission-head">
+                <div>
+                  <div className="ios-home__eyebrow">{pickLocaleText(locale, {
+                    "zh-CN": "当前主任务",
+                    "zh-TW": "目前主任務",
+                    en: "Current Priority Run",
+                    ja: "現在の優先実行",
+                  })}</div>
+                  <div className="ios-home__mission-title">
+                    {latestRun?.instruction ?? pickLocaleText(locale, {
+                      "zh-CN": "当前还没有需要推进的执行任务",
+                      "zh-TW": "目前還沒有需要推進的執行任務",
+                      en: "There is no active priority execution yet",
+                      ja: "まだ進行中の優先実行はありません",
+                    })}
+                  </div>
+                </div>
+                <button type="button" className="btn-ghost" onClick={() => openControlCenterSection("execution")}>
+                  {pickLocaleText(locale, {
+                    "zh-CN": "打开执行中心",
+                    "zh-TW": "打開執行中心",
+                    en: "Open Execution",
+                    ja: "実行センターを開く",
+                  })}
+                </button>
+              </div>
+              <div className="ios-home__mission-meta">
+                <span>{pickLocaleText(locale, {
+                  "zh-CN": `链路 ${formatWsStatusLabel(locale, wsStatus)}`,
+                  "zh-TW": `鏈路 ${formatWsStatusLabel(locale, wsStatus)}`,
+                  en: `Link ${formatWsStatusLabel(locale, wsStatus)}`,
+                  ja: `経路 ${formatWsStatusLabel(locale, wsStatus)}`,
+                })}</span>
+                <span>{pickLocaleText(locale, {
+                  "zh-CN": `桌面 ${desktopRuntimeSummary}`,
+                  "zh-TW": `桌面 ${desktopRuntimeSummary}`,
+                  en: `Desktop ${desktopRuntimeSummary}`,
+                  ja: `デスクトップ ${desktopRuntimeSummary}`,
+                })}</span>
+                <span>{pickLocaleText(locale, {
+                  "zh-CN": `来源 ${latestRun?.source ?? "home"}`,
+                  "zh-TW": `來源 ${latestRun?.source ?? "home"}`,
+                  en: `Source ${latestRun?.source ?? "home"}`,
+                  ja: `ソース ${latestRun?.source ?? "home"}`,
+                })}</span>
+                <span>{latestRunAgentMeta ? `${latestRunAgentMeta.emoji} ${latestRunAgentMeta.name}` : pickLocaleText(locale, {
+                  "zh-CN": "待分配 Agent",
+                  "zh-TW": "待分配 Agent",
+                  en: "Awaiting agent",
+                  ja: "Agent 割当待ち",
+                })}</span>
+                <span>{latestRun ? `${pickLocaleText(locale, {
+                  "zh-CN": "更新",
+                  "zh-TW": "更新",
+                  en: "Updated",
+                  ja: "更新",
+                })} ${timeAgo(latestRun.updatedAt, locale)}` : pickLocaleText(locale, {
+                  "zh-CN": "等待首条执行",
+                  "zh-TW": "等待首條執行",
+                  en: "Waiting for the first run",
+                  ja: "最初の実行を待機中",
+                })}</span>
+              </div>
+              <div className="ios-home__mission-copy">
+                {latestOperation
+                  ? pickLocaleText(locale, {
+                      "zh-CN": `最近结果：${latestOperation.title}`,
+                      "zh-TW": `最近結果：${latestOperation.title}`,
+                      en: `Latest outcome: ${latestOperation.title}`,
+                      ja: `最新結果: ${latestOperation.title}`,
+                    })
+                  : activeSurface?.statusCopy ?? uiText.dashboard.copy}
+              </div>
+              <div className="ios-home__mission-actions">
+                <button type="button" className="btn-ghost" onClick={() => onOpenTab("tasks")}>
+                  {pickLocaleText(locale, {
+                    "zh-CN": "去聊天接管",
+                    "zh-TW": "去聊天接管",
+                    en: "Take Over in Chat",
+                    ja: "チャットで引き継ぐ",
+                  })}
+                </button>
+                {latestRun?.status === "failed" ? (
+                  <button type="button" className="btn-ghost" onClick={() => retryLatestExecution(latestRun)}>
+                    {pickLocaleText(locale, {
+                      "zh-CN": "失败后重试",
+                      "zh-TW": "失敗後重試",
+                      en: "Retry Failed Run",
+                      ja: "失敗実行を再試行",
+                    })}
+                  </button>
+                ) : null}
+              </div>
+              {homeRailFeedback ? <div className="ios-home__mission-feedback">{homeRailFeedback}</div> : null}
+            </section>
+
+            <div className="ios-home__overview-grid">
+              <section className="ios-home__overview-card">
+                <div className="ios-home__overview-head">
+                  <div>
+                    <div className="ios-home__eyebrow">{pickLocaleText(locale, { "zh-CN": "Agent 实时状态", "zh-TW": "Agent 即時狀態", en: "Live Agent Status", ja: "Agent の現在状況" })}</div>
+                    <div className="ios-home__overview-title">{pickLocaleText(locale, { "zh-CN": "谁在工作、正在做什么", "zh-TW": "誰在工作、正在做什麼", en: "Who is working and what they are doing", ja: "誰が何をしているか" })}</div>
+                  </div>
+                  <button type="button" className="btn-ghost" onClick={() => onOpenTab("settings")}>
+                    {pickLocaleText(locale, { "zh-CN": "看控制台", "zh-TW": "看控制台", en: "Open Control", ja: "コントロールを見る" })}
+                  </button>
+                </div>
+                <div className="ios-home__agent-list">
+                  {highlightedAgents.slice(0, 3).map(agent => (
+                    <article key={agent.id} className="ios-home__agent-row">
+                      <div className="ios-home__agent-meta">
+                        <div className="ios-home__agent-avatar">
+                          {AGENT_META[agent.id].emoji}
+                        </div>
+                        <div className="ios-home__agent-copy">
+                          <div className="ios-home__agent-name-row">
+                            <strong>{AGENT_META[agent.id].name}</strong>
+                            <span className={`ios-home__agent-badge is-${agent.status === "running" ? "running" : agent.status === "error" ? "error" : "idle"}`}>
+                              {getAgentStatusLabel(locale, agent.status)}
+                            </span>
+                          </div>
+                          <div className="ios-home__agent-task">{agent.summary}</div>
+                          <div className="ios-home__agent-hint">
+                            {agent.latestAgentActivity
+                              ? `${timeAgo(agent.latestAgentActivity.timestamp, locale)} · ${agent.latestAgentActivity.detail || agent.latestAgentActivity.summary}`
+                              : pickLocaleText(locale, {
+                                  "zh-CN": "当前没有新的活动记录",
+                                  "zh-TW": "目前沒有新的活動記錄",
+                                  en: "No recent activity yet",
+                                  ja: "直近のアクティビティはありません",
+                                })}
+                          </div>
+                        </div>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+                <div className="ios-home__overview-footer">
+                  <span>{pickLocaleText(locale, {
+                    "zh-CN": `总计 ${totalAgentCount} 个 agent，优先展示最近在工作的成员`,
+                    "zh-TW": `總計 ${totalAgentCount} 個 agent，優先顯示最近在工作的成員`,
+                    en: `${totalAgentCount} agents total, prioritizing the ones currently doing work`,
+                    ja: `合計 ${totalAgentCount} 体。現在動いている agent を優先表示しています`,
+                  })}</span>
+                  <button type="button" className="btn-ghost" onClick={() => onOpenTab("settings")}>
+                    {pickLocaleText(locale, {
+                      "zh-CN": "看控制台",
+                      "zh-TW": "看控制台",
+                      en: "Open Control",
+                      ja: "コントロールを見る",
+                    })}
+                  </button>
+                </div>
+              </section>
+
+              <section className="ios-home__overview-card">
+                <div className="ios-home__overview-head">
+                  <div>
+                    <div className="ios-home__eyebrow">{pickLocaleText(locale, { "zh-CN": "平台态势", "zh-TW": "平台態勢", en: "Platform Snapshot", ja: "プラットフォーム概況" })}</div>
+                    <div className="ios-home__overview-title">{pickLocaleText(locale, { "zh-CN": "整个软件现在处于什么状态", "zh-TW": "整個軟體現在處於什麼狀態", en: "What state the whole platform is in now", ja: "今このソフト全体がどういう状態か" })}</div>
+                  </div>
+                </div>
+                <div className="ios-home__overview-metrics">
+                  <div className="ios-home__overview-metric">
+                    <span>{pickLocaleText(locale, { "zh-CN": "消息链路", "zh-TW": "消息鏈路", en: "Message Link", ja: "メッセージ経路" })}</span>
+                    <strong>{formatWsStatusLabel(locale, wsStatus)}</strong>
+                  </div>
+                  <div className="ios-home__overview-metric">
+                    <span>{pickLocaleText(locale, { "zh-CN": "桌面能力", "zh-TW": "桌面能力", en: "Desktop", ja: "デスクトップ" })}</span>
+                    <strong>{desktopRuntimeSummary}</strong>
+                  </div>
+                  <div className="ios-home__overview-metric">
+                    <span>{pickLocaleText(locale, { "zh-CN": "工作区上下文", "zh-TW": "工作區上下文", en: "Desk Context", ja: "Desk コンテキスト" })}</span>
+                    <strong>{pickLocaleText(locale, {
+                      "zh-CN": `${deskContextCount} 项`,
+                      "zh-TW": `${deskContextCount} 項`,
+                      en: `${deskContextCount} assets`,
+                      ja: `${deskContextCount} 件`,
+                    })}</strong>
+                  </div>
+                  <div className="ios-home__overview-metric">
+                    <span>{pickLocaleText(locale, { "zh-CN": "业务对象", "zh-TW": "業務對象", en: "Business Objects", ja: "業務オブジェクト" })}</span>
+                    <strong>{pickLocaleText(locale, {
+                      "zh-CN": `${businessEntityCount} 项`,
+                      "zh-TW": `${businessEntityCount} 項`,
+                      en: `${businessEntityCount} items`,
+                      ja: `${businessEntityCount} 件`,
+                    })}</strong>
+                  </div>
+                </div>
+                <div className="ios-home__overview-summary">
+                  <div className="ios-home__overview-summary-item">
+                    <span>{pickLocaleText(locale, { "zh-CN": "最新处理结果", "zh-TW": "最新處理結果", en: "Latest Outcome", ja: "最新の処理結果" })}</span>
+                    <strong>{latestOperation?.title ?? pickLocaleText(locale, { "zh-CN": "还没有新的业务操作记录", "zh-TW": "還沒有新的業務操作記錄", en: "No recent business operation yet", ja: "直近の業務操作記録はありません" })}</strong>
+                  </div>
+                  <div className="ios-home__overview-platforms">
+                    {(enabledPlatformEntries.length > 0 ? enabledPlatformEntries : PLATFORM_DEFINITIONS.slice(0, 3)).slice(0, 4).map(platform => (
+                      <span key={platform.id} className={`ios-home__platform-pill ${platformConfigs[platform.id]?.enabled ? "is-enabled" : ""}`}>
+                        {platform.name}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              </section>
+            </div>
 
             <div className="ios-home__composer">
               <CommandInput
                 variant="panel"
-                title="像 ChatGPT 一样开始"
-                hint="直接提问、下发任务，或把工作区上下文塞进来。主页只负责开始，深入工作去左侧功能区。"
+                title={uiText.dashboard.startTitle}
+                hint={uiText.dashboard.startHint}
               />
             </div>
 
             <div className="ios-home__prompt-row">
-              {homePrompts.map(prompt => (
+              {homePrompts.slice(0, 2).map(prompt => (
                 <button
                   key={prompt}
                   type="button"
@@ -1865,15 +1361,20 @@ function DashboardTab({ onOpenTab }: { onOpenTab: (tab: AppTab) => void }) {
           <section className="ios-home__focus-section">
             <div className="ios-home__focus-head">
               <div>
-                <div className="ios-home__eyebrow">Continue Working</div>
+                <div className="ios-home__eyebrow">{uiText.dashboard.continueEyebrow}</div>
                 <div className="ios-home__copy" style={{ margin: 0 }}>
-                  首页只保留最值得继续推进的入口，其余状态交给右侧监督侧轨。
+                  {pickLocaleText(locale, {
+                    "zh-CN": "只保留两个最值得立刻进入的入口，避免首页再次堆满内容。",
+                    "zh-TW": "只保留兩個最值得立刻進入的入口，避免首頁再次堆滿內容。",
+                    en: "Only keep the next two most useful entries here so the home surface stays readable.",
+                    ja: "ホームが再び情報で埋まらないよう、すぐ入るべき入口だけを二つ残します。",
+                  })}
                 </div>
               </div>
             </div>
 
             <div className="ios-home__grid ios-home__grid--compact">
-              {businessFocusCards.slice(0, 2).map(card => (
+              {homeActionCards.map(card => (
                 <ActionCard
                   key={card.id}
                   eyebrow={card.eyebrow}
@@ -1889,72 +1390,13 @@ function DashboardTab({ onOpenTab }: { onOpenTab: (tab: AppTab) => void }) {
                   }}
                 />
               ))}
-              {activeTemplate && activeSurface
-                ? activeSurface.quickActions.slice(0, 2).map(action => (
-                  <ActionCard
-                    key={action.id}
-                    eyebrow={action.eyebrow}
-                    title={action.title}
-                    copy={action.copy}
-                    actionLabel={action.actionLabel}
-                    onClick={() => {
-                      if (action.tab === "settings" && action.controlCenterSectionId) {
-                        openControlCenterSection(action.controlCenterSectionId);
-                        return;
-                      }
-                      onOpenTab(action.tab);
-                    }}
-                  />
-                ))
-                : null}
-            </div>
-          </section>
-
-          <section className="ios-home__focus-section">
-            <div className="ios-home__focus-head">
-              <div>
-                <div className="ios-home__eyebrow">Core Surfaces</div>
-                <div className="ios-home__copy" style={{ margin: 0 }}>
-                  需要深入处理时，从这里切到具体工作面，不在首页堆更多仪表盘。
-                </div>
-              </div>
-            </div>
-
-            <div className="ios-home__grid ios-home__grid--compact">
-              <ActionCard
-                eyebrow="Chat"
-                title="进入对话页"
-                copy="把输入框固定到底部，中间专心看对话，就像 ChatGPT 主聊天页。"
-                actionLabel="打开聊天"
-                onClick={() => onOpenTab("tasks")}
-              />
-              <ActionCard
-                eyebrow="Desk"
-                title="打开工作区"
-                copy="文件预览、上下文包、Desk Notes 都还在，但不再抢占主聊天空间。"
-                actionLabel="进入工作区"
-                onClick={() => onOpenTab("workspace")}
-              />
-              <ActionCard
-                eyebrow="Meet"
-                title="发起团队会议"
-                copy="当任务需要多角色辩论时，直接切到会议页，不打断聊天页心智。"
-                actionLabel="打开会议"
-                onClick={() => onOpenTab("meeting")}
-              />
-              <ActionCard
-                eyebrow="Control"
-                title="配置与扩展"
-                copy="模型、插件、技能、工作流模板都放进控制台，侧边统一收纳。"
-                actionLabel="打开控制台"
-                onClick={() => onOpenTab("settings")}
-              />
             </div>
           </section>
         </div>
 
         <aside className="ios-home__rail ios-home__desktop-rail">
           <DashboardSupervisionRail
+            locale={locale}
             approvalCount={pendingApprovalsCount}
             activeRunCount={activeRunCount}
             latestRun={latestRun}
@@ -1978,19 +1420,16 @@ function DashboardTab({ onOpenTab }: { onOpenTab: (tab: AppTab) => void }) {
                 && item.decision.autoRunEligible;
 
               if (!canAutoDispatch) {
-                const blockedReason =
-                  wsStatus !== "connected"
-                    ? "远程通道还没连上"
-                    : automationPaused
-                      ? "自动化当前已暂停"
-                      : automationMode === "manual"
-                        ? "当前仍是人工模式"
-                        : !remoteSupervisorEnabled
-                          ? "远程值守当前关闭"
-                          : "量化结果仍建议先观察";
+                const blockedReason = getDispatchBlockedReason(
+                  locale,
+                  wsStatus,
+                  automationPaused,
+                  automationMode,
+                  remoteSupervisorEnabled,
+                );
 
                 return {
-                  message: `已批准 ${item.title}，但这次没有自动派发，因为${blockedReason}。`,
+                  message: formatApprovalFeedback(locale, "blocked", item.title, blockedReason),
                 };
               }
 
@@ -2010,21 +1449,31 @@ function DashboardTab({ onOpenTab }: { onOpenTab: (tab: AppTab) => void }) {
                 status: ok ? "sent" : "blocked",
                 title: item.title,
                 detail: ok
-                  ? "人工在移动监督面板批准后立即派发了该业务对象。"
-                  : "人工在移动监督面板批准了该业务对象，但发送链路未成功建立。",
+                  ? pickLocaleText(locale, {
+                      "zh-CN": "人工在移动监督面板批准后立即派发了该业务对象。",
+                      "zh-TW": "人工在移動監督面板批准後立即派發了該業務對象。",
+                      en: "The item was approved in the mobile supervision panel and dispatched immediately.",
+                      ja: "モバイル監督パネルで承認され、ただちに派信されました。",
+                    })
+                  : pickLocaleText(locale, {
+                      "zh-CN": "人工在移动监督面板批准了该业务对象，但发送链路未成功建立。",
+                      "zh-TW": "人工在移動監督面板批准了該業務對象，但發送鏈路未成功建立。",
+                      en: "The item was approved in the mobile supervision panel, but the dispatch link was not established.",
+                      ja: "モバイル監督パネルで承認されましたが、配信リンクの確立に失敗しました。",
+                    }),
                 executionRunId: ok ? executionRunId : undefined,
               });
 
               if (ok && executionRunId) {
                 setActiveExecutionRun(executionRunId);
                 return {
-                  message: `已批准 ${item.title}，并已直接送入执行链路。`,
+                  message: formatApprovalFeedback(locale, "sent", item.title),
                   executionRunId,
                 };
               }
 
               return {
-                message: `已批准 ${item.title}，但派发链路没有成功建立。`,
+                message: formatApprovalFeedback(locale, "failed", item.title),
               };
             }}
             onRejectItem={(item) => setBusinessApprovalDecision({
@@ -2041,34 +1490,43 @@ function DashboardTab({ onOpenTab }: { onOpenTab: (tab: AppTab) => void }) {
               const { ok, executionRunId } = retryExecutionDispatch(run, {
                 includeUserMessage: true,
                 includeActiveProjectMemory: true,
-                taskDescription: `[重试执行] ${run.instruction}`,
-                lastRecoveryHint: "从移动监督面板重新发起失败执行。",
+                taskDescription: pickLocaleText(locale, {
+                  "zh-CN": `[重试执行] ${run.instruction}`,
+                  "zh-TW": `[重試執行] ${run.instruction}`,
+                  en: `[Retry Run] ${run.instruction}`,
+                  ja: `[実行を再試行] ${run.instruction}`,
+                }),
+                lastRecoveryHint: pickLocaleText(locale, {
+                  "zh-CN": "从移动监督面板重新发起失败执行。",
+                  "zh-TW": "從移動監督面板重新發起失敗執行。",
+                  en: "Retry the failed run again from the mobile supervision panel.",
+                  ja: "モバイル監督パネルから失敗した実行を再試行します。",
+                }),
               });
 
               if (ok && executionRunId) {
                 setActiveExecutionRun(executionRunId);
                 return {
-                  message: "已重新发起这条执行指令。",
+                  message: pickLocaleText(locale, {
+                    "zh-CN": "已重新发起这条执行指令。",
+                    "zh-TW": "已重新發起這條執行指令。",
+                    en: "The execution instruction was sent again.",
+                    ja: "実行指示を再送しました。",
+                  }),
                   executionRunId,
                 };
               }
 
               return {
-                message: "重试已发起，但发送链路没有成功建立。",
+                message: pickLocaleText(locale, {
+                  "zh-CN": "重试已发起，但发送链路没有成功建立。",
+                  "zh-TW": "重試已發起，但發送鏈路沒有成功建立。",
+                  en: "Retry was requested, but the dispatch link was not established.",
+                  ja: "再試行は要求されましたが、配信リンクの確立に失敗しました。",
+                }),
               };
             }}
           />
-
-          <section className="ios-home__rail-panel">
-            <ProjectHubCard compact />
-            <div className="ios-home__rail-metrics">
-              <StatusCard label="运行中角色" value={String(runningCount)} hint="团队当前正在处理的任务数量" />
-              <StatusCard label="已完成回复" value={String(completedCount)} hint="本轮会话里已经产出的有效结果" />
-              <StatusCard label="工作流 Run" value={String(workflowRuns.length)} hint="可复用的编排入口与历史记录" />
-              <StatusCard label="Desk 上下文" value={`${workspacePinnedPreviews.length + scopedDeskNotes.length + scopedProjectMemories.length}`} hint="当前项目下的固定引用、异步笔记和项目记忆总量" />
-            </div>
-          </section>
-
         </aside>
       </div>
     </div>
@@ -2076,6 +1534,7 @@ function DashboardTab({ onOpenTab }: { onOpenTab: (tab: AppTab) => void }) {
 }
 
 function DashboardSupervisionRail({
+  locale,
   approvalCount,
   activeRunCount,
   latestRun,
@@ -2093,6 +1552,7 @@ function DashboardSupervisionRail({
   onOpenChat,
   onRetryExecution,
 }: {
+  locale: UiLocale;
   approvalCount: number;
   activeRunCount: number;
   latestRun: ReturnType<typeof useStore.getState>["executionRuns"][number] | null;
@@ -2119,51 +1579,77 @@ function DashboardSupervisionRail({
   const [retriedExecutionRunId, setRetriedExecutionRunId] = useState<string | null>(null);
   const latestRunEvents = latestRun ? [...latestRun.events].slice(-3).reverse() : [];
   const latestRunAgent = latestRun?.currentAgentId ? AGENT_META[latestRun.currentAgentId] : null;
-  const modeLabel = automationPaused
-    ? "已暂停"
-    : automationMode === "manual"
-      ? "人工"
-      : automationMode === "supervised"
-        ? "监督"
-        : "自治";
+  const modeLabel = formatAutomationModeLabel(locale, automationPaused, automationMode);
+  const approvalPreviewItems = approvalItems.slice(0, 2);
 
   return (
     <section className="ios-home__mobile-supervision">
       <div className="ios-home__mobile-supervision-head">
         <div>
-          <div className="ios-home__eyebrow">Mobile Supervision</div>
-          <div className="ios-home__action-title">手机值守面板</div>
+          <div className="ios-home__eyebrow">{pickLocaleText(locale, {
+            "zh-CN": "Mobile Supervision",
+            "zh-TW": "Mobile Supervision",
+            en: "Mobile Supervision",
+            ja: "Mobile Supervision",
+          })}</div>
+          <div className="ios-home__action-title">{pickLocaleText(locale, {
+            "zh-CN": "值守总览",
+            "zh-TW": "值守總覽",
+            en: "Supervision Overview",
+            ja: "監督オーバービュー",
+          })}</div>
         </div>
         <span className={`control-center__scenario-badge is-${automationPaused ? "blocked" : "ready"}`}>
           {modeLabel}
         </span>
       </div>
 
-      <div className="ios-home__mobile-supervision-grid">
-        <article className="ios-home__mobile-supervision-card">
-          <div className="ios-home__mobile-supervision-label">待审批</div>
-          <div className="ios-home__mobile-supervision-value">{approvalCount}</div>
-          <div className="ios-home__mobile-supervision-note">适合手机端先看有没有需要人工拍板的对象。</div>
-        </article>
-        <article className="ios-home__mobile-supervision-card">
-          <div className="ios-home__mobile-supervision-label">运行中</div>
-          <div className="ios-home__mobile-supervision-value">{activeRunCount}</div>
-          <div className="ios-home__mobile-supervision-note">可以直接跳去执行中心看最新轨迹。</div>
-        </article>
-      </div>
-
       <div className="ios-home__mobile-supervision-stack">
         <article className="ios-home__mobile-supervision-card">
-          <div className="ios-home__mobile-supervision-label">自动化状态</div>
+          <div className="ios-home__mobile-supervision-label">{pickLocaleText(locale, {
+            "zh-CN": "自动化状态",
+            "zh-TW": "自動化狀態",
+            en: "Automation Status",
+            ja: "自動化ステータス",
+          })}</div>
           <div className="ios-home__mobile-supervision-note">
-            当前为 <strong>{modeLabel}</strong>，远程值守 {remoteSupervisorEnabled ? "开启" : "关闭"}。
+            {pickLocaleText(locale, {
+              "zh-CN": "这里保留值守开关、审批压力和失败恢复入口。",
+              "zh-TW": "這裡保留值守開關、審批壓力與失敗恢復入口。",
+              en: "This rail keeps the supervision switches, approval pressure, and failure recovery paths together.",
+              ja: "このレールには監督スイッチ、承認負荷、失敗復旧の入口だけをまとめています。",
+            })}
+          </div>
+          <div className="ios-home__mobile-supervision-meta">
+            <span>{pickLocaleText(locale, {
+              "zh-CN": `待审批 ${approvalCount}`,
+              "zh-TW": `待審批 ${approvalCount}`,
+              en: `Pending ${approvalCount}`,
+              ja: `承認待ち ${approvalCount}`,
+            })}</span>
+            <span>{pickLocaleText(locale, {
+              "zh-CN": `运行中 ${activeRunCount}`,
+              "zh-TW": `運行中 ${activeRunCount}`,
+              en: `Running ${activeRunCount}`,
+              ja: `実行中 ${activeRunCount}`,
+            })}</span>
+            <span>{remoteSupervisorEnabled
+              ? pickLocaleText(locale, { "zh-CN": "远程值守已开", "zh-TW": "遠程值守已開", en: "Remote on", ja: "遠隔監督オン" })
+              : pickLocaleText(locale, { "zh-CN": "远程值守关闭", "zh-TW": "遠程值守關閉", en: "Remote off", ja: "遠隔監督オフ" })}</span>
           </div>
           <div className="ios-home__mobile-supervision-actions">
             <button type="button" className="btn-ghost" onClick={onToggleAutomationPaused}>
-              {automationPaused ? "恢复自动化" : "暂停自动化"}
+              {automationPaused
+                ? pickLocaleText(locale, { "zh-CN": "恢复自动化", "zh-TW": "恢復自動化", en: "Resume Automation", ja: "自動化を再開" })
+                : pickLocaleText(locale, { "zh-CN": "暂停自动化", "zh-TW": "暫停自動化", en: "Pause Automation", ja: "自動化を一時停止" })}
             </button>
             <button type="button" className="btn-ghost" onClick={onToggleRemoteSupervisor}>
-              {remoteSupervisorEnabled ? "关闭值守" : "开启值守"}
+              {remoteSupervisorEnabled
+                ? pickLocaleText(locale, { "zh-CN": "关闭值守", "zh-TW": "關閉值守", en: "Disable Supervision", ja: "監督をオフ" })
+                : pickLocaleText(locale, { "zh-CN": "开启值守", "zh-TW": "開啟值守", en: "Enable Supervision", ja: "監督をオン" })}
+            </button>
+            <button type="button" className="btn-ghost" onClick={onOpenRemoteOps}>
+              {pickLocaleText(locale, { "zh-CN": "打开值守中心", "zh-TW": "打開值守中心", en: "Open Remote Ops", ja: "遠隔運營を開く" })}
             </button>
           </div>
         </article>
@@ -2171,9 +1657,26 @@ function DashboardSupervisionRail({
         <article className="ios-home__mobile-supervision-card">
           <div className="ios-home__mobile-supervision-inline-head">
             <div>
-              <div className="ios-home__mobile-supervision-label">待审批队列</div>
+              <div className="ios-home__mobile-supervision-label">{pickLocaleText(locale, {
+                "zh-CN": "待审批队列",
+                "zh-TW": "待審批佇列",
+                en: "Approval Queue",
+                ja: "承認キュー",
+              })}</div>
               <div className="ios-home__mobile-supervision-note">
-                {approvalCount > 0 ? "首页可直接批准或驳回高风险对象。" : "当前没有等待人工确认的业务对象。"}
+                {approvalCount > 0
+                  ? pickLocaleText(locale, {
+                      "zh-CN": "优先展示最靠前的待审批对象，避免先进入深层面板。",
+                      "zh-TW": "優先顯示最靠前的待審批對象，避免先進入深層面板。",
+                      en: "Show the first approval items here so you do not need a deeper panel first.",
+                      ja: "先頭の承認対象だけをここに表示し、最初から深いパネルへ入らずに済むようにします。",
+                    })
+                  : pickLocaleText(locale, {
+                      "zh-CN": "当前没有等待人工确认的业务对象。",
+                      "zh-TW": "目前沒有等待人工確認的業務對象。",
+                      en: "No business items are waiting for manual review.",
+                      ja: "手動確認待ちの業務項目はありません。",
+                    })}
               </div>
             </div>
             <button
@@ -2181,7 +1684,16 @@ function DashboardSupervisionRail({
               className="btn-ghost"
               onClick={() => setApprovalExpanded(current => !current)}
             >
-              {approvalExpanded ? "收起" : approvalCount > 0 ? `展开 ${approvalCount}` : "查看"}
+              {approvalExpanded
+                ? pickLocaleText(locale, { "zh-CN": "收起", "zh-TW": "收起", en: "Collapse", ja: "折りたたむ" })
+                : approvalCount > 0
+                  ? pickLocaleText(locale, {
+                      "zh-CN": `查看全部 ${approvalCount}`,
+                      "zh-TW": `查看全部 ${approvalCount}`,
+                      en: `View All ${approvalCount}`,
+                      ja: `すべて表示 ${approvalCount}`,
+                    })
+                  : pickLocaleText(locale, { "zh-CN": "查看", "zh-TW": "查看", en: "View", ja: "表示" })}
             </button>
           </div>
           {approvalFeedback ? (
@@ -2190,10 +1702,46 @@ function DashboardSupervisionRail({
               {approvalExecutionRunId ? (
                 <div className="ios-home__mobile-supervision-actions" style={{ marginTop: 8 }}>
                   <button type="button" className="btn-ghost" onClick={onOpenExecution}>
-                    查看刚刚执行
+                    {pickLocaleText(locale, { "zh-CN": "查看刚刚执行", "zh-TW": "查看剛剛執行", en: "Open Latest Run", ja: "直近の実行を見る" })}
                   </button>
                 </div>
               ) : null}
+            </div>
+          ) : null}
+          {!approvalExpanded && approvalPreviewItems.length > 0 ? (
+            <div className="ios-home__mobile-supervision-approval-list">
+              {approvalPreviewItems.map(item => (
+                <article key={`${item.entityType}-${item.entityId}`} className="ios-home__mobile-supervision-approval-item">
+                  <div style={{ display: "grid", gap: 4 }}>
+                    <strong style={{ fontSize: 13 }}>{item.title}</strong>
+                    <div className="ios-home__mobile-supervision-note">{item.subtitle}</div>
+                  </div>
+                  <div className="ios-home__mobile-supervision-actions">
+                    <button
+                      type="button"
+                      className="btn-ghost"
+                      onClick={() => {
+                        const result = onApproveItem(item);
+                        setApprovalFeedback(result.message);
+                        setApprovalExecutionRunId(result.executionRunId ?? null);
+                      }}
+                    >
+                      {pickLocaleText(locale, { "zh-CN": "批准", "zh-TW": "批准", en: "Approve", ja: "承認" })}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-ghost"
+                      onClick={() => {
+                        onRejectItem(item);
+                        setApprovalFeedback(formatApprovalFeedback(locale, "rejected", item.title));
+                        setApprovalExecutionRunId(null);
+                      }}
+                    >
+                      {pickLocaleText(locale, { "zh-CN": "驳回", "zh-TW": "駁回", en: "Reject", ja: "却下" })}
+                    </button>
+                  </div>
+                </article>
+              ))}
             </div>
           ) : null}
           {approvalExpanded ? (
@@ -2215,24 +1763,29 @@ function DashboardSupervisionRail({
                         setApprovalExecutionRunId(result.executionRunId ?? null);
                       }}
                     >
-                      批准
+                      {pickLocaleText(locale, { "zh-CN": "批准", "zh-TW": "批准", en: "Approve", ja: "承認" })}
                     </button>
                     <button
                       type="button"
                       className="btn-ghost"
                       onClick={() => {
                         onRejectItem(item);
-                        setApprovalFeedback(`已驳回 ${item.title}，审计记录会保留这次处理。`);
+                        setApprovalFeedback(formatApprovalFeedback(locale, "rejected", item.title));
                         setApprovalExecutionRunId(null);
                       }}
                     >
-                      驳回
+                      {pickLocaleText(locale, { "zh-CN": "驳回", "zh-TW": "駁回", en: "Reject", ja: "却下" })}
                     </button>
                   </div>
                 </article>
               )) : (
                 <div className="ios-home__mobile-supervision-note">
-                  当前项目没有待审批对象，可以直接盯执行和远程值守状态。
+                  {pickLocaleText(locale, {
+                    "zh-CN": "当前项目没有待审批对象，可以直接盯执行和远程值守状态。",
+                    "zh-TW": "目前專案沒有待審批對象，可以直接盯執行和遠程值守狀態。",
+                    en: "No approval items are waiting in this project.",
+                    ja: "このプロジェクトで承認待ちの項目はありません。",
+                  })}
                 </div>
               )}
             </div>
@@ -2242,24 +1795,49 @@ function DashboardSupervisionRail({
         <article className="ios-home__mobile-supervision-card">
           <div className="ios-home__mobile-supervision-inline-head">
             <div>
-              <div className="ios-home__mobile-supervision-label">最近执行</div>
+              <div className="ios-home__mobile-supervision-label">{pickLocaleText(locale, {
+                "zh-CN": "最近执行",
+                "zh-TW": "最近執行",
+                en: "Latest Run",
+                ja: "最新の実行",
+              })}</div>
               <div className="ios-home__mobile-supervision-note">
-                {latestRun ? latestRun.instruction : "当前项目还没有执行 run。"}
+                {latestRun ? latestRun.instruction : pickLocaleText(locale, {
+                  "zh-CN": "当前项目还没有执行 run。",
+                  "zh-TW": "目前專案還沒有執行 run。",
+                  en: "There is no execution run in the current project yet.",
+                  ja: "現在のプロジェクトにはまだ実行 run がありません。",
+                })}
               </div>
             </div>
             {latestRun ? (
               <span className={`control-center__scenario-badge is-${getMobileExecutionTone(latestRun.status)}`}>
-                {getMobileExecutionLabel(latestRun.status)}
+                {getMobileExecutionLabel(locale, latestRun.status)}
               </span>
             ) : null}
           </div>
           {latestRun ? (
             <>
               <div className="ios-home__mobile-supervision-meta">
-                <span>来源 {latestRun.source}</span>
-                <span>{latestRunAgent ? `${latestRunAgent.emoji} ${latestRunAgent.name}` : "待分配"}</span>
-                <span>更新于 {timeAgo(latestRun.updatedAt)}</span>
+                <span>{pickLocaleText(locale, { "zh-CN": "来源", "zh-TW": "來源", en: "Source", ja: "ソース" })} {latestRun.source}</span>
+                <span>{latestRunAgent ? `${latestRunAgent.emoji} ${latestRunAgent.name}` : pickLocaleText(locale, {
+                  "zh-CN": "待分配",
+                  "zh-TW": "待分配",
+                  en: "Unassigned",
+                  ja: "未割当",
+                })}</span>
+                <span>{pickLocaleText(locale, { "zh-CN": "更新于", "zh-TW": "更新於", en: "Updated", ja: "更新" })} {timeAgo(latestRun.updatedAt, locale)}</span>
               </div>
+              {latestOperation ? (
+                <div className="ios-home__mobile-supervision-note">
+                  {pickLocaleText(locale, {
+                    "zh-CN": `最近结果：${latestOperation.title}`,
+                    "zh-TW": `最近結果：${latestOperation.title}`,
+                    en: `Latest outcome: ${latestOperation.title}`,
+                    ja: `最新結果: ${latestOperation.title}`,
+                  })}
+                </div>
+              ) : null}
               {latestRunEvents.length > 0 ? (
                 <div className="ios-home__mobile-supervision-event-list">
                   {latestRunEvents.map(event => (
@@ -2278,7 +1856,7 @@ function DashboardSupervisionRail({
                   {retriedExecutionRunId ? (
                     <div className="ios-home__mobile-supervision-actions" style={{ marginTop: 8 }}>
                       <button type="button" className="btn-ghost" onClick={onOpenExecution}>
-                        查看重试执行
+                        {pickLocaleText(locale, { "zh-CN": "查看重试执行", "zh-TW": "查看重試執行", en: "Open Retried Run", ja: "再試行した実行を見る" })}
                       </button>
                     </div>
                   ) : null}
@@ -2288,7 +1866,7 @@ function DashboardSupervisionRail({
           ) : null}
           <div className="ios-home__mobile-supervision-actions">
             <button type="button" className="btn-ghost" onClick={onOpenExecution}>
-              打开执行中心
+              {pickLocaleText(locale, { "zh-CN": "打开执行中心", "zh-TW": "打開執行中心", en: "Open Execution", ja: "実行センターを開く" })}
             </button>
             {latestRun?.status === "failed" ? (
               <button
@@ -2300,33 +1878,17 @@ function DashboardSupervisionRail({
                   setRetriedExecutionRunId(result.executionRunId ?? null);
                 }}
               >
-                一键重试
+                {pickLocaleText(locale, { "zh-CN": "一键重试", "zh-TW": "一鍵重試", en: "Retry", ja: "再試行" })}
               </button>
             ) : null}
             <button type="button" className="btn-ghost" onClick={onOpenChat}>
-              {latestRun?.status === "failed" ? "回到聊天接管" : "去聊天接管"}
+              {latestRun?.status === "failed"
+                ? pickLocaleText(locale, { "zh-CN": "回到聊天接管", "zh-TW": "回到聊天接管", en: "Back to Chat", ja: "チャットへ戻る" })
+                : pickLocaleText(locale, { "zh-CN": "去聊天接管", "zh-TW": "去聊天接管", en: "Take Over in Chat", ja: "チャットで引き継ぐ" })}
             </button>
           </div>
         </article>
 
-        <article className="ios-home__mobile-supervision-card">
-          <div className="ios-home__mobile-supervision-label">最近审计动作</div>
-          <div className="ios-home__mobile-supervision-note">
-            {latestOperation
-              ? `${latestOperation.title} · ${latestOperation.detail}`
-              : "当前项目还没有业务审计记录。"}
-          </div>
-          <div className="ios-home__mobile-supervision-actions">
-            <button type="button" className="btn-ghost" onClick={onOpenRemoteOps}>
-              打开远程值守
-            </button>
-            {latestOperation?.executionRunId ? (
-              <button type="button" className="btn-ghost" onClick={onOpenExecution}>
-                查看对应执行
-              </button>
-            ) : null}
-          </div>
-        </article>
       </div>
     </section>
   );
@@ -2334,35 +1896,42 @@ function DashboardSupervisionRail({
 
 function TasksTab() {
   const tasks = useStore(s => s.tasks);
+  const locale = useStore(s => s.locale);
   const setCommandDraft = useStore(s => s.setCommandDraft);
   const activeTeamOperatingTemplateId = useStore(s => s.activeTeamOperatingTemplateId);
   const activeSurface = activeTeamOperatingTemplateId
     ? TEAM_OPERATING_SURFACES[activeTeamOperatingTemplateId]
     : null;
-  const chatStarters = activeSurface?.chatStarters ?? CHAT_STARTERS;
+  const uiText = useMemo(() => getUiText(locale), [locale]);
+  const chatStarters = activeSurface?.chatStarters ?? getDefaultChatStarters(locale);
 
   return (
     <div className="ios-chat-page">
       <section className="ios-chat-page__surface">
         <div className="ios-chat-page__header">
           <div>
-            <div className="ios-chat-page__eyebrow">Conversation</div>
-            <div className="ios-chat-page__title">中轴对话区</div>
+            <div className="ios-chat-page__eyebrow">{uiText.tasks.eyebrow}</div>
+            <div className="ios-chat-page__title">{uiText.tasks.title}</div>
           </div>
           <div className="ios-chat-page__meta">
-            <span>{tasks.length} 条消息</span>
-            <span>Enter 发送</span>
-            <span>Shift + Enter 换行</span>
+            <span>
+              {pickLocaleText(locale, {
+                "zh-CN": `${tasks.length} 条消息`,
+                "zh-TW": `${tasks.length} 條消息`,
+                en: `${tasks.length} messages`,
+                ja: `${tasks.length} 件のメッセージ`,
+              })}
+            </span>
+            <span>{uiText.tasks.enterToSend}</span>
+            <span>{uiText.tasks.shiftEnter}</span>
           </div>
         </div>
 
         {tasks.length === 0 ? (
           <div className="ios-chat-page__empty">
-            <div className="ios-chat-page__empty-badge">New Chat</div>
-            <div className="ios-chat-page__empty-title">先用一句话告诉团队，你现在想推进什么。</div>
-            <div className="ios-chat-page__empty-copy">
-              这里保留和 ChatGPT 类似的中轴对话体验。你可以直接发目标，也可以先点一个起手式，再继续补充上下文。
-            </div>
+            <div className="ios-chat-page__empty-badge">{uiText.tasks.newChatBadge}</div>
+            <div className="ios-chat-page__empty-title">{uiText.tasks.emptyTitle}</div>
+            <div className="ios-chat-page__empty-copy">{uiText.tasks.emptyCopy}</div>
             <div className="ios-chat-page__empty-actions">
               {chatStarters.map(prompt => (
                 <button
@@ -2385,8 +1954,8 @@ function TasksTab() {
         <div className="ios-chat-page__composer">
           <CommandInput
             variant="dock"
-            title="给团队继续发消息"
-            hint="主对话区保持干净，中间只看消息流；所有辅助能力都放在左侧。"
+            showHeader={false}
+            showFooter={false}
           />
         </div>
       </section>
@@ -2395,37 +1964,99 @@ function TasksTab() {
 }
 
 function WorkspaceTab() {
+  const locale = useStore(s => s.locale);
   return (
-    <div className="ios-feature-page">
+    <div className="ios-feature-page ios-feature-page--workspace">
       <div className="ios-feature-page__header">
-        <div className="ios-feature-page__eyebrow">Workspace</div>
-        <div className="ios-feature-page__title">工作区与引用上下文</div>
+        <div className="ios-feature-page__eyebrow">{pickLocaleText(locale, {
+          "zh-CN": "工作区",
+          "zh-TW": "工作區",
+          en: "Workspace",
+          ja: "ワークスペース",
+        })}</div>
+        <div className="ios-feature-page__title">{pickLocaleText(locale, {
+          "zh-CN": "工作区与引用上下文",
+          "zh-TW": "工作區與引用上下文",
+          en: "Workspace and referenced context",
+          ja: "ワークスペースと参照コンテキスト",
+        })}</div>
       </div>
-      <WorkspaceDesk />
+      <div className="ios-feature-page__canvas">
+        <WorkspaceDesk />
+      </div>
     </div>
   );
 }
 
 function DispatchTab() {
+  const locale = useStore(s => s.locale);
   return (
-    <div className="ios-feature-page">
+    <div className="ios-feature-page ios-feature-page--dispatch">
       <div className="ios-feature-page__header">
-        <div className="ios-feature-page__eyebrow">Dispatch</div>
-        <div className="ios-feature-page__title">Hermes 规划与外部执行器分发</div>
+        <div className="ios-feature-page__eyebrow">{pickLocaleText(locale, {
+          "zh-CN": "调度",
+          "zh-TW": "調度",
+          en: "Dispatch",
+          ja: "ディスパッチ",
+        })}</div>
+        <div className="ios-feature-page__title">{pickLocaleText(locale, {
+          "zh-CN": "Hermes 规划与外部执行器分发",
+          "zh-TW": "Hermes 規劃與外部執行器分發",
+          en: "Hermes planning and external executor dispatch",
+          ja: "Hermes の計画と外部実行器への配信",
+        })}</div>
       </div>
-      <HermesDispatchCenter />
+      <div className="ios-feature-page__canvas">
+        <HermesDispatchCenter />
+      </div>
     </div>
   );
 }
 
 function SettingsTab() {
+  const locale = useStore(s => s.locale);
   return (
-    <div className="ios-feature-page">
+    <div className="ios-feature-page ios-feature-page--settings">
       <div className="ios-feature-page__header">
-        <div className="ios-feature-page__eyebrow">Control Center</div>
-        <div className="ios-feature-page__title">所有功能都在侧栏入口，深层配置留在这里</div>
+        <div className="ios-feature-page__eyebrow">{pickLocaleText(locale, {
+          "zh-CN": "控制台",
+          "zh-TW": "控制台",
+          en: "Control Center",
+          ja: "コントロールセンター",
+        })}</div>
+        <div className="ios-feature-page__title">{pickLocaleText(locale, {
+          "zh-CN": "人工接管与深层配置",
+          "zh-TW": "人工接管與深層配置",
+          en: "Manual takeover and deep controls",
+          ja: "手動引き継ぎと詳細設定",
+        })}</div>
       </div>
-      <ControlCenter />
+      <div className="ios-feature-page__canvas">
+        <ControlCenter />
+      </div>
+    </div>
+  );
+}
+
+function LanguageSwitcher() {
+  const locale = useStore(s => s.locale);
+  const setLocale = useStore(s => s.setLocale);
+
+  return (
+    <div className="locale-switcher" role="tablist" aria-label="Language Switcher">
+      {UI_LOCALE_OPTIONS.map(option => (
+        <button
+          key={option.id}
+          type="button"
+          role="tab"
+          aria-selected={locale === option.id}
+          title={option.fullLabel}
+          className={`locale-switcher__button ${locale === option.id ? "is-active" : ""}`}
+          onClick={() => setLocale(option.id)}
+        >
+          {option.shortLabel}
+        </button>
+      ))}
     </div>
   );
 }
@@ -2494,41 +2125,61 @@ function ActionCard({
   );
 }
 
+function getAgentStatusLabel(
+  locale: UiLocale,
+  status: ReturnType<typeof useStore.getState>["agents"][keyof ReturnType<typeof useStore.getState>["agents"]]["status"],
+) {
+  switch (status) {
+    case "running":
+      return pickLocaleText(locale, { "zh-CN": "工作中", "zh-TW": "工作中", en: "Running", ja: "稼働中" });
+    case "error":
+      return pickLocaleText(locale, { "zh-CN": "异常", "zh-TW": "異常", en: "Error", ja: "エラー" });
+    default:
+      return pickLocaleText(locale, { "zh-CN": "待命", "zh-TW": "待命", en: "Idle", ja: "待機" });
+  }
+}
+
 function getMobileExecutionTone(status: ReturnType<typeof useStore.getState>["executionRuns"][number]["status"]) {
   if (status === "completed") return "ready";
   if (status === "failed") return "blocked";
   return "partial";
 }
 
-function getMobileExecutionLabel(status: ReturnType<typeof useStore.getState>["executionRuns"][number]["status"]) {
+function getMobileExecutionLabel(
+  locale: UiLocale,
+  status: ReturnType<typeof useStore.getState>["executionRuns"][number]["status"],
+) {
   switch (status) {
     case "queued":
-      return "已排队";
+      return pickLocaleText(locale, { "zh-CN": "已排队", "zh-TW": "已排隊", en: "Queued", ja: "キュー済み" });
     case "analyzing":
-      return "分析中";
+      return pickLocaleText(locale, { "zh-CN": "分析中", "zh-TW": "分析中", en: "Analyzing", ja: "分析中" });
     case "running":
-      return "执行中";
+      return pickLocaleText(locale, { "zh-CN": "执行中", "zh-TW": "執行中", en: "Running", ja: "実行中" });
     case "completed":
-      return "已完成";
+      return pickLocaleText(locale, { "zh-CN": "已完成", "zh-TW": "已完成", en: "Completed", ja: "完了" });
     case "failed":
-      return "已失败";
+      return pickLocaleText(locale, { "zh-CN": "已失败", "zh-TW": "已失敗", en: "Failed", ja: "失敗" });
     default:
       return status;
   }
 }
 
-function getVerificationLabel(status: NonNullable<ReturnType<typeof useStore.getState>["executionRuns"][number]["verificationStatus"]>) {
+function getVerificationLabel(
+  locale: UiLocale,
+  status: NonNullable<ReturnType<typeof useStore.getState>["executionRuns"][number]["verificationStatus"]>,
+) {
   switch (status) {
     case "idle":
-      return "待验证";
+      return pickLocaleText(locale, { "zh-CN": "待验证", "zh-TW": "待驗證", en: "Pending", ja: "未検証" });
     case "running":
-      return "验证中";
+      return pickLocaleText(locale, { "zh-CN": "验证中", "zh-TW": "驗證中", en: "Running", ja: "検証中" });
     case "passed":
-      return "通过";
+      return pickLocaleText(locale, { "zh-CN": "通过", "zh-TW": "通過", en: "Passed", ja: "合格" });
     case "failed":
-      return "失败";
+      return pickLocaleText(locale, { "zh-CN": "失败", "zh-TW": "失敗", en: "Failed", ja: "失敗" });
     case "skipped":
-      return "跳过";
+      return pickLocaleText(locale, { "zh-CN": "跳过", "zh-TW": "跳過", en: "Skipped", ja: "スキップ" });
     default:
       return status;
   }
@@ -2549,24 +2200,113 @@ function getExecutionProgressPercent(run: ReturnType<typeof useStore.getState>["
   return Math.max(percent, 6);
 }
 
-function getWorkflowStatusLabel(status: ReturnType<typeof useStore.getState>["workflowRuns"][number]["status"]) {
+function getWorkflowStatusLabel(
+  locale: UiLocale,
+  status: ReturnType<typeof useStore.getState>["workflowRuns"][number]["status"],
+) {
   switch (status) {
     case "queued":
-      return "待排队";
+      return pickLocaleText(locale, { "zh-CN": "待排队", "zh-TW": "待排隊", en: "Queued", ja: "キュー待ち" });
     case "staged":
-      return "已暂存";
+      return pickLocaleText(locale, { "zh-CN": "已暂存", "zh-TW": "已暫存", en: "Staged", ja: "一時保存" });
     case "in-progress":
-      return "进行中";
+      return pickLocaleText(locale, { "zh-CN": "进行中", "zh-TW": "進行中", en: "In Progress", ja: "進行中" });
     case "completed":
-      return "已完成";
+      return pickLocaleText(locale, { "zh-CN": "已完成", "zh-TW": "已完成", en: "Completed", ja: "完了" });
     case "archived":
-      return "已归档";
+      return pickLocaleText(locale, { "zh-CN": "已归档", "zh-TW": "已歸檔", en: "Archived", ja: "アーカイブ済み" });
     default:
       return status;
   }
 }
 
+function getDispatchBlockedReason(
+  locale: UiLocale,
+  wsStatus: ReturnType<typeof useStore.getState>["wsStatus"],
+  automationPaused: boolean,
+  automationMode: ReturnType<typeof useStore.getState>["automationMode"],
+  remoteSupervisorEnabled: boolean,
+) {
+  if (wsStatus !== "connected") {
+    return pickLocaleText(locale, {
+      "zh-CN": "远程通道还没连上",
+      "zh-TW": "遠程通道還沒連上",
+      en: "the remote channel is not connected",
+      ja: "リモートチャネルが未接続です",
+    });
+  }
+  if (automationPaused) {
+    return pickLocaleText(locale, {
+      "zh-CN": "自动化当前已暂停",
+      "zh-TW": "自動化目前已暫停",
+      en: "automation is paused",
+      ja: "自動化が一時停止中です",
+    });
+  }
+  if (automationMode === "manual") {
+    return pickLocaleText(locale, {
+      "zh-CN": "当前仍是人工模式",
+      "zh-TW": "目前仍是人工模式",
+      en: "manual mode is still active",
+      ja: "手動モードのままです",
+    });
+  }
+  if (!remoteSupervisorEnabled) {
+    return pickLocaleText(locale, {
+      "zh-CN": "远程值守当前关闭",
+      "zh-TW": "遠程值守目前關閉",
+      en: "remote supervision is disabled",
+      ja: "遠隔監督が無効です",
+    });
+  }
+  return pickLocaleText(locale, {
+    "zh-CN": "量化结果仍建议先观察",
+    "zh-TW": "量化結果仍建議先觀察",
+    en: "the score still suggests observation first",
+    ja: "まだ観察優先の判断です",
+  });
+}
+
+function formatApprovalFeedback(
+  locale: UiLocale,
+  type: "blocked" | "sent" | "failed" | "rejected",
+  title: string,
+  blockedReason?: string,
+) {
+  switch (type) {
+    case "blocked":
+      return pickLocaleText(locale, {
+        "zh-CN": `已批准 ${title}，但这次没有自动派发，因为${blockedReason}。`,
+        "zh-TW": `已批准 ${title}，但這次沒有自動派發，因為${blockedReason}。`,
+        en: `${title} was approved, but it was not auto-dispatched because ${blockedReason}.`,
+        ja: `${title} は承認されましたが、${blockedReason} のため自動派信されませんでした。`,
+      });
+    case "sent":
+      return pickLocaleText(locale, {
+        "zh-CN": `已批准 ${title}，并已直接送入执行链路。`,
+        "zh-TW": `已批准 ${title}，並已直接送入執行鏈路。`,
+        en: `${title} was approved and sent directly into the execution flow.`,
+        ja: `${title} は承認され、そのまま実行フローへ送られました。`,
+      });
+    case "failed":
+      return pickLocaleText(locale, {
+        "zh-CN": `已批准 ${title}，但派发链路没有成功建立。`,
+        "zh-TW": `已批准 ${title}，但派發鏈路沒有成功建立。`,
+        en: `${title} was approved, but the dispatch link was not established.`,
+        ja: `${title} は承認されましたが、配信リンクの確立に失敗しました。`,
+      });
+    case "rejected":
+      return pickLocaleText(locale, {
+        "zh-CN": `已驳回 ${title}，审计记录会保留这次处理。`,
+        "zh-TW": `已駁回 ${title}，審計記錄會保留這次處理。`,
+        en: `${title} was rejected and the audit log will keep this action.`,
+        ja: `${title} は却下され、この操作は監査ログに記録されます。`,
+      });
+  }
+}
+
 function getDashboardBusinessFocus(
+  locale: UiLocale,
   activeTemplateId: ReturnType<typeof useStore.getState>["activeTeamOperatingTemplateId"],
   counts: {
     customers: number;
@@ -2589,18 +2329,38 @@ function getDashboardBusinessFocus(
       {
         id: "support-customers",
         eyebrow: "Customers",
-        title: `客户与会话 · ${counts.customers + counts.channelSessions}`,
-        copy: `当前项目下有 ${counts.customers} 个客户、${counts.channelSessions} 个渠道会话，适合先检查值守响应与接待质量。`,
-        actionLabel: "查看控制台",
+        title: pickLocaleText(locale, {
+          "zh-CN": `客户与会话 · ${counts.customers + counts.channelSessions}`,
+          "zh-TW": `客戶與會話 · ${counts.customers + counts.channelSessions}`,
+          en: `Customers & Chats · ${counts.customers + counts.channelSessions}`,
+          ja: `顧客と会話 · ${counts.customers + counts.channelSessions}`,
+        }),
+        copy: pickLocaleText(locale, {
+          "zh-CN": `当前项目下有 ${counts.customers} 个客户、${counts.channelSessions} 个渠道会话，适合先检查值守响应与接待质量。`,
+          "zh-TW": `目前專案下有 ${counts.customers} 個客戶、${counts.channelSessions} 個渠道會話，適合先檢查值守響應與接待品質。`,
+          en: `This project has ${counts.customers} customers and ${counts.channelSessions} channel sessions. Start by checking response quality.`,
+          ja: `このプロジェクトには顧客 ${counts.customers} 件、チャネル会話 ${counts.channelSessions} 件があります。まず応答品質を確認しましょう。`,
+        }),
+        actionLabel: pickLocaleText(locale, { "zh-CN": "查看控制台", "zh-TW": "查看控制台", en: "Open Control", ja: "コントロールを見る" }),
         tab: "settings" as const,
         controlCenterSectionId: "entities",
       },
       {
         id: "support-tickets",
         eyebrow: "Tickets",
-        title: `待跟进工单 · ${counts.tickets}`,
-        copy: `客服模式下先盯工单推进和售后处理，避免响应链路堆积。`,
-        actionLabel: "进入聊天",
+        title: pickLocaleText(locale, {
+          "zh-CN": `待跟进工单 · ${counts.tickets}`,
+          "zh-TW": `待跟進工單 · ${counts.tickets}`,
+          en: `Open Tickets · ${counts.tickets}`,
+          ja: `対応待ちチケット · ${counts.tickets}`,
+        }),
+        copy: pickLocaleText(locale, {
+          "zh-CN": "客服模式下先盯工单推进和售后处理，避免响应链路堆积。",
+          "zh-TW": "客服模式下先盯工單推進和售後處理，避免響應鏈路堆積。",
+          en: "In support mode, prioritize tickets and after-sales work to avoid response backlog.",
+          ja: "サポートモードでは、チケットとアフターサポートを優先して滞留を防ぎます。",
+        }),
+        actionLabel: pickLocaleText(locale, { "zh-CN": "进入聊天", "zh-TW": "進入聊天", en: "Open Chat", ja: "チャットへ" }),
         tab: "tasks" as const,
       },
     ];
@@ -2611,18 +2371,38 @@ function getDashboardBusinessFocus(
       {
         id: "content-tasks",
         eyebrow: "Content",
-        title: `内容任务 · ${counts.contentTasks}`,
-        copy: `当前项目下有 ${counts.contentTasks} 个内容任务，可优先推进脚本、视觉和发布节奏。`,
-        actionLabel: "查看控制台",
+        title: pickLocaleText(locale, {
+          "zh-CN": `内容任务 · ${counts.contentTasks}`,
+          "zh-TW": `內容任務 · ${counts.contentTasks}`,
+          en: `Content Tasks · ${counts.contentTasks}`,
+          ja: `コンテンツタスク · ${counts.contentTasks}`,
+        }),
+        copy: pickLocaleText(locale, {
+          "zh-CN": `当前项目下有 ${counts.contentTasks} 个内容任务，可优先推进脚本、视觉和发布节奏。`,
+          "zh-TW": `目前專案下有 ${counts.contentTasks} 個內容任務，可優先推進腳本、視覺和發布節奏。`,
+          en: `There are ${counts.contentTasks} content tasks in this project. Prioritize script, visuals, and publishing rhythm.`,
+          ja: `このプロジェクトには ${counts.contentTasks} 件のコンテンツタスクがあります。脚本、ビジュアル、配信リズムを優先しましょう。`,
+        }),
+        actionLabel: pickLocaleText(locale, { "zh-CN": "查看控制台", "zh-TW": "查看控制台", en: "Open Control", ja: "コントロールを見る" }),
         tab: "settings" as const,
         controlCenterSectionId: "entities",
       },
       {
         id: "content-leads",
         eyebrow: "Signals",
-        title: `选题线索 · ${counts.leads}`,
-        copy: `线索数量可以帮助判断哪些主题值得转成内容工单继续跟进。`,
-        actionLabel: "进入工作区",
+        title: pickLocaleText(locale, {
+          "zh-CN": `选题线索 · ${counts.leads}`,
+          "zh-TW": `選題線索 · ${counts.leads}`,
+          en: `Content Signals · ${counts.leads}`,
+          ja: `企画シグナル · ${counts.leads}`,
+        }),
+        copy: pickLocaleText(locale, {
+          "zh-CN": "线索数量可以帮助判断哪些主题值得转成内容工单继续跟进。",
+          "zh-TW": "線索數量可以幫助判斷哪些主題值得轉成內容工單繼續跟進。",
+          en: "Signal volume helps decide which topics are worth turning into content tasks.",
+          ja: "シグナル数は、どのテーマをコンテンツタスク化すべきか判断する助けになります。",
+        }),
+        actionLabel: pickLocaleText(locale, { "zh-CN": "进入工作区", "zh-TW": "進入工作區", en: "Open Desk", ja: "ワークスペースへ" }),
         tab: "workspace" as const,
       },
     ];
@@ -2632,24 +2412,45 @@ function getDashboardBusinessFocus(
     {
       id: "engineering-leads",
       eyebrow: "Pipeline",
-      title: `研发相关线索 · ${counts.leads}`,
-      copy: `当前项目有 ${counts.leads} 条业务线索，可以帮助判断最值得先实现或联调的能力。`,
-      actionLabel: "查看控制台",
+      title: pickLocaleText(locale, {
+        "zh-CN": `研发相关线索 · ${counts.leads}`,
+        "zh-TW": `研發相關線索 · ${counts.leads}`,
+        en: `Build Signals · ${counts.leads}`,
+        ja: `開発シグナル · ${counts.leads}`,
+      }),
+      copy: pickLocaleText(locale, {
+        "zh-CN": `当前项目有 ${counts.leads} 条业务线索，可以帮助判断最值得先实现或联调的能力。`,
+        "zh-TW": `目前專案有 ${counts.leads} 條業務線索，可以幫助判斷最值得先實現或聯調的能力。`,
+        en: `This project has ${counts.leads} business signals that can help prioritize what to build or integrate first.`,
+        ja: `このプロジェクトには ${counts.leads} 件の業務シグナルがあり、何を先に実装・連携すべきか判断できます。`,
+      }),
+      actionLabel: pickLocaleText(locale, { "zh-CN": "查看控制台", "zh-TW": "查看控制台", en: "Open Control", ja: "コントロールを見る" }),
       tab: "settings" as const,
       controlCenterSectionId: "entities",
     },
     {
       id: "engineering-tickets",
       eyebrow: "Execution",
-      title: `待收敛问题 · ${counts.tickets}`,
-      copy: `工单与会话数量能反映当前产品缺口，适合转成研发修复和流程优化动作。`,
-      actionLabel: "进入聊天",
+      title: pickLocaleText(locale, {
+        "zh-CN": `待收敛问题 · ${counts.tickets}`,
+        "zh-TW": `待收斂問題 · ${counts.tickets}`,
+        en: `Open Issues · ${counts.tickets}`,
+        ja: `収束待ち課題 · ${counts.tickets}`,
+      }),
+      copy: pickLocaleText(locale, {
+        "zh-CN": "工单与会话数量能反映当前产品缺口，适合转成研发修复和流程优化动作。",
+        "zh-TW": "工單與會話數量能反映目前產品缺口，適合轉成研發修復和流程優化動作。",
+        en: "Ticket and chat volume reflects product gaps and should be turned into fixes or flow improvements.",
+        ja: "チケットと会話の量は製品の不足を示し、修正やフロー改善へ転換すべきです。",
+      }),
+      actionLabel: pickLocaleText(locale, { "zh-CN": "进入聊天", "zh-TW": "進入聊天", en: "Open Chat", ja: "チャットへ" }),
       tab: "tasks" as const,
     },
   ];
 }
 
 function MeetingTab() {
+  const locale = useStore(s => s.locale);
   const [topic, setTopic] = useState("");
   const { wsStatus, meetingSpeeches, meetingActive, clearMeeting, setMeetingActive, setMeetingTopic } = useStore();
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -2670,32 +2471,42 @@ function MeetingTab() {
   };
 
   const agentInfo: Record<string, { name: string; emoji: string; color: string }> = {
-    orchestrator: { name: "虾总管", emoji: "🦞", color: "var(--accent)" },
-    explorer: { name: "探海龙虾", emoji: "🔎", color: "#38bdf8" },
-    writer: { name: "执笔龙虾", emoji: "✍️", color: "#34c759" },
-    designer: { name: "幻影龙虾", emoji: "🎨", color: "#ff5c8a" },
-    performer: { name: "戏精龙虾", emoji: "🎬", color: "#ff9f0a" },
-    greeter: { name: "迎客龙虾", emoji: "💬", color: "#00c7be" },
+    orchestrator: { name: pickLocaleText(locale, { "zh-CN": "虾总管", "zh-TW": "蝦總管", en: "Orchestrator Lobster", ja: "統括ロブスター" }), emoji: "🦞", color: "var(--accent)" },
+    explorer: { name: pickLocaleText(locale, { "zh-CN": "探海龙虾", "zh-TW": "探海龍蝦", en: "Explorer Lobster", ja: "探索ロブスター" }), emoji: "🔎", color: "#38bdf8" },
+    writer: { name: pickLocaleText(locale, { "zh-CN": "执笔龙虾", "zh-TW": "執筆龍蝦", en: "Writer Lobster", ja: "執筆ロブスター" }), emoji: "✍️", color: "#34c759" },
+    designer: { name: pickLocaleText(locale, { "zh-CN": "幻影龙虾", "zh-TW": "幻影龍蝦", en: "Designer Lobster", ja: "デザイナーロブスター" }), emoji: "🎨", color: "#ff5c8a" },
+    performer: { name: pickLocaleText(locale, { "zh-CN": "戏精龙虾", "zh-TW": "戲精龍蝦", en: "Performer Lobster", ja: "パフォーマーロブスター" }), emoji: "🎬", color: "#ff9f0a" },
+    greeter: { name: pickLocaleText(locale, { "zh-CN": "迎客龙虾", "zh-TW": "迎客龍蝦", en: "Greeter Lobster", ja: "接客ロブスター" }), emoji: "💬", color: "#00c7be" },
   };
 
   const roleLabel: Record<string, string> = {
-    open: "开场",
-    speak: "观点",
-    rebuttal: "辩论",
-    summary: "结论",
+    open: pickLocaleText(locale, { "zh-CN": "开场", "zh-TW": "開場", en: "Opening", ja: "導入" }),
+    speak: pickLocaleText(locale, { "zh-CN": "观点", "zh-TW": "觀點", en: "View", ja: "見解" }),
+    rebuttal: pickLocaleText(locale, { "zh-CN": "辩论", "zh-TW": "辯論", en: "Debate", ja: "議論" }),
+    summary: pickLocaleText(locale, { "zh-CN": "结论", "zh-TW": "結論", en: "Summary", ja: "結論" }),
   };
 
   return (
     <section className="meeting-shell ios-feature-page">
       <div className="ios-feature-page__header">
         <div className="ios-feature-page__eyebrow">Meeting</div>
-        <div className="ios-feature-page__title">需要多人观点时，切到会议模式集中讨论</div>
+        <div className="ios-feature-page__title">{pickLocaleText(locale, {
+          "zh-CN": "需要多人观点时，切到会议模式集中讨论",
+          "zh-TW": "需要多人觀點時，切到會議模式集中討論",
+          en: "Switch to meeting mode when you need multiple perspectives.",
+          ja: "複数の視点が必要なときは会議モードに切り替えます。",
+        })}</div>
       </div>
 
       <div className="meeting-shell__composer">
         <input
           className="input"
-          placeholder="输入会议议题，例如：下一版产品首页该怎么改？"
+          placeholder={pickLocaleText(locale, {
+            "zh-CN": "输入会议议题，例如：下一版产品首页该怎么改？",
+            "zh-TW": "輸入會議議題，例如：下一版產品首頁該怎麼改？",
+            en: "Enter a meeting topic, e.g. how should the next product homepage change?",
+            ja: "会議テーマを入力してください。例: 次の製品ホームページをどう改善するか？",
+          })}
           value={topic}
           onChange={event => setTopic(event.target.value)}
           onKeyDown={event => event.key === "Enter" && startMeeting()}
@@ -2707,13 +2518,20 @@ function MeetingTab() {
           onClick={startMeeting}
           disabled={meetingActive || !topic.trim() || wsStatus !== "connected"}
         >
-          {meetingActive ? "讨论中..." : "开始会议"}
+          {meetingActive
+            ? pickLocaleText(locale, { "zh-CN": "讨论中...", "zh-TW": "討論中...", en: "Discussing...", ja: "議論中..." })
+            : pickLocaleText(locale, { "zh-CN": "开始会议", "zh-TW": "開始會議", en: "Start Meeting", ja: "会議を開始" })}
         </button>
       </div>
 
       <div ref={scrollRef} className="meeting-shell__stream">
         {meetingSpeeches.length === 0 && !meetingActive && (
-          <div className="meeting-shell__empty">发起议题后，团队发言会实时出现在这里。</div>
+          <div className="meeting-shell__empty">{pickLocaleText(locale, {
+            "zh-CN": "发起议题后，团队发言会实时出现在这里。",
+            "zh-TW": "發起議題後，團隊發言會即時出現在這裡。",
+            en: "Team replies will appear here in real time after the topic starts.",
+            ja: "議題を開始すると、チームの発言がここにリアルタイムで表示されます。",
+          })}</div>
         )}
 
         {meetingSpeeches.map(speech => {
@@ -2758,7 +2576,12 @@ function MeetingTab() {
           );
         })}
 
-        {meetingActive && <div className="meeting-shell__loading">团队正在讨论中...</div>}
+        {meetingActive && <div className="meeting-shell__loading">{pickLocaleText(locale, {
+          "zh-CN": "团队正在讨论中...",
+          "zh-TW": "團隊正在討論中...",
+          en: "The team is discussing...",
+          ja: "チームが議論中です...",
+        })}</div>}
       </div>
     </section>
   );

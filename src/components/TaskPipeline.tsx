@@ -5,15 +5,16 @@ import { AGENT_META } from "@/store/types";
 import type { Task } from "@/store/types";
 import { timeAgo, formatChatDividerTime } from "@/lib/utils";
 import { CHAT_GAP_MS, CHAT_TIMELINE_MAX, CHAT_VIEWPORT_MAX } from "@/lib/chat-sessions";
+import { pickLocaleText } from "@/lib/ui-locale";
 
 // 每个 Agent 的主题色
 const AGENT_COLORS: Record<string, { bg: string; text: string; border: string }> = {
-  orchestrator: { bg: "transparent", text: "var(--text)", border: "transparent" },
-  explorer:     { bg: "transparent", text: "var(--text)", border: "transparent" },
-  writer:       { bg: "transparent", text: "var(--text)", border: "transparent" },
-  designer:     { bg: "transparent", text: "var(--text)", border: "transparent" },
-  performer:    { bg: "transparent", text: "var(--text)", border: "transparent" },
-  greeter:      { bg: "transparent", text: "var(--text)", border: "transparent" },
+  orchestrator: { bg: "rgba(255, 255, 255, 0.94)", text: "var(--text)", border: "rgba(148, 163, 184, 0.18)" },
+  explorer:     { bg: "rgba(255, 255, 255, 0.94)", text: "var(--text)", border: "rgba(148, 163, 184, 0.18)" },
+  writer:       { bg: "rgba(255, 255, 255, 0.94)", text: "var(--text)", border: "rgba(148, 163, 184, 0.18)" },
+  designer:     { bg: "rgba(255, 255, 255, 0.94)", text: "var(--text)", border: "rgba(148, 163, 184, 0.18)" },
+  performer:    { bg: "rgba(255, 255, 255, 0.94)", text: "var(--text)", border: "rgba(148, 163, 184, 0.18)" },
+  greeter:      { bg: "rgba(255, 255, 255, 0.94)", text: "var(--text)", border: "rgba(148, 163, 184, 0.18)" },
 };
 
 const DESK_NOTE_TONES = ["amber", "mint", "sky", "rose"] as const;
@@ -67,6 +68,7 @@ export function TaskPipeline({
   const highlightTaskId = useStore(s => s.highlightTaskId);
   const finishPendingScroll = useStore(s => s.finishPendingScroll);
   const clearHighlightTask = useStore(s => s.clearHighlightTask);
+  const locale = useStore(s => s.locale);
 
   const { timeline, scrollSig } = useMemo(() => {
     const sortedAsc = [...tasks].sort((a, b) => a.createdAt - b.createdAt).slice(-CHAT_TIMELINE_MAX);
@@ -113,7 +115,12 @@ export function TaskPipeline({
   if (tasks.length === 0) {
     return (
       <div className="task-pipeline__empty">
-        暂无对话，下发指令后这里会显示对话记录
+        {pickLocaleText(locale, {
+          "zh-CN": "暂无对话，下发指令后这里会显示对话记录",
+          "zh-TW": "暫無對話，下發指令後這裡會顯示對話記錄",
+          en: "No conversation yet. Messages will appear here after you send the first instruction.",
+          ja: "まだ会話はありません。最初の指示を送ると、ここに会話履歴が表示されます。",
+        })}
       </div>
     );
   }
@@ -126,7 +133,7 @@ export function TaskPipeline({
     >
       {timeline.map(item => {
         if (item.kind === "divider") {
-          return <TimeDivider key={`div-${item.at}`} at={item.at} />;
+          return <TimeDivider key={`div-${item.at}`} at={item.at} locale={locale} />;
         }
         return (
           <ChatBubble
@@ -140,10 +147,16 @@ export function TaskPipeline({
   );
 }
 
-function TimeDivider({ at }: { at: number }) {
+function TimeDivider({
+  at,
+  locale,
+}: {
+  at: number;
+  locale: ReturnType<typeof useStore.getState>["locale"];
+}) {
   return (
     <div className="task-pipeline__divider">
-      <span>{formatChatDividerTime(at)}</span>
+      <span>{formatChatDividerTime(at, locale)}</span>
     </div>
   );
 }
@@ -157,14 +170,15 @@ function ChatBubble({ task, highlight }: { task: Task; highlight: boolean }) {
   const workspaceDeskNotes = useStore(s => s.workspaceDeskNotes);
   const createWorkspaceDeskNote = useStore(s => s.createWorkspaceDeskNote);
   const saveWorkspaceProjectMemory = useStore(s => s.saveWorkspaceProjectMemory);
+  const locale = useStore(s => s.locale);
   const meta = AGENT_META[task.assignedTo];
   const colors = AGENT_COLORS[task.assignedTo];
   const isUser = task.isUserMessage === true;
 
   const userColors = {
-    bg: "#F0F4F9",
+    bg: "rgba(233, 243, 255, 0.96)",
     text: "#1F1F1F",
-    border: "transparent",
+    border: "rgba(147, 197, 253, 0.32)",
   };
 
   const bubbleColors = isUser ? userColors : colors;
@@ -181,7 +195,12 @@ function ChatBubble({ task, highlight }: { task: Task; highlight: boolean }) {
 
   const handleQuote = () => {
     if (!copyText?.trim()) return;
-    appendCommandDraft(`引用内容：\n${truncateForPrompt(copyText)}\n\n请基于这段继续。`);
+    appendCommandDraft(pickLocaleText(locale, {
+      "zh-CN": `引用内容：\n${truncateForPrompt(copyText)}\n\n请基于这段继续。`,
+      "zh-TW": `引用內容：\n${truncateForPrompt(copyText)}\n\n請基於這段繼續。`,
+      en: `Quoted content:\n${truncateForPrompt(copyText)}\n\nPlease continue based on this.`,
+      ja: `引用内容:\n${truncateForPrompt(copyText)}\n\nこの内容をもとに続けてください。`,
+    }));
   };
 
   const handleContinue = () => {
@@ -189,14 +208,19 @@ function ChatBubble({ task, highlight }: { task: Task; highlight: boolean }) {
     setCommandDraft(
       isUser
         ? truncateForPrompt(copyText)
-        : `基于这条内容继续展开并往下执行：\n${truncateForPrompt(copyText)}`,
+        : pickLocaleText(locale, {
+            "zh-CN": `基于这条内容继续展开并往下执行：\n${truncateForPrompt(copyText)}`,
+            "zh-TW": `基於這條內容繼續展開並往下執行：\n${truncateForPrompt(copyText)}`,
+            en: `Continue from this content and carry the task forward:\n${truncateForPrompt(copyText)}`,
+            ja: `この内容を起点に続けて展開し、そのまま実行を進めてください:\n${truncateForPrompt(copyText)}`,
+          }),
     );
   };
 
   const handleSaveToDesk = () => {
     if (!copyText?.trim()) return;
     const tone = DESK_NOTE_TONES[workspaceDeskNotes.length % DESK_NOTE_TONES.length] ?? "amber";
-    const stamp = new Intl.DateTimeFormat("zh-CN", {
+    const stamp = new Intl.DateTimeFormat(locale, {
       month: "2-digit",
       day: "2-digit",
       hour: "2-digit",
@@ -204,7 +228,9 @@ function ChatBubble({ task, highlight }: { task: Task; highlight: boolean }) {
     }).format(task.createdAt);
 
     createWorkspaceDeskNote({
-      title: `${isUser ? "用户消息" : meta.name} ${stamp}`,
+      title: `${isUser
+        ? pickLocaleText(locale, { "zh-CN": "用户消息", "zh-TW": "用戶消息", en: "User Message", ja: "ユーザーメッセージ" })
+        : meta.name} ${stamp}`,
       content: copyText.trim(),
       tone,
       linkedPreview: workspacePreview,
@@ -216,13 +242,15 @@ function ChatBubble({ task, highlight }: { task: Task; highlight: boolean }) {
     if (!copyText?.trim()) return;
 
     const store = useStore.getState();
-    const stamp = new Intl.DateTimeFormat("zh-CN", {
+    const stamp = new Intl.DateTimeFormat(locale, {
       month: "2-digit",
       day: "2-digit",
       hour: "2-digit",
       minute: "2-digit",
     }).format(task.createdAt);
-    const sourceLabel = `${isUser ? "用户消息" : meta.name} ${stamp}`;
+    const sourceLabel = `${isUser
+      ? pickLocaleText(locale, { "zh-CN": "用户消息", "zh-TW": "用戶消息", en: "User Message", ja: "ユーザーメッセージ" })
+      : meta.name} ${stamp}`;
     const snippet = buildWorkspaceSnippet(sourceLabel, copyText);
 
     store.setWorkspaceScratchpad(
@@ -235,20 +263,27 @@ function ChatBubble({ task, highlight }: { task: Task; highlight: boolean }) {
     if (!copyText?.trim()) return;
 
     const store = useStore.getState();
-    const stamp = new Intl.DateTimeFormat("zh-CN", {
+    const stamp = new Intl.DateTimeFormat(locale, {
       month: "2-digit",
       day: "2-digit",
       hour: "2-digit",
       minute: "2-digit",
     }).format(task.createdAt);
-    const label = `${isUser ? "用户消息" : meta.name} ${stamp}`;
+    const label = `${isUser
+      ? pickLocaleText(locale, { "zh-CN": "用户消息", "zh-TW": "用戶消息", en: "User Message", ja: "ユーザーメッセージ" })
+      : meta.name} ${stamp}`;
     const nextScratchpad = mergeWorkspaceScratchpad(
       store.workspaceScratchpad,
       buildWorkspaceSnippet(label, copyText),
     );
 
     store.setWorkspaceScratchpad(nextScratchpad);
-    useStore.getState().saveWorkspaceBundle(`${label} 上下文包`);
+    useStore.getState().saveWorkspaceBundle(`${label} ${pickLocaleText(locale, {
+      "zh-CN": "上下文包",
+      "zh-TW": "上下文包",
+      en: "Context Pack",
+      ja: "コンテキストパック",
+    })}`);
     setTab("workspace");
   };
 
@@ -256,20 +291,27 @@ function ChatBubble({ task, highlight }: { task: Task; highlight: boolean }) {
     if (!copyText?.trim()) return;
 
     const store = useStore.getState();
-    const stamp = new Intl.DateTimeFormat("zh-CN", {
+    const stamp = new Intl.DateTimeFormat(locale, {
       month: "2-digit",
       day: "2-digit",
       hour: "2-digit",
       minute: "2-digit",
     }).format(task.createdAt);
-    const label = `${isUser ? "用户消息" : meta.name} ${stamp}`;
+    const label = `${isUser
+      ? pickLocaleText(locale, { "zh-CN": "用户消息", "zh-TW": "用戶消息", en: "User Message", ja: "ユーザーメッセージ" })
+      : meta.name} ${stamp}`;
     const nextScratchpad = mergeWorkspaceScratchpad(
       store.workspaceScratchpad,
       buildWorkspaceSnippet(label, copyText),
     );
 
     store.setWorkspaceScratchpad(nextScratchpad);
-    saveWorkspaceProjectMemory(`${label} 项目记忆`);
+    saveWorkspaceProjectMemory(`${label} ${pickLocaleText(locale, {
+      "zh-CN": "项目记忆",
+      "zh-TW": "專案記憶",
+      en: "Project Memory",
+      ja: "プロジェクト記憶",
+    })}`);
     setTab("workspace");
   };
 
@@ -291,31 +333,37 @@ function ChatBubble({ task, highlight }: { task: Task; highlight: boolean }) {
     >
       <div className="chat-bubble__meta">
         {!isUser && <span className="chat-bubble__avatar">{meta.emoji}</span>}
-        <span className="chat-bubble__author">{isUser ? "你" : meta.name}</span>
-        <span className="chat-bubble__time">{timeAgo(task.createdAt)}</span>
+        <span className="chat-bubble__author">
+          {isUser ? pickLocaleText(locale, { "zh-CN": "你", "zh-TW": "你", en: "You", ja: "あなた" }) : meta.name}
+        </span>
+        <span className="chat-bubble__time">{timeAgo(task.createdAt, locale)}</span>
         {!isUser && task.status === "running" && <span className="chat-bubble__state">⏳</span>}
         {!isUser && task.status === "failed" && <span className="chat-bubble__state">❌</span>}
         <div className="chat-bubble__actions">
           <button type="button" className="chat-bubble__action" onClick={() => void handleCopy()}>
-            {copied ? "已复制" : "复制"}
+            {copied
+              ? pickLocaleText(locale, { "zh-CN": "已复制", "zh-TW": "已複製", en: "Copied", ja: "コピー済み" })
+              : pickLocaleText(locale, { "zh-CN": "复制", "zh-TW": "複製", en: "Copy", ja: "コピー" })}
           </button>
           <button type="button" className="chat-bubble__action" onClick={handleQuote}>
-            引用
+            {pickLocaleText(locale, { "zh-CN": "引用", "zh-TW": "引用", en: "Quote", ja: "引用" })}
           </button>
           <button type="button" className="chat-bubble__action" onClick={handleContinue}>
-            {isUser ? "重发" : "继续"}
+            {isUser
+              ? pickLocaleText(locale, { "zh-CN": "重发", "zh-TW": "重發", en: "Resend", ja: "再送信" })
+              : pickLocaleText(locale, { "zh-CN": "继续", "zh-TW": "繼續", en: "Continue", ja: "続ける" })}
           </button>
           <button type="button" className="chat-bubble__action" onClick={handleSaveToDesk}>
-            存 Desk
+            {pickLocaleText(locale, { "zh-CN": "存 Desk", "zh-TW": "存 Desk", en: "Save to Desk", ja: "Deskへ保存" })}
           </button>
           <button type="button" className="chat-bubble__action" onClick={handleSaveToScratchpad}>
-            存草稿
+            {pickLocaleText(locale, { "zh-CN": "存草稿", "zh-TW": "存草稿", en: "Save Draft", ja: "下書き保存" })}
           </button>
           <button type="button" className="chat-bubble__action" onClick={handleSaveToBundle}>
-            存上下文包
+            {pickLocaleText(locale, { "zh-CN": "存上下文包", "zh-TW": "存上下文包", en: "Save Context Pack", ja: "コンテキスト保存" })}
           </button>
           <button type="button" className="chat-bubble__action" onClick={handleSaveToProjectMemory}>
-            存记忆
+            {pickLocaleText(locale, { "zh-CN": "存记忆", "zh-TW": "存記憶", en: "Save Memory", ja: "記憶へ保存" })}
           </button>
         </div>
       </div>
@@ -337,7 +385,7 @@ function ChatBubble({ task, highlight }: { task: Task; highlight: boolean }) {
           <div className="chat-bubble__image-wrap">
             <img
               src={task.imageUrl}
-              alt="生成图片"
+              alt={pickLocaleText(locale, { "zh-CN": "生成图片", "zh-TW": "生成圖片", en: "Generated image", ja: "生成画像" })}
               className="chat-bubble__image"
               onError={e => {
                 (e.target as HTMLImageElement).style.display = "none";

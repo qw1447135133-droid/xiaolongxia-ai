@@ -29,6 +29,7 @@ import type {
   Task,
   ControlCenterSectionId,
   TeamOperatingTemplateId,
+  UiLocale,
 } from "./types";
 import { AGENT_META, PLATFORM_DEFINITIONS } from "./types";
 import {
@@ -190,6 +191,7 @@ interface SettingsSlice {
 
 interface UISlice {
   theme: "dark" | "coral" | "jade";
+  locale: UiLocale;
   leftOpen: boolean;
   rightOpen: boolean;
   activeTab: AppTab;
@@ -197,6 +199,7 @@ interface UISlice {
   focusedBusinessContentTaskId: string | null;
   focusedWorkflowRunId: string | null;
   setTheme: (t: UISlice["theme"]) => void;
+  setLocale: (locale: UiLocale) => void;
   toggleLeft: () => void;
   toggleRight: () => void;
   setTab: (t: AppTab) => void;
@@ -1824,6 +1827,7 @@ export const useStore = create<Store>()(
         })),
 
       theme: "dark",
+      locale: "zh-CN",
       leftOpen: true,
       rightOpen: true,
       activeTab: "dashboard",
@@ -1835,6 +1839,12 @@ export const useStore = create<Store>()(
           document.documentElement.setAttribute("data-theme", theme === "dark" ? "" : theme);
         }
         set({ theme });
+      },
+      setLocale: (locale) => {
+        if (typeof document !== "undefined") {
+          document.documentElement.lang = locale;
+        }
+        set({ locale });
       },
       toggleLeft: () => set(s => ({ leftOpen: !s.leftOpen })),
       toggleRight: () => set(s => ({ rightOpen: !s.rightOpen })),
@@ -2057,7 +2067,7 @@ export const useStore = create<Store>()(
         if (!contentTask) return null;
 
         const templateId = getContentTaskWorkflowTemplateId(contentTask.status);
-        const template = getWorkflowTemplateById(templateId, state.enabledPluginIds);
+        const template = getWorkflowTemplateById(templateId, state.enabledPluginIds, state.locale);
         if (!template) return null;
         const activeWorkflowRun = findActiveContentWorkflowRun(state.workflowRuns, contentTaskId, templateId);
         if (activeWorkflowRun) {
@@ -3667,6 +3677,7 @@ export const useStore = create<Store>()(
         desktopProgramSettings: s.desktopProgramSettings,
         hermesDispatchSettings: s.hermesDispatchSettings,
         theme: s.theme,
+        locale: s.locale,
         leftOpen: s.leftOpen,
         rightOpen: s.rightOpen,
         activeTab: s.activeTab,

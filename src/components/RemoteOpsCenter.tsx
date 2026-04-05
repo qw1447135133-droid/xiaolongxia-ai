@@ -12,13 +12,19 @@ import {
 } from "@/lib/business-operations";
 import { getScheduledTasks, type ScheduledTask } from "@/lib/scheduled-tasks";
 import {
+  getChannelSessionNextAction,
+  getChannelSessionRecentAction,
+  getChannelSessionStateLabel,
+  shouldSuggestDesktopTakeover,
+} from "@/lib/channel-session-presentation";
+import {
   filterByProjectScope,
   getRunProjectScopeKey,
   getSessionProjectLabel,
   getSessionProjectScope,
 } from "@/lib/project-context";
 import { getTeamOperatingTemplate, TEAM_OPERATING_SURFACES, type AutomationMode, type ControlCenterSectionId, PLATFORM_DEFINITIONS } from "@/store/types";
-import type { BusinessOperationRecord } from "@/types/business-entities";
+import type { BusinessChannelSession, BusinessOperationRecord } from "@/types/business-entities";
 import { LaunchReadinessPanel } from "./LaunchReadinessPanel";
 
 type AuditFocusRequest = {
@@ -96,6 +102,8 @@ export function RemoteOpsCenter() {
   const setActiveControlCenterSection = useStore(s => s.setActiveControlCenterSection);
   const focusBusinessContentTask = useStore(s => s.focusBusinessContentTask);
   const focusWorkflowRun = useStore(s => s.focusWorkflowRun);
+  const setActiveChatSession = useStore(s => s.setActiveChatSession);
+  const setCommandDraft = useStore(s => s.setCommandDraft);
   const wsStatus = useStore(s => s.wsStatus);
 
   const openControlCenterSection = (section: ControlCenterSectionId) => {
@@ -108,6 +116,19 @@ export function RemoteOpsCenter() {
       setActiveExecutionRun(runId);
     }
     openControlCenterSection("execution");
+  };
+
+  const handoffChannelSessionToChat = (session: BusinessChannelSession) => {
+    const linkedRun = session.lastExecutionRunId
+      ? executionRuns.find(run => run.id === session.lastExecutionRunId) ?? null
+      : null;
+    setActiveChatSession(activeSessionId);
+    setCommandDraft(
+      linkedRun
+        ? `继续接管这条渠道会话，并先处理失败或待人工节点：\n${linkedRun.instruction}`
+        : `继续接管这条渠道会话，并先回复用户当前问题：\n会话标题：${session.title}\n会话摘要：${session.summary}\n最近消息：${session.lastMessagePreview ?? "无"}`,
+    );
+    setTab("tasks");
   };
 
   const scrollAuditSectionIntoView = () => {
@@ -211,6 +232,18 @@ export function RemoteOpsCenter() {
   const scopedChannelSessions = useMemo(
     () => filterByProjectScope(businessChannelSessions, currentProjectScope),
     [businessChannelSessions, currentProjectScope],
+  );
+  const channelSessionWatchQueue = useMemo(
+    () =>
+      [...scopedChannelSessions]
+        .sort((left, right) => {
+          const leftPriority = left.lastDeliveryStatus === "failed" ? 3 : left.status === "waiting" ? 2 : left.requiresReply || (left.unreadCount ?? 0) > 0 ? 1 : 0;
+          const rightPriority = right.lastDeliveryStatus === "failed" ? 3 : right.status === "waiting" ? 2 : right.requiresReply || (right.unreadCount ?? 0) > 0 ? 1 : 0;
+          if (leftPriority !== rightPriority) return rightPriority - leftPriority;
+          return right.lastMessageAt - left.lastMessageAt;
+        })
+        .slice(0, 6),
+    [scopedChannelSessions],
   );
   const workflowRunMap = useMemo(
     () => Object.fromEntries(workflowRuns.map(run => [run.id, run])),
@@ -534,40 +567,55 @@ export function RemoteOpsCenter() {
 
   const scenarioCards = [
     buildScenarioCard({
-      title: "自动化客服",
-      description: "适合接 Webhook/机器人消息，自动分派给客服型数字员工并保留执行轨迹。",
+      title: "自动客服回复",
+      description: "渠道消息进入后自动建会话、自动生成回复，并把处理轨迹挂到执行与审计里。",
       checks: {
-        channels: connectedPlatforms.length > 0,
-        supervision: recentProjectRuns.length > 0,
+        channels: connectedPlatforms.length > 0 && scopedChannelSessions.length > 0,
+        supervision: recentProjectRuns.length > 0 && recentOperationLogs.length > 0,
         memory: scopedMemories.length > 0 || scopedDeskNotes.length > 0,
       },
-      missingMessage: enabledPlatforms.length === 0
-        ? "还没有开启任何远程渠道，手机端无法真正接入消息。"
-        : connectedPlatforms.length === 0
-          ? "渠道已配置入口，但连接状态还没有打通成稳定桥接。"
-          : "可以试运行，但仍缺用户鉴权、队列和 SLA 兜底。",
+      missingMessage: scopedChannelSessions.length === 0
+        ? "还没有真实或模拟入站会话，建议先从平台设置注入一条模拟入站。"
+        : "当前已经能演示自动接待主链，下一步重点是补更强的失败重试和离线补偿。",
+      playbook: [
+        "先在平台设置里发送测试消息或模拟入站。",
+        "回到渠道/远程值守页展示会话进入“待回复”。",
+        "查看对应执行与审计，讲清自动回复是如何被追踪的。",
+      ],
     }),
     buildScenarioCard({
-      title: "自动化销售",
-      description: "更像多步骤流程执行，需要预设工作流、定时触发、结果回传和上下文记忆。",
+      title: "低置信度转人工",
+      description: "当会话进入 waiting、待审批或上下文不足时，系统应停在人工边界，并保留回聊天继续的入口。",
       checks: {
-        channels: connectedPlatforms.length > 0,
-        supervision: workflowRuns.length > 0 || enabledScheduledTasks.length > 0,
-        memory: scopedMemories.length > 0,
-      },
-      missingMessage: workflowRuns.length === 0 && enabledScheduledTasks.length === 0
-        ? "现在还缺稳定的销售编排层，更多是手动派发，不是真正自动销售流水线。"
-        : "编排雏形已经有了，但缺 CRM 状态、客户分层、重试与回访闭环。",
-    }),
-    buildScenarioCard({
-      title: "自动推文 / 社媒分发",
-      description: "这类能力需要独立的社媒渠道适配器、内容审核、发布时间窗和平台回执。",
-      checks: {
-        channels: false,
-        supervision: enabledScheduledTasks.length > 0,
+        channels: scopedChannelSessions.some(session => session.status === "waiting" || session.requiresReply),
+        supervision: recentExecutionCards.some(item => item.run.recoveryState === "manual-required" || item.run.recoveryState === "blocked"),
         memory: true,
       },
-      missingMessage: "当前仓库里还没有 X/Twitter 等社媒通道，也没有发布结果回执链路，所以这块还不能算已具备。",
+      missingMessage: scopedChannelSessions.some(session => session.status === "waiting" || session.requiresReply)
+        ? "当前已经能演示转人工和回聊天接管，后面再把审批和SLA提醒做得更硬一些。"
+        : "当前缺少明显的待人工会话，建议用 demo 种子或模拟入站制造一条 waiting 场景。",
+      playbook: [
+        "打开值守队列，展示 waiting 会话与“下一步: 回聊天接管”。",
+        "点击回聊天接管，让草稿或恢复指令进入聊天输入框。",
+        "说明这一类消息默认停在人工边界，不会直接外发。",
+      ],
+    }),
+    buildScenarioCard({
+      title: "桌面端接管后续跑",
+      description: "回复失败或桌面验证节点出现时，切到桌面接管，再从原执行链路继续往下跑。",
+      checks: {
+        channels: scopedChannelSessions.some(session => shouldSuggestDesktopTakeover(session)),
+        supervision: recentProjectRuns.some(run => run.recoveryState === "manual-required" || run.recoveryState === "retryable"),
+        memory: true,
+      },
+      missingMessage: scopedChannelSessions.some(session => shouldSuggestDesktopTakeover(session))
+        ? "当前已能讲清楚桌面接管与续跑闭环，下一步主要是补更多客户端预设与动作证据链。"
+        : "当前没有明显的失败发送或桌面阻断案例，建议用 demo 种子里的失败会话来演示。",
+      playbook: [
+        "选中发送失败会话，展示“去桌面接管”和失败原因。",
+        "跳到桌面控制台或执行中心，说明人工验证后可继续执行。",
+        "再回到执行/审计页，讲清楚恢复链路没有丢上下文。",
+      ],
     }),
   ];
   const activeTemplate = activeTeamOperatingTemplateId
@@ -1178,6 +1226,111 @@ export function RemoteOpsCenter() {
           </div>
         </div>
       ) : null}
+
+      <div className="control-center__panel">
+        <div className="control-center__panel-title">客服会话值守队列</div>
+        <div className="control-center__list">
+          <div>待值守会话: <strong className="control-center__strong">{channelSessionWatchQueue.length}</strong></div>
+          <div>这里固定展示渠道会话的当前状态、最近动作和下一步动作，方便演示客服闭环。</div>
+        </div>
+
+        <div className="control-center__dispatch-list">
+          {channelSessionWatchQueue.length === 0 ? (
+            <div className="control-center__copy">当前项目还没有需要值守的客服会话。</div>
+          ) : (
+            channelSessionWatchQueue.map(session => {
+              const stateLabel = getChannelSessionStateLabel(session);
+              const recentAction = getChannelSessionRecentAction(session);
+              const nextAction = getChannelSessionNextAction(session);
+              const needsDesktopTakeover = shouldSuggestDesktopTakeover(session);
+              const linkedRun = session.lastExecutionRunId
+                ? executionRuns.find(run => run.id === session.lastExecutionRunId) ?? null
+                : null;
+
+              return (
+                <article key={session.id} className="control-center__dispatch-card">
+                  <div className="control-center__approval-head">
+                    <div>
+                      <div className="control-center__panel-title">{session.title}</div>
+                      <div className="control-center__copy">
+                        {session.channel} · {session.accountLabel ?? "默认账号"} · {session.participantLabel ?? session.remoteUserId ?? "未命名会话"}
+                      </div>
+                    </div>
+                    <span className={`control-center__scenario-badge is-${session.lastDeliveryStatus === "failed" ? "blocked" : stateLabel === "已处理" ? "ready" : "partial"}`}>
+                      {stateLabel}
+                    </span>
+                  </div>
+
+                  <div className="control-center__dispatch-note">
+                    {session.lastMessagePreview ?? session.summary}
+                  </div>
+                  <div className="control-center__dispatch-meta">
+                    <span>最近动作: {recentAction}</span>
+                    <span>下一步: {nextAction}</span>
+                  </div>
+                  <div className="control-center__dispatch-meta">
+                    <span>未读: {session.unreadCount ?? 0}</span>
+                    <span>方向: {session.lastMessageDirection ?? "mixed"}</span>
+                    <span>最近活动: {formatRemoteTimestamp(session.lastMessageAt)}</span>
+                  </div>
+                  {session.lastDeliveryError ? (
+                    <div className="control-center__copy" style={{ color: "var(--danger)" }}>
+                      最近失败原因: {session.lastDeliveryError}
+                    </div>
+                  ) : null}
+                  {linkedRun ? (
+                    <div className="control-center__copy">
+                      关联执行: {linkedRun.status} · {linkedRun.recoveryState && linkedRun.recoveryState !== "none" ? linkedRun.recoveryState : "stable"}
+                    </div>
+                  ) : null}
+
+                  <div className="control-center__quick-actions">
+                    {linkedRun ? (
+                      <button
+                        type="button"
+                        className="btn-ghost"
+                        onClick={() => focusExecutionRun(linkedRun.id)}
+                      >
+                        查看对应执行
+                      </button>
+                    ) : null}
+                    <button
+                      type="button"
+                      className="btn-ghost"
+                      onClick={() => openControlCenterSection("channels")}
+                    >
+                      打开渠道面板
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-ghost"
+                      onClick={() => handoffChannelSessionToChat(session)}
+                    >
+                      回聊天接管
+                    </button>
+                    {needsDesktopTakeover ? (
+                      <button
+                        type="button"
+                        className="btn-ghost"
+                        onClick={() => openControlCenterSection("desktop")}
+                      >
+                        去桌面接管
+                      </button>
+                    ) : null}
+                    <button
+                      type="button"
+                      className="btn-ghost"
+                      onClick={() => openControlCenterSection("entities")}
+                    >
+                      查看会话实体
+                    </button>
+                  </div>
+                </article>
+              );
+            })
+          )}
+        </div>
+      </div>
 
       <div className="control-center__panel">
         <div className="control-center__panel-title">最近执行</div>
@@ -1859,6 +2012,13 @@ export function RemoteOpsCenter() {
               <ScenarioCheck label="监督追踪" passed={card.checks.supervision} />
               <ScenarioCheck label="业务记忆" passed={card.checks.memory} />
             </div>
+            {card.playbook.length > 0 ? (
+              <div className="control-center__list control-center__list--dense" style={{ marginTop: 8 }}>
+                {card.playbook.map(step => (
+                  <div key={`${card.title}-${step}`}>{step}</div>
+                ))}
+              </div>
+            ) : null}
             <div className="control-center__copy">{card.missingMessage}</div>
           </article>
         ))}
@@ -1904,20 +2064,22 @@ function buildScenarioCard({
   description,
   checks,
   missingMessage,
+  playbook,
 }: {
   title: string;
   description: string;
   checks: Record<string, boolean>;
   missingMessage: string;
+  playbook: string[];
 }) {
   const passedCount = Object.values(checks).filter(Boolean).length;
   if (passedCount === 3) {
-    return { title, description, checks, missingMessage, tone: "ready" as const, label: "可试运行" };
+    return { title, description, checks, missingMessage, playbook, tone: "ready" as const, label: "可试运行" };
   }
   if (passedCount >= 1) {
-    return { title, description, checks, missingMessage, tone: "partial" as const, label: "半成品" };
+    return { title, description, checks, missingMessage, playbook, tone: "partial" as const, label: "半成品" };
   }
-  return { title, description, checks, missingMessage, tone: "blocked" as const, label: "未就绪" };
+  return { title, description, checks, missingMessage, playbook, tone: "blocked" as const, label: "未就绪" };
 }
 
 function getAuditEventLabel(eventType: BusinessOperationRecord["eventType"]) {

@@ -1,0 +1,26 @@
+{
+  "dispatch": {
+    "defaultWorkdir": ".",
+    "outputRoot": "output/hermes-dispatch-test"
+  },
+  "executors": {
+    "codex": {
+      "command": "node",
+      "args": ["-e", "setTimeout(() => {}, 10000)"],
+      "promptMode": "stdin",
+      "cwd": "."
+    },
+    "claude": {
+      "command": "node",
+      "args": ["-e", "process.exit(0)"],
+      "promptMode": "stdin",
+      "cwd": "."
+    },
+    "gemini": {
+      "command": "node",
+      "args": ["-e", "process.exit(0)"],
+      "promptMode": "stdin",
+      "cwd": "."
+    }
+  }
+}

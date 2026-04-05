@@ -1,0 +1,15 @@
+{
+  "profileId": null,
+  "label": "sample-plan",
+  "model": null,
+  "command": "sample-plan",
+  "cwd": ".",
+  "mode": "manual",
+  "sessionId": null,
+  "sessionStateFile": null,
+  "executorModels": {
+    "codex": null,
+    "claude": null,
+    "gemini": null
+  }
+}

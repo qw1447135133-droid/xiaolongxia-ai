@@ -33,6 +33,13 @@ This prototype treats Hermes as the orchestration role, but uses a dedicated `co
 - If a task omits `writeTargets`, Hermes falls back to conservative behavior and treats same-workdir tasks as conflicting.
 - Tasks can also carry `canUseSubagents: true` so the target executor is explicitly allowed to use its own internal subagents or worker delegation when the runtime supports it.
 
+## Run Control
+
+- Each run now writes a `control.json` file alongside `plan.json`, `progress.json`, and `results.json`.
+- The runtime supports `cancel-run` for the whole dispatch and `stop-task` for a currently running executor task.
+- When a task is stopped, Hermes marks that task as `cancelled` and automatically cancels downstream tasks that depend on it, avoiding scheduler deadlocks.
+- `progress.json` now exposes `runStatus` plus task-level `cancelled` states so the VS Code workbench can render live stop/cancel feedback.
+
 ## Commands
 
 Generate a Codex-brain plan and execute it:

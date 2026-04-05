@@ -1,0 +1,33 @@
+{
+  "updatedAt": "2026-04-05T07:58:04.898Z",
+  "runStatus": "cancelled",
+  "cancelRequested": true,
+  "currentTaskIds": [],
+  "currentExecutors": [],
+  "summary": {
+    "total": 1,
+    "queued": 0,
+    "running": 0,
+    "completed": 0,
+    "failed": 0,
+    "cancelled": 1
+  },
+  "tasks": [
+    {
+      "id": "task-1",
+      "title": "sleep task",
+      "executor": "codex",
+      "workdir": ".",
+      "dependsOn": [],
+      "writeTargets": [
+        "tmp/a"
+      ],
+      "canUseSubagents": false,
+      "status": "cancelled",
+      "startedAt": 1775375882701,
+      "finishedAt": 1775375884895,
+      "durationMs": 2194,
+      "error": "manual cancel test"
+    }
+  ]
+}

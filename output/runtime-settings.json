@@ -1,0 +1,232 @@
+{
+  "providers": [
+    {
+      "id": "aliyun-coding-tk54h5oz",
+      "name": "阿里云百炼 Coding Plan",
+      "apiKey": "sk-sp-01bfaf67d87b4deeb687f3e7826e6b89",
+      "baseUrl": "https://coding.dashscope.aliyuncs.com/v1"
+    }
+  ],
+  "agentConfigs": {
+    "orchestrator": {
+      "id": "orchestrator",
+      "name": "虾总管",
+      "emoji": "🦞",
+      "personality": "你是跨境电商 AI 团队的总调度员，负责任务拆解和团队协调。",
+      "model": "kimi-k2.5",
+      "providerId": "aliyun-coding-tk54h5oz",
+      "skills": []
+    },
+    "explorer": {
+      "id": "explorer",
+      "name": "探海龙虾",
+      "emoji": "🔍",
+      "personality": "你是跨境电商选品专家，专注竞品分析、选品趋势研究和市场数据分析。提供具体可操作的洞察。",
+      "model": "MiniMax-M2.5",
+      "providerId": "aliyun-coding-tk54h5oz",
+      "skills": []
+    },
+    "writer": {
+      "id": "writer",
+      "name": "执笔龙虾",
+      "emoji": "✍️",
+      "personality": "你是跨境电商文案专家，专注多语种文案创作、SEO 优化标题和商品详情页撰写。输出高转化率文案。",
+      "model": "qwen3.5-plus",
+      "providerId": "aliyun-coding-dgy4q9pc",
+      "skills": []
+    },
+    "designer": {
+      "id": "designer",
+      "name": "幻影龙虾",
+      "emoji": "🎨",
+      "personality": "你是电商视觉设计专家。当需要生成图片时，请先输出一段英文图片生成提示词（以 [IMAGE_PROMPT] 开头），然后再输出设计方案说明。",
+      "model": "qwen3.5-plus",
+      "providerId": "aliyun-coding-dgy4q9pc",
+      "skills": []
+    },
+    "performer": {
+      "id": "performer",
+      "name": "戏精龙虾",
+      "emoji": "🎬",
+      "personality": "你是短视频内容专家，专注数字人视频脚本、TikTok/抖音内容策略和多平台矩阵发布计划。",
+      "model": "kimi-k2.5",
+      "providerId": "aliyun-coding-dgy4q9pc",
+      "skills": []
+    },
+    "greeter": {
+      "id": "greeter",
+      "name": "迎客龙虾",
+      "emoji": "💬",
+      "personality": "你是多语种客服专家，专注客服话术、评论回复模板和买家互动策略。保持友好专业语气。",
+      "model": "MiniMax-M2.5",
+      "providerId": "aliyun-coding-dgy4q9pc",
+      "skills": []
+    }
+  },
+  "platformConfigs": {
+    "telegram": {
+      "enabled": true,
+      "fields": {
+        "botToken": "8246778735:AAGUnsxj_O_p1w7GLnQrsoOZ8tlc1Ru2ucc",
+        "proxy": "http://127.0.0.1:9974"
+      },
+      "status": "syncing",
+      "detail": "正在把连接器配置同步到服务端。",
+      "healthScore": 60,
+      "lastDebugAction": "simulate_inbound",
+      "lastDebugOk": true,
+      "lastDebugStatus": "completed",
+      "lastDebugMessage": "已注入 qa-final-002 的模拟入站消息",
+      "lastDebugTarget": "qa-final-002",
+      "lastDebugAt": 1775390680076,
+      "debugHistory": [
+        {
+          "action": "simulate_inbound",
+          "ok": true,
+          "status": "completed",
+          "target": "qa-chat-001",
+          "message": "已注入 qa-chat-001 的模拟入站消息",
+          "at": 1775390220075
+        },
+        {
+          "action": "simulate_inbound",
+          "ok": true,
+          "status": "completed",
+          "target": "qa-chat-002",
+          "message": "已注入 qa-chat-002 的模拟入站消息",
+          "at": 1775390220256
+        },
+        {
+          "action": "simulate_inbound",
+          "ok": true,
+          "status": "completed",
+          "target": "qa-handle-001",
+          "message": "已注入 qa-handle-001 的模拟入站消息",
+          "at": 1775390257390
+        },
+        {
+          "action": "simulate_inbound",
+          "ok": true,
+          "status": "completed",
+          "target": "qa-handle-002",
+          "message": "已注入 qa-handle-002 的模拟入站消息",
+          "at": 1775390637817
+        },
+        {
+          "action": "diagnose",
+          "ok": true,
+          "status": "completed",
+          "message": "存在阻断项，建议先补齐配置后再联调。",
+          "at": 1775390679952
+        },
+        {
+          "action": "simulate_inbound",
+          "ok": true,
+          "status": "completed",
+          "target": "qa-final-001",
+          "message": "已注入 qa-final-001 的模拟入站消息",
+          "at": 1775390679955
+        },
+        {
+          "action": "simulate_inbound",
+          "ok": true,
+          "status": "completed",
+          "target": "qa-final-001",
+          "message": "已注入 qa-final-001 的模拟入站消息",
+          "at": 1775390680014
+        },
+        {
+          "action": "simulate_inbound",
+          "ok": true,
+          "status": "completed",
+          "target": "qa-final-002",
+          "message": "已注入 qa-final-002 的模拟入站消息",
+          "at": 1775390680076
+        }
+      ],
+      "lastCheckedAt": 1775394845207,
+      "pendingEvents": 1,
+      "lastEventAt": 1775390681335,
+      "lastInboundAt": 1775390680076,
+      "lastInboundMessageKey": "debug:telegram:qa-final-002:1775390680076",
+      "accountLabel": "Telegram Bot",
+      "errorMsg": "平台 telegram 未连接",
+      "lastOutboundFailureAt": 1775390681335,
+      "outboundRetryCount": 1,
+      "outboundCooldownUntil": 1775390711335,
+      "recentFailedMessages": [
+        {
+          "target": "qa-chat-002",
+          "message": "您好，规格说明我这边马上发您。",
+          "reason": "平台 telegram 未连接",
+          "at": 1775390221519,
+          "retryCount": 1
+        },
+        {
+          "target": "qa-final-002",
+          "message": "您好，参数信息我整理后发您。",
+          "reason": "平台 telegram 未连接",
+          "at": 1775390681335,
+          "retryCount": 1
+        }
+      ],
+      "lastSyncedAt": 1775394845207
+    },
+    "line": {
+      "enabled": false,
+      "fields": {},
+      "status": "idle",
+      "detail": "当前未启用该连接器。",
+      "healthScore": 0
+    },
+    "feishu": {
+      "enabled": false,
+      "fields": {},
+      "status": "idle",
+      "detail": "当前未启用该连接器。",
+      "healthScore": 0
+    },
+    "wecom": {
+      "enabled": false,
+      "fields": {},
+      "status": "idle",
+      "detail": "当前未启用该连接器。",
+      "healthScore": 0
+    }
+  },
+  "userNickname": "老板",
+  "desktopProgramSettings": {
+    "enabled": true,
+    "whitelistMode": false,
+    "favorites": [],
+    "whitelist": [],
+    "inputControl": {
+      "enabled": false,
+      "autoOpenPanelOnAction": true,
+      "requireManualTakeoverForVerification": true
+    }
+  },
+  "hermesDispatchSettings": {
+    "activePlannerProfileId": "default",
+    "plannerProfiles": [
+      {
+        "id": "default",
+        "label": "Default Brain",
+        "sessionStateFile": "output/hermes-dispatch/planner-sessions/default.json",
+        "description": "Default Hermes planner conversation."
+      },
+      {
+        "id": "research",
+        "label": "Research Brain",
+        "sessionStateFile": "output/hermes-dispatch/planner-sessions/research.json",
+        "description": "Separate planner context for research and discovery."
+      },
+      {
+        "id": "scratch",
+        "label": "Scratch Brain",
+        "sessionStateFile": "output/hermes-dispatch/planner-sessions/scratch.json",
+        "description": "Temporary planner context for experiments and dry runs."
+      }
+    ]
+  }
+}

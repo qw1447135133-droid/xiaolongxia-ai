@@ -83,7 +83,16 @@ export default class FeishuAdapter {
     if (!text) return {};
 
     const senderId = event.sender?.sender_id?.open_id;
-    if (senderId) this.onMessage(senderId, text, "feishu");
+    const externalMessageId = String(event.message?.message_id || `${senderId || "unknown"}:${Date.now()}`);
+    if (senderId) {
+      this.onMessage({
+        userId: senderId,
+        text,
+        platformId: "feishu",
+        externalMessageId,
+        inboundMessageKey: `feishu:${externalMessageId}`,
+      });
+    }
     return {};
   }
 

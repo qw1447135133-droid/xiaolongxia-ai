@@ -51,6 +51,9 @@ const defaultConfig = {
   },
 };
 
+const CONTROL_FILE_NAME = "control.json";
+const CONTROL_POLL_INTERVAL_MS = 800;
+
 function printUsage() {
   console.log(`Hermes -> Codex/Claude/Gemini dispatch prototype
 
@@ -663,6 +666,7 @@ async function runProcess(command, args, options = {}) {
     env = process.env,
     onStdout = null,
     onStderr = null,
+    onSpawn = null,
   } = options;
 
   return new Promise((resolve, reject) => {
@@ -672,6 +676,10 @@ async function runProcess(command, args, options = {}) {
       stdio: ["pipe", "pipe", "pipe"],
       shell: false,
     });
+
+    if (typeof onSpawn === "function") {
+      onSpawn(child);
+    }
 
     let stdout = "";
     let stderr = "";
@@ -702,6 +710,91 @@ async function runProcess(command, args, options = {}) {
     }
     child.stdin.end();
   });
+}
+
+function buildControlFilePath(runDir) {
+  return path.join(runDir, CONTROL_FILE_NAME);
+}
+
+function createEmptyControlState() {
+  return {
+    updatedAt: new Date().toISOString(),
+    runAction: null,
+    runReason: null,
+    stopTasks: [],
+  };
+}
+
+function normalizeControlState(payload) {
+  const stopTasks = Array.isArray(payload?.stopTasks)
+    ? payload.stopTasks
+      .map((entry) => {
+        const taskId = String(entry?.taskId || "").trim();
+        if (!taskId) {
+          return null;
+        }
+
+        return {
+          taskId,
+          reason: String(entry?.reason || "").trim() || null,
+          requestedAt: String(entry?.requestedAt || "").trim() || new Date().toISOString(),
+        };
+      })
+      .filter(Boolean)
+    : [];
+
+  const runAction = String(payload?.runAction || "").trim().toLowerCase();
+  return {
+    updatedAt: String(payload?.updatedAt || "").trim() || new Date().toISOString(),
+    runAction: runAction === "cancel" ? "cancel" : null,
+    runReason: String(payload?.runReason || "").trim() || null,
+    stopTasks,
+  };
+}
+
+async function ensureControlState(runDir) {
+  const controlPath = buildControlFilePath(runDir);
+  if (!fs.existsSync(controlPath)) {
+    await fsp.writeFile(controlPath, JSON.stringify(createEmptyControlState(), null, 2), "utf8");
+  }
+  return controlPath;
+}
+
+async function readControlState(controlPath) {
+  try {
+    const text = await fsp.readFile(controlPath, "utf8");
+    return normalizeControlState(JSON.parse(text));
+  } catch {
+    return createEmptyControlState();
+  }
+}
+
+async function killProcessTree(pid) {
+  if (!pid || !Number.isFinite(pid)) {
+    return;
+  }
+
+  if (process.platform === "win32") {
+    await new Promise((resolve) => {
+      const child = spawn("taskkill", ["/PID", String(pid), "/T", "/F"], {
+        stdio: "ignore",
+        shell: false,
+      });
+      child.on("close", () => resolve());
+      child.on("error", () => resolve());
+    });
+    return;
+  }
+
+  try {
+    process.kill(pid, "SIGTERM");
+  } catch {}
+
+  await new Promise((resolve) => setTimeout(resolve, 250));
+
+  try {
+    process.kill(pid, "SIGKILL");
+  } catch {}
 }
 
 async function generatePlan(instruction, config, runDir) {
@@ -830,8 +923,16 @@ function createDispatchState(plan) {
   return {
     completed: new Set(),
     failed: new Set(),
+    cancelled: new Set(),
     running: new Map(),
+    activeChildren: new Map(),
+    handledStopTasks: new Set(),
+    killRequestedTasks: new Set(),
+    requestedTaskStops: new Map(),
     outputs: [],
+    runStatus: "running",
+    cancelRequested: false,
+    cancelReason: null,
     taskMeta: new Map(
       plan.tasks.map((task) => [
         task.id,
@@ -876,10 +977,13 @@ function createProgressSnapshot(plan, state) {
     running: 0,
     completed: 0,
     failed: 0,
+    cancelled: 0,
   });
 
   return {
     updatedAt: new Date().toISOString(),
+    runStatus: state.runStatus || "running",
+    cancelRequested: Boolean(state.cancelRequested),
     currentTaskIds: tasks.filter((task) => task.status === "running").map((task) => task.id),
     currentExecutors: tasks.filter((task) => task.status === "running").map((task) => task.executor),
     summary,
@@ -923,11 +1027,20 @@ function tasksConflict(leftTask, rightTask, config) {
 }
 
 function selectReadyTasks(plan, state, config) {
+  if (state.cancelRequested) {
+    return [];
+  }
+
   const ready = [];
   const activeTasks = Array.from(state.running.values());
 
   for (const task of plan.tasks) {
-    if (state.completed.has(task.id) || state.failed.has(task.id) || state.running.has(task.id)) {
+    if (
+      state.completed.has(task.id)
+      || state.failed.has(task.id)
+      || state.cancelled.has(task.id)
+      || state.running.has(task.id)
+    ) {
       continue;
     }
     const depsReady = task.dependsOn.every((dependency) => state.completed.has(dependency));
@@ -948,7 +1061,158 @@ function selectReadyTasks(plan, state, config) {
   return ready;
 }
 
-async function executeTask(plan, task, config, runDir) {
+function cascadeCancelledDependents(plan, state) {
+  let changed = false;
+  let shouldScan = true;
+
+  while (shouldScan) {
+    shouldScan = false;
+    for (const task of plan.tasks) {
+      if (
+        state.completed.has(task.id)
+        || state.failed.has(task.id)
+        || state.cancelled.has(task.id)
+        || state.running.has(task.id)
+      ) {
+        continue;
+      }
+
+      const blockedDependency = task.dependsOn.find((dependency) => (
+        state.failed.has(dependency) || state.cancelled.has(dependency)
+      ));
+      if (!blockedDependency) {
+        continue;
+      }
+
+      const blockedMeta = state.taskMeta.get(blockedDependency) || {};
+      const reason = blockedMeta.error
+        ? `依赖 ${blockedDependency} 未完成：${blockedMeta.error}`
+        : `依赖 ${blockedDependency} 已终止，当前任务一并取消`;
+
+      state.cancelled.add(task.id);
+      state.taskMeta.set(task.id, {
+        ...(state.taskMeta.get(task.id) || {}),
+        status: "cancelled",
+        finishedAt: Date.now(),
+        durationMs: null,
+        error: reason,
+      });
+      state.outputs.push({
+        status: "cancelled",
+        taskId: task.id,
+        executor: task.executor,
+        title: task.title,
+        error: reason,
+        startedAt: null,
+        finishedAt: Date.now(),
+        durationMs: null,
+      });
+      changed = true;
+      shouldScan = true;
+    }
+  }
+
+  return changed;
+}
+
+function markQueuedTasksCancelled(plan, state, reason) {
+  const finishedAt = Date.now();
+
+  for (const task of plan.tasks) {
+    if (
+      state.completed.has(task.id)
+      || state.failed.has(task.id)
+      || state.cancelled.has(task.id)
+      || state.running.has(task.id)
+    ) {
+      continue;
+    }
+
+    state.cancelled.add(task.id);
+    state.taskMeta.set(task.id, {
+      ...(state.taskMeta.get(task.id) || {}),
+      status: "cancelled",
+      finishedAt,
+      durationMs: null,
+      error: reason,
+    });
+    state.outputs.push({
+      status: "cancelled",
+      taskId: task.id,
+      executor: task.executor,
+      title: task.title,
+      error: reason,
+      startedAt: null,
+      finishedAt,
+      durationMs: null,
+    });
+  }
+}
+
+async function applyRuntimeControls(plan, state, runDir) {
+  const controlState = await readControlState(buildControlFilePath(runDir));
+  let changed = false;
+
+  if (controlState.runAction === "cancel" && !state.cancelRequested) {
+    state.cancelRequested = true;
+    state.cancelReason = controlState.runReason || "Run cancelled from workbench.";
+    state.runStatus = "cancelling";
+    changed = true;
+  }
+
+  for (const entry of controlState.stopTasks) {
+    if (state.handledStopTasks.has(entry.taskId)) {
+      continue;
+    }
+    state.handledStopTasks.add(entry.taskId);
+
+    if (!state.requestedTaskStops.has(entry.taskId)) {
+      state.requestedTaskStops.set(entry.taskId, entry.reason || "Task stopped from workbench.");
+    }
+
+    const child = state.activeChildren.get(entry.taskId);
+    if (child && child.pid && !state.killRequestedTasks.has(entry.taskId)) {
+      state.killRequestedTasks.add(entry.taskId);
+      await killProcessTree(child.pid);
+      changed = true;
+    }
+  }
+
+  if (state.cancelRequested) {
+    for (const [taskId, child] of state.activeChildren.entries()) {
+      if (!state.requestedTaskStops.has(taskId)) {
+        state.requestedTaskStops.set(taskId, state.cancelReason || "Run cancelled from workbench.");
+      }
+      if (child && child.pid && !state.killRequestedTasks.has(taskId)) {
+        state.killRequestedTasks.add(taskId);
+        await killProcessTree(child.pid);
+        changed = true;
+      }
+    }
+  }
+
+  if (changed) {
+    await persistDispatchState(plan, state, runDir);
+  }
+}
+
+async function syncTaskStopOnSpawn(taskId, state) {
+  const child = state.activeChildren.get(taskId);
+  if (!child || !child.pid || state.killRequestedTasks.has(taskId)) {
+    return false;
+  }
+
+  const shouldStop = state.cancelRequested || state.requestedTaskStops.has(taskId);
+  if (!shouldStop) {
+    return false;
+  }
+
+  state.killRequestedTasks.add(taskId);
+  await killProcessTree(child.pid);
+  return true;
+}
+
+async function executeTask(plan, task, config, runDir, state) {
   const executorConfig = config.executors[task.executor];
   if (!executorConfig) {
     throw new Error(`Missing executor configuration for ${task.executor}.`);
@@ -986,8 +1250,13 @@ async function executeTask(plan, task, config, runDir) {
       env: { ...process.env, ...(executorConfig.env ?? {}), ...env },
       onStdout: (chunk) => stdoutStream.write(chunk),
       onStderr: (chunk) => stderrStream.write(chunk),
+      onSpawn: async (child) => {
+        state.activeChildren.set(task.id, child);
+        await syncTaskStopOnSpawn(task.id, state);
+      },
     });
   } finally {
+    state.activeChildren.delete(task.id);
     stdoutStream.end();
     stderrStream.end();
   }
@@ -1027,72 +1296,149 @@ async function executeTask(plan, task, config, runDir) {
 async function dispatchPlan(plan, config, runDir) {
   const state = createDispatchState(plan);
   await persistDispatchState(plan, state, runDir);
+  const controlPath = await ensureControlState(runDir);
+  void controlPath;
 
-  while (state.completed.size + state.failed.size < plan.tasks.length) {
-    const ready = selectReadyTasks(plan, state, config);
-    if (ready.length === 0) {
-      const blocked = plan.tasks
-        .filter((task) => !state.completed.has(task.id) && !state.failed.has(task.id))
-        .map((task) => task.id);
-      throw new Error(`Dispatch deadlocked. Remaining tasks: ${blocked.join(", ")}`);
-    }
+  const controlTimer = setInterval(() => {
+    applyRuntimeControls(plan, state, runDir).catch((error) => {
+      console.error(error.message || error);
+    });
+  }, CONTROL_POLL_INTERVAL_MS);
 
-    for (const task of ready) {
-      state.running.set(task.id, task);
-      state.taskMeta.set(task.id, {
-        ...(state.taskMeta.get(task.id) || {}),
-        status: "running",
-        startedAt: Date.now(),
-        finishedAt: null,
-        durationMs: null,
-        error: null,
-      });
-    }
-    await persistDispatchState(plan, state, runDir);
+  try {
+    while (state.completed.size + state.failed.size + state.cancelled.size < plan.tasks.length) {
+      await applyRuntimeControls(plan, state, runDir);
+      cascadeCancelledDependents(plan, state);
 
-    const settled = await Promise.allSettled(
-      ready.map((task) => executeTask(plan, task, config, runDir)),
-    );
-
-    settled.forEach((result, index) => {
-      const task = ready[index];
-      state.running.delete(task.id);
-      if (result.status === "fulfilled") {
-        state.completed.add(task.id);
-        state.outputs.push({ status: "fulfilled", ...result.value });
-        state.taskMeta.set(task.id, {
-          ...(state.taskMeta.get(task.id) || {}),
-          status: "completed",
-          startedAt: result.value.startedAt,
-          finishedAt: result.value.finishedAt,
-          durationMs: result.value.durationMs,
-          error: null,
-        });
-        console.log(`<- ${task.id} [${task.executor}] done`);
-        return;
+      if (state.cancelRequested && state.running.size === 0) {
+        markQueuedTasksCancelled(plan, state, state.cancelReason || "Run cancelled from workbench.");
+        cascadeCancelledDependents(plan, state);
+        state.runStatus = "cancelled";
+        await persistDispatchState(plan, state, runDir);
+        break;
       }
 
-      state.failed.add(task.id);
-      state.outputs.push({
-        status: "rejected",
-        taskId: task.id,
-        executor: task.executor,
-        title: task.title,
-        error: String(result.reason?.message ?? result.reason),
+      const ready = selectReadyTasks(plan, state, config);
+      if (ready.length === 0) {
+        const blocked = plan.tasks
+          .filter((task) => !state.completed.has(task.id) && !state.failed.has(task.id) && !state.cancelled.has(task.id))
+          .map((task) => task.id);
+
+        if (state.cancelRequested) {
+          if (state.running.size === 0) {
+            markQueuedTasksCancelled(plan, state, state.cancelReason || "Run cancelled from workbench.");
+            cascadeCancelledDependents(plan, state);
+            state.runStatus = "cancelled";
+            await persistDispatchState(plan, state, runDir);
+            break;
+          }
+          continue;
+        }
+
+        throw new Error(`Dispatch deadlocked. Remaining tasks: ${blocked.join(", ")}`);
+      }
+
+      for (const task of ready) {
+        state.running.set(task.id, task);
+        state.taskMeta.set(task.id, {
+          ...(state.taskMeta.get(task.id) || {}),
+          status: "running",
+          startedAt: Date.now(),
+          finishedAt: null,
+          durationMs: null,
+          error: null,
+        });
+      }
+      await persistDispatchState(plan, state, runDir);
+
+      const settled = await Promise.allSettled(
+        ready.map((task) => executeTask(plan, task, config, runDir, state)),
+      );
+
+      settled.forEach((result, index) => {
+        const task = ready[index];
+        const existingMeta = state.taskMeta.get(task.id) || {};
+        state.running.delete(task.id);
+        state.activeChildren.delete(task.id);
+        state.killRequestedTasks.delete(task.id);
+        if (result.status === "fulfilled") {
+          state.completed.add(task.id);
+          state.outputs.push({ status: "fulfilled", ...result.value });
+          state.taskMeta.set(task.id, {
+            ...(state.taskMeta.get(task.id) || {}),
+            status: "completed",
+            startedAt: result.value.startedAt,
+            finishedAt: result.value.finishedAt,
+            durationMs: result.value.durationMs,
+            error: null,
+          });
+          console.log(`<- ${task.id} [${task.executor}] done`);
+          return;
+        }
+
+        const stopReason = state.requestedTaskStops.get(task.id);
+        if (stopReason) {
+          const finishedAt = Date.now();
+          state.cancelled.add(task.id);
+          state.outputs.push({
+            status: "cancelled",
+            taskId: task.id,
+            executor: task.executor,
+            title: task.title,
+            error: stopReason,
+            startedAt: existingMeta.startedAt || null,
+            finishedAt,
+            durationMs: existingMeta.startedAt ? finishedAt - existingMeta.startedAt : null,
+          });
+          state.taskMeta.set(task.id, {
+            ...existingMeta,
+            status: "cancelled",
+            finishedAt,
+            durationMs: existingMeta.startedAt ? finishedAt - existingMeta.startedAt : null,
+            error: stopReason,
+          });
+          console.log(`<- ${task.id} [${task.executor}] cancelled`);
+          return;
+        }
+
+        state.failed.add(task.id);
+        state.outputs.push({
+          status: "rejected",
+          taskId: task.id,
+          executor: task.executor,
+          title: task.title,
+          error: String(result.reason?.message ?? result.reason),
+        });
+        state.taskMeta.set(task.id, {
+          ...existingMeta,
+          status: "failed",
+          finishedAt: Date.now(),
+          error: String(result.reason?.message ?? result.reason),
+        });
+        console.log(`<- ${task.id} [${task.executor}] failed`);
       });
-      state.taskMeta.set(task.id, {
-        ...(state.taskMeta.get(task.id) || {}),
-        status: "failed",
-        finishedAt: Date.now(),
-        error: String(result.reason?.message ?? result.reason),
-      });
-      console.log(`<- ${task.id} [${task.executor}] failed`);
-    });
-    await persistDispatchState(plan, state, runDir);
+      await applyRuntimeControls(plan, state, runDir);
+      cascadeCancelledDependents(plan, state);
+      await persistDispatchState(plan, state, runDir);
+    }
+  } finally {
+    clearInterval(controlTimer);
+  }
+
+  if (!state.cancelRequested) {
+    if (state.failed.size > 0) {
+      state.runStatus = "failed";
+    } else if (state.cancelled.size > 0) {
+      state.runStatus = "cancelled";
+    } else {
+      state.runStatus = "completed";
+    }
+  } else if (state.runStatus !== "cancelled") {
+    state.runStatus = "cancelled";
   }
 
   await persistDispatchState(plan, state, runDir);
-  return state.outputs;
+  return state;
 }
 
 async function main() {
@@ -1119,16 +1465,22 @@ async function main() {
     return;
   }
 
-  const results = await dispatchPlan(plan, config, runDir);
+  const state = await dispatchPlan(plan, config, runDir);
+  const results = state.outputs;
   const summary = {
     runDir,
+    total: plan.tasks.length,
+    status: state.runStatus,
     completed: results.filter((item) => item.status === "fulfilled").length,
     failed: results.filter((item) => item.status === "rejected").length,
+    cancelled: results.filter((item) => item.status === "cancelled").length,
   };
   await fsp.writeFile(path.join(runDir, "summary.json"), JSON.stringify(summary, null, 2), "utf8");
 
   if (summary.failed > 0) {
     process.exitCode = 1;
+  } else if (summary.status === "cancelled") {
+    process.exitCode = 130;
   }
 }
 
@@ -1136,3 +1488,4 @@ main().catch((error) => {
   console.error(error.message || error);
   process.exit(1);
 });
+

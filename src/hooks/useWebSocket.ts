@@ -46,6 +46,33 @@ type WsMessage =
       lastSyncedAt?: number;
       lastCheckedAt?: number;
       lastEventAt?: number;
+      lastInboundAt?: number;
+      lastInboundMessageKey?: string;
+      lastOutboundSuccessAt?: number;
+      lastOutboundFailureAt?: number;
+      outboundRetryCount?: number;
+      outboundCooldownUntil?: number;
+      lastDebugAction?: "send_test_message" | "simulate_inbound" | "diagnose" | "probe_webhook";
+      lastDebugOk?: boolean;
+      lastDebugStatus?: "sent" | "completed" | "failed";
+      lastDebugMessage?: string;
+      lastDebugTarget?: string;
+      lastDebugAt?: number;
+      recentFailedMessages?: Array<{
+        target: string;
+        message: string;
+        reason: string;
+        at: number;
+        retryCount: number;
+      }>;
+      debugHistory?: Array<{
+        action: "send_test_message" | "simulate_inbound" | "diagnose" | "probe_webhook";
+        ok: boolean;
+        status: "sent" | "completed" | "failed";
+        target?: string;
+        message: string;
+        at: number;
+      }>;
     }
   | {
       type: "channel_session_sync";
@@ -66,6 +93,14 @@ type WsMessage =
       executionRunId?: string;
       workflowRunId?: string;
       externalRef?: string;
+    }
+  | {
+      type: "channel_action_result";
+      requestId: string;
+      sessionId?: string;
+      ok: boolean;
+      message: string;
+      failureReason?: string;
     }
   | { type: "agent_status"; agentId: AgentId; status: AgentStatus; currentTask?: string; executionRunId?: string }
   | { type: "task_add"; task: Task; executionRunId?: string }
@@ -280,6 +315,32 @@ function recordDesktopBusinessOperation(meta: {
   });
 }
 
+function appendDesktopEvidence(meta: {
+  kind: "input" | "screenshot" | "takeover" | "resume";
+  status: "completed" | "failed" | "blocked" | "info";
+  source: "agent" | "manual";
+  summary: string;
+  action?: string;
+  intent?: string;
+  target?: string;
+  sessionId?: string;
+  executionRunId?: string;
+  taskId?: string;
+  failureReason?: string;
+  retryStrategy?: "visual-recheck-offset";
+  retrySuggestions?: DesktopInputControlResult["retrySuggestions"];
+  imageCaptured?: boolean;
+  width?: number;
+  height?: number;
+  format?: "png" | "jpeg";
+  takeoverBy?: "agent" | "manual";
+  takeoverReason?: string;
+  resumeInstruction?: string;
+  resumeFrom?: string;
+}) {
+  getStore().appendDesktopEvidence(meta);
+}
+
 async function handleDesktopInputRequest(msg: Extract<WsMessage, { type: "desktop_input_request" }>) {
   const {
     desktopProgramSettings,
@@ -329,6 +390,19 @@ async function handleDesktopInputRequest(msg: Extract<WsMessage, { type: "deskto
       title: "桌面接管失败",
       detail: error,
       status: "failed",
+      failureReason: error,
+    });
+    appendDesktopEvidence({
+      kind: "input",
+      status: "failed",
+      source: "agent",
+      summary: error,
+      action: msg.payload.action,
+      intent: msg.payload.intent,
+      target: msg.payload.target,
+      sessionId: msg.sessionId,
+      executionRunId: msg.executionRunId,
+      taskId: msg.taskId,
       failureReason: error,
     });
     updateExecutionRecovery({
@@ -419,6 +493,27 @@ async function handleDesktopInputRequest(msg: Extract<WsMessage, { type: "deskto
       status: result.manualRequired ? "blocked" : "completed",
       failureReason: result.manualRequired ? "manual-verification-required" : undefined,
     });
+    appendDesktopEvidence({
+      kind: "input",
+      status: result.manualRequired ? "blocked" : "completed",
+      source: "agent",
+      summary: result.manualRequired
+        ? `${resultDetail} 已等待人工验证。`
+        : resultDetail,
+      action: result.action,
+      intent: msg.payload.intent,
+      target: msg.payload.target,
+      sessionId: msg.sessionId,
+      executionRunId: msg.executionRunId,
+      taskId: msg.taskId,
+      failureReason: result.manualRequired ? "manual-verification-required" : undefined,
+      retryStrategy: result.retryStrategy,
+      retrySuggestions: result.retrySuggestions,
+      takeoverBy: result.manualRequired ? "manual" : undefined,
+      takeoverReason: result.manualRequired ? "verification-required" : undefined,
+      resumeInstruction,
+      resumeFrom: msg.payload.target || "当前桌面",
+    });
     updateExecutionRecovery({
       executionRunId: msg.executionRunId,
       sessionId: msg.sessionId,
@@ -443,6 +538,19 @@ async function handleDesktopInputRequest(msg: Extract<WsMessage, { type: "deskto
       title: "桌面接管失败",
       detail: message,
       status: "failed",
+      failureReason: message,
+    });
+    appendDesktopEvidence({
+      kind: "input",
+      status: "failed",
+      source: "agent",
+      summary: message,
+      action: msg.payload.action,
+      intent: msg.payload.intent,
+      target: msg.payload.target,
+      sessionId: msg.sessionId,
+      executionRunId: msg.executionRunId,
+      taskId: msg.taskId,
       failureReason: message,
     });
     updateExecutionRecovery({
@@ -521,6 +629,17 @@ async function handleDesktopCaptureRequest(msg: Extract<WsMessage, { type: "desk
       status: "failed",
       failureReason: error,
     });
+    appendDesktopEvidence({
+      kind: "screenshot",
+      status: "failed",
+      source: "agent",
+      summary: error,
+      intent: msg.payload?.intent,
+      target: msg.payload?.target,
+      sessionId: msg.sessionId,
+      executionRunId: msg.executionRunId,
+      failureReason: error,
+    });
     updateExecutionRecovery({
       executionRunId: msg.executionRunId,
       sessionId: msg.sessionId,
@@ -569,6 +688,20 @@ async function handleDesktopCaptureRequest(msg: Extract<WsMessage, { type: "desk
       detail: captureDetail,
       status: "completed",
     });
+    appendDesktopEvidence({
+      kind: "screenshot",
+      status: "completed",
+      source: "agent",
+      summary: captureDetail,
+      intent: msg.payload?.intent,
+      target: msg.payload?.target,
+      sessionId: msg.sessionId,
+      executionRunId: msg.executionRunId,
+      imageCaptured: true,
+      width: result.width,
+      height: result.height,
+      format: result.format,
+    });
     updateExecutionRecovery({
       executionRunId: msg.executionRunId,
       sessionId: msg.sessionId,
@@ -589,6 +722,17 @@ async function handleDesktopCaptureRequest(msg: Extract<WsMessage, { type: "desk
       title: "桌面截图失败",
       detail: message,
       status: "failed",
+      failureReason: message,
+    });
+    appendDesktopEvidence({
+      kind: "screenshot",
+      status: "failed",
+      source: "agent",
+      summary: message,
+      intent: msg.payload?.intent,
+      target: msg.payload?.target,
+      sessionId: msg.sessionId,
+      executionRunId: msg.executionRunId,
       failureReason: message,
     });
     updateExecutionRecovery({
@@ -652,6 +796,7 @@ function handleMessage(msg: WsMessage) {
     reconcilePlatformConfig,
     upsertBusinessChannelSession,
     recordBusinessOperation,
+    setChannelActionResult,
   } = getStore();
 
   switch (msg.type) {
@@ -713,6 +858,20 @@ function handleMessage(msg: WsMessage) {
         lastSyncedAt: msg.lastSyncedAt,
         lastCheckedAt: msg.lastCheckedAt,
         lastEventAt: msg.lastEventAt,
+        lastInboundAt: msg.lastInboundAt,
+        lastInboundMessageKey: msg.lastInboundMessageKey,
+        lastOutboundSuccessAt: msg.lastOutboundSuccessAt,
+        lastOutboundFailureAt: msg.lastOutboundFailureAt,
+        outboundRetryCount: msg.outboundRetryCount,
+        outboundCooldownUntil: msg.outboundCooldownUntil,
+        lastDebugAction: msg.lastDebugAction,
+        lastDebugOk: msg.lastDebugOk,
+        lastDebugStatus: msg.lastDebugStatus,
+        lastDebugMessage: msg.lastDebugMessage,
+        lastDebugTarget: msg.lastDebugTarget,
+        lastDebugAt: msg.lastDebugAt,
+        recentFailedMessages: msg.recentFailedMessages,
+        debugHistory: msg.debugHistory,
       });
       if (msg.status === "idle" || msg.status === "configured" || msg.status === "webhook_missing") {
         reconcilePlatformConfig(msg.platformId);
@@ -742,6 +901,24 @@ function handleMessage(msg: WsMessage) {
       }
       break;
     }
+    case "channel_action_result":
+      setChannelActionResult({
+        requestId: msg.requestId,
+        sessionId: msg.sessionId,
+        ok: msg.ok,
+        message: msg.message,
+        failureReason: msg.failureReason,
+        at: Date.now(),
+      });
+      addActivity({
+        id: randomId(),
+        agentId: "orchestrator",
+        type: msg.ok ? "tool_done" : "tool_fail",
+        summary: msg.ok ? "渠道动作完成" : "渠道动作失败",
+        detail: msg.failureReason ? `${msg.message} · ${msg.failureReason}` : msg.message,
+        timestamp: Date.now(),
+      });
+      break;
     case "meeting_speech":
       addMeetingSpeech({
         id: randomId(),

@@ -1,0 +1,12 @@
+{
+  "updatedAt": "2026-04-05T00:00:00.000Z",
+  "runAction": null,
+  "runReason": null,
+  "stopTasks": [
+    {
+      "taskId": "task-1",
+      "reason": "manual stop test",
+      "requestedAt": "2026-04-05T00:00:00.000Z"
+    }
+  ]
+}

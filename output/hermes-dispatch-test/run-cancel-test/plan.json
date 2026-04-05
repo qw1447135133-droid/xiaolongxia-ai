@@ -1,0 +1,17 @@
+{
+  "summary": "cancel test",
+  "tasks": [
+    {
+      "id": "task-1",
+      "title": "sleep task",
+      "executor": "codex",
+      "objective": "sleep",
+      "workdir": ".",
+      "dependsOn": [],
+      "writeTargets": [
+        "tmp/a"
+      ],
+      "canUseSubagents": false
+    }
+  ]
+}

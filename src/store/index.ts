@@ -9,6 +9,7 @@ import type {
   AppTab,
   AutomationMode,
   CostSummary,
+  DesktopEvidenceRecord,
   DesktopInputSession,
   DesktopScreenshotState,
   DesktopProgramEntry,
@@ -209,12 +210,26 @@ interface ConnectionSlice {
   desktopRuntime: DesktopRuntimeState;
   desktopInputSession: DesktopInputSession;
   desktopScreenshot: DesktopScreenshotState;
+  desktopEvidenceLog: DesktopEvidenceRecord[];
+  channelActionResult: {
+    requestId: string;
+    sessionId?: string;
+    ok: boolean;
+    message: string;
+    failureReason?: string;
+    at: number;
+  } | null;
   setWsStatus: (s: ConnectionSlice["wsStatus"]) => void;
   setDesktopRuntime: (runtime: Partial<DesktopRuntimeState>) => void;
   setDesktopInputSession: (session: Partial<DesktopInputSession>) => void;
   clearDesktopInputSession: () => void;
   setDesktopScreenshot: (screenshot: Partial<DesktopScreenshotState>) => void;
   clearDesktopScreenshot: () => void;
+  appendDesktopEvidence: (
+    evidence: Omit<DesktopEvidenceRecord, "id" | "createdAt"> & Partial<Pick<DesktopEvidenceRecord, "id" | "createdAt">>,
+  ) => void;
+  clearDesktopEvidenceLog: () => void;
+  setChannelActionResult: (result: ConnectionSlice["channelActionResult"]) => void;
 }
 
 interface AutomationSlice {
@@ -276,6 +291,13 @@ interface BusinessEntitiesSlice {
     payload: Pick<BusinessChannelSession, "channel" | "externalRef">
       & Partial<Omit<BusinessChannelSession, "createdAt" | "updatedAt">>,
   ) => string;
+  updateBusinessChannelSession: (id: string, updates: Partial<Omit<BusinessChannelSession, "id" | "projectId" | "rootPath" | "createdAt">>) => void;
+  markBusinessChannelSessionHandled: (payload: {
+    channelSessionId: string;
+    trigger?: BusinessOperationRecord["trigger"];
+    detail?: string;
+    handledBy?: BusinessChannelSession["handledBy"];
+  }) => void;
   advanceBusinessLeadStage: (id: string) => void;
   advanceBusinessTicketStatus: (id: string) => void;
   advanceBusinessContentTaskStatus: (id: string) => void;
@@ -719,6 +741,7 @@ function normalizeHermesDispatchSettings(
 const seedSession = makeEmptySession();
 const MAX_EXECUTION_RUNS = 24;
 const MAX_EXECUTION_EVENTS = 40;
+const MAX_DESKTOP_EVIDENCE_RECORDS = 24;
 const MAX_WORKSPACE_PROJECT_MEMORIES = 16;
 const MAX_BUSINESS_OPERATION_LOGS = 240;
 const DEFAULT_SEMANTIC_MEMORY_CONFIG: SemanticMemoryConfig = {
@@ -796,6 +819,60 @@ const DEFAULT_DESKTOP_SCREENSHOT_STATE: DesktopScreenshotState = {
   source: null,
   updatedAt: null,
 };
+
+function normalizeDesktopEvidenceLog(entries: unknown): DesktopEvidenceRecord[] {
+  if (!Array.isArray(entries)) return [];
+
+  return entries
+    .map((entry, index) => {
+      const item = entry as Partial<DesktopEvidenceRecord>;
+      const kind = item?.kind;
+      const status = item?.status;
+      const source = item?.source;
+      const summary = typeof item?.summary === "string" ? item.summary.trim() : "";
+      const createdAt = typeof item?.createdAt === "number" ? item.createdAt : Date.now() - index;
+
+      if (
+        !summary
+        || (kind !== "input" && kind !== "screenshot" && kind !== "takeover" && kind !== "resume")
+        || (status !== "completed" && status !== "failed" && status !== "blocked" && status !== "info")
+        || (source !== "agent" && source !== "manual")
+      ) {
+        return null;
+      }
+
+      return {
+        id: typeof item?.id === "string" && item.id.trim()
+          ? item.id
+          : `desktop-evidence-${createdAt}-${index}`,
+        kind,
+        status,
+        source,
+        summary,
+        createdAt,
+        ...(typeof item?.action === "string" && item.action.trim() ? { action: item.action.trim() } : {}),
+        ...(typeof item?.intent === "string" && item.intent.trim() ? { intent: item.intent.trim() } : {}),
+        ...(typeof item?.target === "string" && item.target.trim() ? { target: item.target.trim() } : {}),
+        ...(typeof item?.sessionId === "string" && item.sessionId.trim() ? { sessionId: item.sessionId.trim() } : {}),
+        ...(typeof item?.executionRunId === "string" && item.executionRunId.trim() ? { executionRunId: item.executionRunId.trim() } : {}),
+        ...(typeof item?.taskId === "string" && item.taskId.trim() ? { taskId: item.taskId.trim() } : {}),
+        ...(typeof item?.failureReason === "string" && item.failureReason.trim() ? { failureReason: item.failureReason.trim() } : {}),
+        ...(item?.retryStrategy === "visual-recheck-offset" ? { retryStrategy: item.retryStrategy } : {}),
+        ...(Array.isArray(item?.retrySuggestions) ? { retrySuggestions: item.retrySuggestions } : {}),
+        ...(typeof item?.imageCaptured === "boolean" ? { imageCaptured: item.imageCaptured } : {}),
+        ...(typeof item?.width === "number" ? { width: item.width } : {}),
+        ...(typeof item?.height === "number" ? { height: item.height } : {}),
+        ...(item?.format === "png" || item?.format === "jpeg" ? { format: item.format } : {}),
+        ...(item?.takeoverBy === "agent" || item?.takeoverBy === "manual" ? { takeoverBy: item.takeoverBy } : {}),
+        ...(typeof item?.takeoverReason === "string" && item.takeoverReason.trim() ? { takeoverReason: item.takeoverReason.trim() } : {}),
+        ...(typeof item?.resumeInstruction === "string" && item.resumeInstruction.trim() ? { resumeInstruction: item.resumeInstruction.trim() } : {}),
+        ...(typeof item?.resumeFrom === "string" && item.resumeFrom.trim() ? { resumeFrom: item.resumeFrom.trim() } : {}),
+      } satisfies DesktopEvidenceRecord;
+    })
+    .filter((item): item is DesktopEvidenceRecord => Boolean(item))
+    .sort((left, right) => right.createdAt - left.createdAt)
+    .slice(0, MAX_DESKTOP_EVIDENCE_RECORDS);
+}
 
 function makeEmptyWorkspaceProjectView(rootPath: string | null = null): WorkspaceProjectViewState {
   return {
@@ -1770,6 +1847,8 @@ export const useStore = create<Store>()(
       desktopRuntime: DEFAULT_DESKTOP_RUNTIME_STATE,
       desktopInputSession: DEFAULT_DESKTOP_INPUT_SESSION,
       desktopScreenshot: DEFAULT_DESKTOP_SCREENSHOT_STATE,
+      desktopEvidenceLog: [],
+      channelActionResult: null,
       setWsStatus: (wsStatus) => set({ wsStatus }),
       setDesktopRuntime: (desktopRuntime) =>
         set(s => ({
@@ -1796,6 +1875,20 @@ export const useStore = create<Store>()(
           },
         })),
       clearDesktopScreenshot: () => set({ desktopScreenshot: DEFAULT_DESKTOP_SCREENSHOT_STATE }),
+      appendDesktopEvidence: (evidence) =>
+        set(s => {
+          const createdAt = typeof evidence.createdAt === "number" ? evidence.createdAt : Date.now();
+          const nextEvidence: DesktopEvidenceRecord = {
+            ...evidence,
+            id: evidence.id ?? `desktop-evidence-${createdAt}-${Math.random().toString(36).slice(2, 7)}`,
+            createdAt,
+          };
+          return {
+            desktopEvidenceLog: [nextEvidence, ...s.desktopEvidenceLog].slice(0, MAX_DESKTOP_EVIDENCE_RECORDS),
+          };
+        }),
+      clearDesktopEvidenceLog: () => set({ desktopEvidenceLog: [] }),
+      setChannelActionResult: (channelActionResult) => set({ channelActionResult }),
 
       automationMode: "supervised",
       automationPaused: false,
@@ -2176,6 +2269,48 @@ export const useStore = create<Store>()(
         }));
 
         return nextId;
+      },
+      updateBusinessChannelSession: (id, updates) =>
+        set(s => ({
+          businessChannelSessions: s.businessChannelSessions.map(item =>
+            item.id === id
+              ? {
+                  ...item,
+                  ...updates,
+                  updatedAt: Date.now(),
+                }
+              : item,
+          ),
+        })),
+      markBusinessChannelSessionHandled: ({
+        channelSessionId,
+        trigger = "manual",
+        detail,
+        handledBy = "manual",
+      }) => {
+        const state = get();
+        const session = state.businessChannelSessions.find(item => item.id === channelSessionId);
+        if (!session) return;
+
+        const now = Date.now();
+        get().updateBusinessChannelSession(channelSessionId, {
+          requiresReply: false,
+          unreadCount: 0,
+          handledBy,
+          lastHandledAt: now,
+          status: session.status === "closed" ? "closed" : "active",
+          summary: detail?.trim() || session.summary,
+        });
+        get().recordBusinessOperation({
+          entityType: "channelSession",
+          entityId: channelSessionId,
+          eventType: "message",
+          trigger,
+          status: "completed",
+          title: "渠道会话已处理",
+          detail: detail?.trim() || "已从渠道看板标记为已处理，未读与待回复标记已清空。",
+          externalRef: session.externalRef,
+        });
       },
       advanceBusinessLeadStage: (id) =>
         set(s => ({
@@ -3539,6 +3674,9 @@ export const useStore = create<Store>()(
         automationPaused: s.automationPaused,
         remoteSupervisorEnabled: s.remoteSupervisorEnabled,
         autoDispatchScheduledTasks: s.autoDispatchScheduledTasks,
+        desktopInputSession: s.desktopInputSession,
+        desktopScreenshot: s.desktopScreenshot,
+        desktopEvidenceLog: s.desktopEvidenceLog,
         chatSessions: s.chatSessions,
         activeSessionId: s.activeSessionId,
         executionRuns: s.executionRuns,
@@ -3578,6 +3716,15 @@ export const useStore = create<Store>()(
           current.hermesDispatchSettings,
           persistedStore.hermesDispatchSettings,
         );
+        const desktopInputSession = {
+          ...current.desktopInputSession,
+          ...(persistedStore.desktopInputSession ?? {}),
+        };
+        const desktopScreenshot = {
+          ...current.desktopScreenshot,
+          ...(persistedStore.desktopScreenshot ?? {}),
+        };
+        const desktopEvidenceLog = normalizeDesktopEvidenceLog(persistedStore.desktopEvidenceLog);
 
         return ensureChatHydration({
           ...merged,
@@ -3586,6 +3733,9 @@ export const useStore = create<Store>()(
           semanticMemoryConfig,
           desktopProgramSettings,
           hermesDispatchSettings,
+          desktopInputSession,
+          desktopScreenshot,
+          desktopEvidenceLog,
           semanticKnowledgeDocs: Array.isArray(persistedStore.semanticKnowledgeDocs)
             ? persistedStore.semanticKnowledgeDocs
             : current.semanticKnowledgeDocs,

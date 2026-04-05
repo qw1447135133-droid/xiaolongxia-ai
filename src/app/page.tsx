@@ -287,7 +287,7 @@ export default function App() {
       <DesktopRuntimeBridge />
       <ExecutionVerificationBridge />
 
-      <div className="ios-chat-shell__layout">
+      <div className="ios-chat-shell__layout animate-fade-in">
         <aside className={`ios-chat-shell__sidebar ${leftOpen ? "" : "is-collapsed"}`}>
           <div className="ios-chat-shell__sidebar-head">
             <div className="ios-chat-shell__brand">

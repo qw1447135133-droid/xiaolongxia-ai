@@ -1,0 +1,12 @@
+[
+  {
+    "status": "cancelled",
+    "taskId": "task-1",
+    "executor": "codex",
+    "title": "sleep task",
+    "error": "manual cancel test",
+    "startedAt": 1775375882701,
+    "finishedAt": 1775375884895,
+    "durationMs": 2194
+  }
+]

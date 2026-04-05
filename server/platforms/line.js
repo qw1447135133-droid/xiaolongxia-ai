@@ -38,7 +38,19 @@ export default class LineAdapter {
       const userId = event.source.userId;
       const text = event.message.text?.trim();
       if (!text) continue;
-      this.onMessage(userId, text, 'line');
+      const externalMessageId = String(
+        event.message.id
+        || event.webhookEventId
+        || event.replyToken
+        || `${userId}:${event.timestamp ?? Date.now()}`,
+      );
+      this.onMessage({
+        userId,
+        text,
+        platformId: "line",
+        externalMessageId,
+        inboundMessageKey: `line:${externalMessageId}`,
+      });
     }
   }
 

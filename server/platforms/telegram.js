@@ -59,7 +59,14 @@ export default class TelegramAdapter {
         return;
       }
 
-      onMessage(userId, text, "telegram");
+      const externalMessageId = String(msg.message_id ?? `${userId}:${msg.date ?? Date.now()}`);
+      onMessage({
+        userId,
+        text,
+        platformId: "telegram",
+        externalMessageId,
+        inboundMessageKey: `telegram:${userId}:${externalMessageId}`,
+      });
     });
 
     this.bot.on("polling_error", (err) => {

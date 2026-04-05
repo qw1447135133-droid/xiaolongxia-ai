@@ -227,6 +227,35 @@ export interface DesktopScreenshotState {
   updatedAt: number | null;
 }
 
+export type DesktopEvidenceKind = "input" | "screenshot" | "takeover" | "resume";
+export type DesktopEvidenceStatus = "completed" | "failed" | "blocked" | "info";
+
+export interface DesktopEvidenceRecord {
+  id: string;
+  kind: DesktopEvidenceKind;
+  status: DesktopEvidenceStatus;
+  source: "agent" | "manual";
+  summary: string;
+  action?: string;
+  intent?: string;
+  target?: string;
+  sessionId?: string;
+  executionRunId?: string;
+  taskId?: string;
+  failureReason?: string;
+  retryStrategy?: "visual-recheck-offset";
+  retrySuggestions?: DesktopInputRetrySuggestion[];
+  imageCaptured?: boolean;
+  width?: number;
+  height?: number;
+  format?: "png" | "jpeg";
+  takeoverBy?: "agent" | "manual";
+  takeoverReason?: string;
+  resumeInstruction?: string;
+  resumeFrom?: string;
+  createdAt: number;
+}
+
 export interface AgentSkill {
   id: string;
   name: string;
@@ -734,6 +763,7 @@ export interface PlatformDef {
 export interface PlatformConfig {
   enabled: boolean;
   fields: Record<string, string>;
+  requireOutboundApproval?: boolean;
   status: PlatformConnectionStatus;
   errorMsg?: string;
   detail?: string;
@@ -744,6 +774,33 @@ export interface PlatformConfig {
   lastSyncedAt?: number;
   lastCheckedAt?: number;
   lastEventAt?: number;
+  lastInboundAt?: number;
+  lastInboundMessageKey?: string;
+  lastOutboundSuccessAt?: number;
+  lastOutboundFailureAt?: number;
+  outboundRetryCount?: number;
+  outboundCooldownUntil?: number;
+  lastDebugAction?: "send_test_message" | "simulate_inbound" | "diagnose" | "probe_webhook";
+  lastDebugOk?: boolean;
+  lastDebugStatus?: "sent" | "completed" | "failed";
+  lastDebugMessage?: string;
+  lastDebugTarget?: string;
+  lastDebugAt?: number;
+  recentFailedMessages?: Array<{
+    target: string;
+    message: string;
+    reason: string;
+    at: number;
+    retryCount: number;
+  }>;
+  debugHistory?: Array<{
+    action: "send_test_message" | "simulate_inbound" | "diagnose" | "probe_webhook";
+    ok: boolean;
+    status: "sent" | "completed" | "failed";
+    target?: string;
+    message: string;
+    at: number;
+  }>;
 }
 
 export const PLATFORM_DEFINITIONS: PlatformDef[] = [

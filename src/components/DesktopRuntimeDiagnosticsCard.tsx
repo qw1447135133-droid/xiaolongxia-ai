@@ -17,6 +17,9 @@ export function DesktopRuntimeDiagnosticsCard() {
   const desktopScreenshot = useStore(s => s.desktopScreenshot);
   const setDesktopScreenshot = useStore(s => s.setDesktopScreenshot);
   const clearDesktopScreenshot = useStore(s => s.clearDesktopScreenshot);
+  const desktopEvidenceLog = useStore(s => s.desktopEvidenceLog);
+  const appendDesktopEvidence = useStore(s => s.appendDesktopEvidence);
+  const clearDesktopEvidenceLog = useStore(s => s.clearDesktopEvidenceLog);
   const setAutomationPaused = useStore(s => s.setAutomationPaused);
   const setCommandDraft = useStore(s => s.setCommandDraft);
   const setActiveChatSession = useStore(s => s.setActiveChatSession);
@@ -91,6 +94,10 @@ export function DesktopRuntimeDiagnosticsCard() {
   const retryClickAction = desktopInputSession.lastAction === "double_click" || desktopInputSession.lastAction === "right_click"
     ? desktopInputSession.lastAction
     : "click";
+  const recentEvidence = useMemo(
+    () => desktopEvidenceLog.slice(0, 6),
+    [desktopEvidenceLog],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -206,6 +213,20 @@ export function DesktopRuntimeDiagnosticsCard() {
               format: result.format,
               message: result.message,
             });
+            appendDesktopEvidence({
+              kind: "screenshot",
+              status: "completed",
+              source: "manual",
+              summary: `已人工抓取桌面截图 ${result.width}x${result.height}。`,
+              target: linkedExecutionRun?.instruction ? "当前执行现场" : "当前桌面",
+              intent: "人工观察当前桌面状态",
+              sessionId: linkedSession?.id,
+              executionRunId: linkedExecutionRun?.id,
+              imageCaptured: true,
+              width: result.width,
+              height: result.height,
+              format: result.format,
+            });
             setActionMessage(result.message || "已抓取当前桌面截图。");
           } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
@@ -215,6 +236,17 @@ export function DesktopRuntimeDiagnosticsCard() {
               sessionId: linkedSession?.id,
               executionRunId: linkedExecutionRun?.id,
               message,
+            });
+            appendDesktopEvidence({
+              kind: "screenshot",
+              status: "failed",
+              source: "manual",
+              summary: message,
+              target: linkedExecutionRun?.instruction ? "当前执行现场" : "当前桌面",
+              intent: "人工观察当前桌面状态",
+              sessionId: linkedSession?.id,
+              executionRunId: linkedExecutionRun?.id,
+              failureReason: message,
             });
             setActionMessage(message);
           }
@@ -522,6 +554,21 @@ export function DesktopRuntimeDiagnosticsCard() {
                   onClick={() => {
                     focusResumeContext();
                     setCommandDraft(desktopInputSession.resumeInstruction!);
+                    appendDesktopEvidence({
+                      kind: "takeover",
+                      status: "info",
+                      source: "manual",
+                      summary: "已从桌面接管切回聊天输入框，等待人工确认后续指令。",
+                      target: desktopInputSession.target,
+                      intent: desktopInputSession.lastIntent,
+                      sessionId: desktopInputSession.sessionId,
+                      executionRunId: desktopInputSession.executionRunId,
+                      taskId: desktopInputSession.taskId,
+                      takeoverBy: "manual",
+                      takeoverReason: "chat-handoff",
+                      resumeInstruction: desktopInputSession.resumeInstruction,
+                      resumeFrom: desktopInputSession.target || "桌面接管卡",
+                    });
                     setActionMessage("已切回对应聊天，并把续跑提示放入输入框。你可以先人工接管，再决定是否发送。");
                   }}
                 >
@@ -552,10 +599,37 @@ export function DesktopRuntimeDiagnosticsCard() {
                     const { ok } = dispatchResult;
                     if (ok) {
                       setAutomationPaused(false);
+                      appendDesktopEvidence({
+                        kind: "resume",
+                        status: "completed",
+                        source: "manual",
+                        summary: "人工验证已完成，已从桌面接管现场恢复执行。",
+                        target: desktopInputSession.target,
+                        intent: desktopInputSession.lastIntent,
+                        sessionId: desktopInputSession.sessionId,
+                        executionRunId: resumeRun?.id ?? desktopInputSession.executionRunId,
+                        taskId: desktopInputSession.taskId,
+                        resumeInstruction: desktopInputSession.resumeInstruction,
+                        resumeFrom: "桌面接管卡",
+                      });
                       setActionMessage("已恢复自动化，并把“验证已完成，请继续执行”发送回原会话。");
                       clearDesktopInputSession();
                     } else {
                       setAutomationPaused(true);
+                      appendDesktopEvidence({
+                        kind: "resume",
+                        status: "failed",
+                        source: "manual",
+                        summary: "人工验证后尝试恢复执行失败，当前会话仍保留在待接管状态。",
+                        target: desktopInputSession.target,
+                        intent: desktopInputSession.lastIntent,
+                        sessionId: desktopInputSession.sessionId,
+                        executionRunId: resumeRun?.id ?? desktopInputSession.executionRunId,
+                        taskId: desktopInputSession.taskId,
+                        failureReason: "websocket-disconnected",
+                        resumeInstruction: desktopInputSession.resumeInstruction,
+                        resumeFrom: "桌面接管卡",
+                      });
                       setActionMessage("恢复执行失败：当前 WebSocket 未连接，已保留人工接管状态。");
                     }
                   }}
@@ -741,8 +815,35 @@ export function DesktopRuntimeDiagnosticsCard() {
                   setTab("tasks");
                   if (desktopInputSession.resumeInstruction && desktopInputSession.executionRunId === screenshotLinkedExecutionRun?.id) {
                     setCommandDraft(desktopInputSession.resumeInstruction);
+                    appendDesktopEvidence({
+                      kind: "takeover",
+                      status: "info",
+                      source: "manual",
+                      summary: "已带着当前截图现场切回聊天，准备人工接管。",
+                      target: desktopScreenshot.target,
+                      intent: desktopScreenshot.intent,
+                      sessionId: screenshotLinkedSession.id,
+                      executionRunId: screenshotLinkedExecutionRun?.id,
+                      takeoverBy: "manual",
+                      takeoverReason: "screenshot-chat-handoff",
+                      resumeInstruction: desktopInputSession.resumeInstruction,
+                      resumeFrom: "截图现场",
+                    });
                     setActionMessage("已带着当前截图现场切回原聊天，并写入续跑提示。");
                   } else {
+                    appendDesktopEvidence({
+                      kind: "takeover",
+                      status: "info",
+                      source: "manual",
+                      summary: "已根据截图现场切回聊天会话，等待人工接管。",
+                      target: desktopScreenshot.target,
+                      intent: desktopScreenshot.intent,
+                      sessionId: screenshotLinkedSession.id,
+                      executionRunId: screenshotLinkedExecutionRun?.id,
+                      takeoverBy: "manual",
+                      takeoverReason: "screenshot-chat-handoff",
+                      resumeFrom: "截图现场",
+                    });
                     setActionMessage("已切回与当前截图关联的聊天会话。");
                   }
                 }}
@@ -776,10 +877,37 @@ export function DesktopRuntimeDiagnosticsCard() {
                   const { ok } = dispatchResult;
                   if (ok) {
                     setAutomationPaused(false);
+                    appendDesktopEvidence({
+                      kind: "resume",
+                      status: "completed",
+                      source: "manual",
+                      summary: "已基于最新截图确认现场并恢复执行。",
+                      target: desktopScreenshot.target,
+                      intent: desktopScreenshot.intent,
+                      sessionId: desktopInputSession.sessionId,
+                      executionRunId: resumeRun?.id ?? desktopInputSession.executionRunId,
+                      taskId: desktopInputSession.taskId,
+                      resumeInstruction: desktopInputSession.resumeInstruction,
+                      resumeFrom: "截图现场",
+                    });
                     setActionMessage("已基于当前截图现场恢复自动化，并把继续执行指令发送回原会话。");
                     clearDesktopInputSession();
                   } else {
                     setAutomationPaused(true);
+                    appendDesktopEvidence({
+                      kind: "resume",
+                      status: "failed",
+                      source: "manual",
+                      summary: "基于截图现场恢复执行失败，已保留当前截图和接管状态。",
+                      target: desktopScreenshot.target,
+                      intent: desktopScreenshot.intent,
+                      sessionId: desktopInputSession.sessionId,
+                      executionRunId: resumeRun?.id ?? desktopInputSession.executionRunId,
+                      taskId: desktopInputSession.taskId,
+                      failureReason: "websocket-disconnected",
+                      resumeInstruction: desktopInputSession.resumeInstruction,
+                      resumeFrom: "截图现场",
+                    });
                     setActionMessage("恢复执行失败：当前 WebSocket 未连接，截图现场和人工接管状态都已保留。");
                   }
                 }}
@@ -791,6 +919,71 @@ export function DesktopRuntimeDiagnosticsCard() {
               清空截图
             </button>
           </div>
+        </div>
+      ) : null}
+
+      {recentEvidence.length ? (
+        <div
+          style={{
+            marginTop: 12,
+            padding: "12px 14px",
+            borderRadius: 16,
+            background: "rgba(255,255,255,0.05)",
+            border: "1px solid rgba(255,255,255,0.08)",
+            display: "grid",
+            gap: 8,
+          }}
+        >
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+            <div style={{ fontSize: 13, fontWeight: 700 }}>最近桌面证据链</div>
+            <button type="button" className="btn-ghost" style={{ fontSize: 11 }} onClick={clearDesktopEvidenceLog}>
+              清空证据
+            </button>
+          </div>
+          {recentEvidence.map(item => (
+            <div
+              key={item.id}
+              style={{
+                display: "grid",
+                gap: 4,
+                padding: "10px 12px",
+                borderRadius: 14,
+                background: "rgba(255,255,255,0.04)",
+                border: "1px solid rgba(255,255,255,0.06)",
+              }}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                  <span className={`control-center__scenario-badge is-${getEvidenceTone(item.status)}`}>
+                    {getEvidenceKindLabel(item.kind)}
+                  </span>
+                  <span className="badge badge-explorer">
+                    {item.source === "agent" ? "agent" : "manual"}
+                  </span>
+                  {item.target ? <span className="badge badge-writer">{item.target}</span> : null}
+                </div>
+                <span style={{ fontSize: 11, color: "var(--text-muted)" }}>
+                  {formatEvidenceTime(item.createdAt)}
+                </span>
+              </div>
+              <div style={{ fontSize: 12, color: "var(--text)", lineHeight: 1.7 }}>{item.summary}</div>
+              {item.failureReason ? (
+                <div style={{ fontSize: 11, color: "var(--danger)", lineHeight: 1.6 }}>
+                  失败原因: {item.failureReason}
+                </div>
+              ) : null}
+              {item.retrySuggestions?.length ? (
+                <div style={{ fontSize: 11, color: "var(--text-muted)", lineHeight: 1.6 }}>
+                  偏移重试建议: {item.retrySuggestions.slice(0, 3).map(suggestion => suggestion.label).join(" / ")}
+                </div>
+              ) : null}
+              {item.takeoverReason ? (
+                <div style={{ fontSize: 11, color: "var(--text-muted)", lineHeight: 1.6 }}>
+                  接管原因: {item.takeoverReason}
+                </div>
+              ) : null}
+            </div>
+          ))}
         </div>
       ) : null}
 
@@ -849,4 +1042,27 @@ function InfoTile({ label, value, mono = false }: { label: string; value: string
       </div>
     </div>
   );
+}
+
+function formatEvidenceTime(timestamp: number) {
+  return new Intl.DateTimeFormat("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(timestamp);
+}
+
+function getEvidenceTone(status: "completed" | "failed" | "blocked" | "info") {
+  if (status === "completed") return "ready";
+  if (status === "failed") return "blocked";
+  if (status === "blocked") return "partial";
+  return "partial";
+}
+
+function getEvidenceKindLabel(kind: "input" | "screenshot" | "takeover" | "resume") {
+  if (kind === "input") return "输入动作";
+  if (kind === "screenshot") return "截图现场";
+  if (kind === "takeover") return "人工接管";
+  return "恢复执行";
 }

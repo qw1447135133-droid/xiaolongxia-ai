@@ -14,6 +14,7 @@ const repoRoot = join(__dirname_ws, "..");
 const hermesDispatchPrototypePath = join(repoRoot, "prototypes", "hermes-dispatch", "run.mjs");
 const hermesDispatchSamplePlanPath = join(repoRoot, "prototypes", "hermes-dispatch", "sample-plan.json");
 const hermesDispatchOutputRoot = join(repoRoot, "output", "hermes-dispatch");
+const runtimeSettingsPath = join(repoRoot, "output", "runtime-settings.json");
 if (existsSync(envPath)) {
   for (const line of readFileSync(envPath, 'utf-8').split(/\r?\n/)) {
     const m = line.trim().match(/^([A-Z_][A-Z0-9_]*)=(.*)$/);
@@ -24,7 +25,7 @@ if (existsSync(envPath)) {
   }
 }
 import { randomUUID } from "crypto";
-import { startPlatform, stopPlatform, sendToPlatform, sendFileToPlatform } from "./platforms/platform-manager.js";
+import { startPlatform, stopPlatform, sendToPlatform, sendFileToPlatform, isPlatformRunning } from "./platforms/platform-manager.js";
 import { exportMeetingDocument } from "./meeting-exporter.js";
 import { queryAgent, clearAllSessions } from "./agent-engine.js";
 import { getAgentTools } from "./agent-tools.js";
@@ -106,11 +107,357 @@ let settings = {
   hermesDispatchSettings: DEFAULT_HERMES_DISPATCH_SETTINGS,
 };
 const hermesDispatchRuns = new Map();
+const hermesDispatchRuntime = new Map();
 const PLATFORM_WEBHOOK_PATHS = {
   line: "/webhook/line",
   feishu: "/webhook/feishu",
   wecom: "/webhook/wecom",
 };
+const PLATFORM_FIELD_REQUIREMENTS = {
+  telegram: ["botToken"],
+  line: ["channelAccessToken", "channelSecret"],
+  feishu: ["appId", "appSecret", "verifyToken"],
+  wecom: ["corpId", "agentId", "secret", "token", "encodingAESKey"],
+};
+const PLATFORM_RUNTIME_KEYS = [
+  "status",
+  "errorMsg",
+  "detail",
+  "accountLabel",
+  "webhookUrl",
+  "healthScore",
+  "pendingEvents",
+  "lastSyncedAt",
+  "lastCheckedAt",
+  "lastEventAt",
+  "lastInboundAt",
+  "lastInboundMessageKey",
+  "lastOutboundSuccessAt",
+  "lastOutboundFailureAt",
+  "outboundRetryCount",
+  "outboundCooldownUntil",
+  "lastDebugAction",
+  "lastDebugOk",
+  "lastDebugStatus",
+  "lastDebugMessage",
+  "lastDebugTarget",
+  "lastDebugAt",
+  "recentFailedMessages",
+  "debugHistory",
+];
+const PLATFORM_DEBUG_HISTORY_LIMIT = 8;
+const PLATFORM_FAILED_MESSAGE_LIMIT = 6;
+const PLATFORM_INBOUND_DEDUPE_WINDOW_MS = 10 * 60 * 1000;
+const PLATFORM_INBOUND_DEDUPE_CACHE_LIMIT = 200;
+const PLATFORM_OUTBOUND_MAX_ATTEMPTS = 2;
+const PLATFORM_OUTBOUND_RETRY_DELAY_MS = 1200;
+const PLATFORM_OUTBOUND_COOLDOWN_MS = 30 * 1000;
+const platformInboundMessageCache = new Map();
+
+function normalizePlatformDebugHistory(history) {
+  if (!Array.isArray(history)) return [];
+  return history
+    .map((entry) => {
+      const action = String(entry?.action || "").trim();
+      const status = String(entry?.status || "").trim();
+      const message = String(entry?.message || "").trim();
+      const at = Number(entry?.at || 0);
+      if (!action || !status || !message || !Number.isFinite(at) || at <= 0) {
+        return null;
+      }
+
+      return {
+        action,
+        ok: Boolean(entry?.ok),
+        status,
+        target: String(entry?.target || "").trim() || undefined,
+        message,
+        at,
+      };
+    })
+    .filter(Boolean)
+    .sort((left, right) => left.at - right.at)
+    .slice(-PLATFORM_DEBUG_HISTORY_LIMIT);
+}
+
+function buildPlatformDebugHistory(platformId, entry, historyOverride) {
+  const baseHistory = normalizePlatformDebugHistory(
+    historyOverride ?? settings.platformConfigs?.[platformId]?.debugHistory,
+  );
+  if (!entry) {
+    return baseHistory;
+  }
+
+  const nextEntry = {
+    action: String(entry.action || "").trim(),
+    ok: Boolean(entry.ok),
+    status: String(entry.status || "").trim(),
+    target: String(entry.target || "").trim() || undefined,
+    message: String(entry.message || "").trim(),
+    at: Number(entry.at || Date.now()),
+  };
+
+  if (!nextEntry.action || !nextEntry.status || !nextEntry.message || !Number.isFinite(nextEntry.at)) {
+    return baseHistory;
+  }
+
+  return [...baseHistory, nextEntry].slice(-PLATFORM_DEBUG_HISTORY_LIMIT);
+}
+
+function normalizePlatformFailedMessages(history) {
+  if (!Array.isArray(history)) return [];
+  return history
+    .map((entry) => {
+      const target = String(entry?.target || "").trim();
+      const message = String(entry?.message || "").trim();
+      const reason = String(entry?.reason || "").trim();
+      const at = Number(entry?.at || 0);
+      const retryCount = Number(entry?.retryCount || 0);
+      if (!target || !message || !reason || !Number.isFinite(at) || at <= 0) {
+        return null;
+      }
+
+      return {
+        target,
+        message,
+        reason,
+        at,
+        retryCount: Number.isFinite(retryCount) && retryCount > 0 ? retryCount : 0,
+      };
+    })
+    .filter(Boolean)
+    .sort((left, right) => left.at - right.at)
+    .slice(-PLATFORM_FAILED_MESSAGE_LIMIT);
+}
+
+function buildPlatformFailedMessageHistory(platformId, entry, historyOverride) {
+  const baseHistory = normalizePlatformFailedMessages(
+    historyOverride ?? settings.platformConfigs?.[platformId]?.recentFailedMessages,
+  );
+  if (!entry) {
+    return baseHistory;
+  }
+
+  const nextEntry = {
+    target: String(entry.target || "").trim(),
+    message: String(entry.message || "").trim(),
+    reason: String(entry.reason || "").trim(),
+    at: Number(entry.at || Date.now()),
+    retryCount: Number(entry.retryCount || 0),
+  };
+
+  if (!nextEntry.target || !nextEntry.message || !nextEntry.reason || !Number.isFinite(nextEntry.at)) {
+    return baseHistory;
+  }
+
+  return [...baseHistory, nextEntry].slice(-PLATFORM_FAILED_MESSAGE_LIMIT);
+}
+
+function summarizePlatformMessage(text, maxLen = 160) {
+  return String(text || "").trim().slice(0, maxLen);
+}
+
+function formatPlatformMoment(timestamp) {
+  return new Intl.DateTimeFormat("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(timestamp);
+}
+
+function getPlatformInboundCache(platformId) {
+  if (!platformInboundMessageCache.has(platformId)) {
+    platformInboundMessageCache.set(platformId, new Map());
+  }
+  return platformInboundMessageCache.get(platformId);
+}
+
+function prunePlatformInboundCache(platformId, now = Date.now()) {
+  const cache = getPlatformInboundCache(platformId);
+  for (const [messageKey, at] of cache.entries()) {
+    if (now - at > PLATFORM_INBOUND_DEDUPE_WINDOW_MS) {
+      cache.delete(messageKey);
+    }
+  }
+
+  const overflow = cache.size - PLATFORM_INBOUND_DEDUPE_CACHE_LIMIT;
+  if (overflow > 0) {
+    const staleKeys = [...cache.entries()]
+      .sort((left, right) => left[1] - right[1])
+      .slice(0, overflow)
+      .map(([messageKey]) => messageKey);
+    for (const messageKey of staleKeys) {
+      cache.delete(messageKey);
+    }
+  }
+}
+
+function hasProcessedInboundMessage(platformId, messageKey, now = Date.now()) {
+  const normalizedKey = String(messageKey || "").trim();
+  if (!normalizedKey) return false;
+  prunePlatformInboundCache(platformId, now);
+  return getPlatformInboundCache(platformId).has(normalizedKey);
+}
+
+function markInboundMessageProcessed(platformId, messageKey, at = Date.now()) {
+  const normalizedKey = String(messageKey || "").trim();
+  if (!normalizedKey) return;
+  const cache = getPlatformInboundCache(platformId);
+  cache.set(normalizedKey, at);
+  prunePlatformInboundCache(platformId, at);
+}
+
+function createPlatformError(message, code, meta = {}) {
+  const error = new Error(message);
+  error.code = code;
+  Object.assign(error, meta);
+  return error;
+}
+
+function shouldRequirePlatformOutboundApproval(platformId, trigger = "auto") {
+  if (trigger === "manual" || trigger === "debug") return false;
+  return Boolean(settings.platformConfigs?.[platformId]?.requireOutboundApproval);
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function sendPlatformMessageWithRetry({
+  platformId,
+  targetId,
+  text,
+  trigger = "auto",
+  bypassCooldown = false,
+  successDetail = "最近一条出站消息已成功送达。",
+  failureDetailPrefix = "最近一条出站消息发送失败",
+}) {
+  if (shouldRequirePlatformOutboundApproval(platformId, trigger)) {
+    const blockedAt = Date.now();
+    const message = "当前平台已开启“自动外发需审批”，自动发送已被阻止，请先人工批准或手动发送。";
+    broadcastPlatformStatus(platformId, {
+      status: "degraded",
+      detail: message,
+      healthScore: 72,
+      pendingEvents: 1,
+      lastEventAt: blockedAt,
+      accountLabel: summarizePlatformAccount(platformId, settings.platformConfigs?.[platformId]?.fields ?? {}),
+    });
+    throw createPlatformError(message, "OUTBOUND_APPROVAL_REQUIRED");
+  }
+
+  const cooldownUntil = Number(settings.platformConfigs?.[platformId]?.outboundCooldownUntil || 0);
+  if (!bypassCooldown && cooldownUntil > Date.now()) {
+    const blockedAt = Date.now();
+    const message = `连接器最近外发失败，当前处于冷却中，请在 ${formatPlatformMoment(cooldownUntil)} 后重试。`;
+    broadcastPlatformStatus(platformId, {
+      status: "degraded",
+      detail: message,
+      healthScore: 68,
+      pendingEvents: 1,
+      lastEventAt: blockedAt,
+      accountLabel: summarizePlatformAccount(platformId, settings.platformConfigs?.[platformId]?.fields ?? {}),
+    });
+    throw createPlatformError(message, "OUTBOUND_COOLDOWN", { cooldownUntil });
+  }
+
+  let failureMessage = "";
+  let retryCount = 0;
+
+  for (let attempt = 1; attempt <= PLATFORM_OUTBOUND_MAX_ATTEMPTS; attempt += 1) {
+    try {
+      await sendToPlatform(platformId, targetId, text);
+      const sentAt = Date.now();
+      broadcastPlatformStatus(platformId, {
+        status: "connected",
+        detail: successDetail,
+        errorMsg: undefined,
+        healthScore: 100,
+        pendingEvents: 0,
+        lastEventAt: sentAt,
+        lastOutboundSuccessAt: sentAt,
+        outboundRetryCount: retryCount,
+        outboundCooldownUntil: undefined,
+        accountLabel: summarizePlatformAccount(platformId, settings.platformConfigs?.[platformId]?.fields ?? {}),
+      });
+      return { sentAt, retryCount };
+    } catch (error) {
+      failureMessage = String(error?.message || error || "平台外发失败");
+      retryCount = attempt - 1;
+      if (attempt < PLATFORM_OUTBOUND_MAX_ATTEMPTS) {
+        await sleep(PLATFORM_OUTBOUND_RETRY_DELAY_MS);
+      }
+    }
+  }
+
+  const failedAt = Date.now();
+  const outboundCooldownUntil = failedAt + PLATFORM_OUTBOUND_COOLDOWN_MS;
+  const recentFailedMessages = buildPlatformFailedMessageHistory(platformId, {
+    target: String(targetId || "").trim() || "unknown-target",
+    message: summarizePlatformMessage(text),
+    reason: failureMessage,
+    at: failedAt,
+    retryCount,
+  });
+  broadcastPlatformStatus(platformId, {
+    status: "degraded",
+    detail: `${failureDetailPrefix}：${failureMessage}`,
+    errorMsg: failureMessage,
+    healthScore: 55,
+    pendingEvents: 1,
+    lastEventAt: failedAt,
+    lastOutboundFailureAt: failedAt,
+    outboundRetryCount: retryCount,
+    outboundCooldownUntil,
+    recentFailedMessages,
+    accountLabel: summarizePlatformAccount(platformId, settings.platformConfigs?.[platformId]?.fields ?? {}),
+  });
+  throw createPlatformError(failureMessage, "PLATFORM_SEND_FAILED", {
+    retryCount,
+    cooldownUntil: outboundCooldownUntil,
+  });
+}
+
+function resolveOutboundFailurePresentation(error, {
+  approvalSummary = "自动外发已被审批门阻止",
+  cooldownSummary = "连接器处于失败冷却中",
+  failureSummary = "平台回复发送失败",
+} = {}) {
+  const code = String(error?.code || "").trim();
+  const detail = String(error?.message || error || failureSummary);
+
+  if (code === "OUTBOUND_APPROVAL_REQUIRED") {
+    return {
+      channelStatus: "waiting",
+      operationStatus: "blocked",
+      eventType: "governance",
+      summary: approvalSummary,
+      detail,
+      failureReason: "approval-required",
+    };
+  }
+
+  if (code === "OUTBOUND_COOLDOWN") {
+    return {
+      channelStatus: "waiting",
+      operationStatus: "blocked",
+      eventType: "connector",
+      summary: cooldownSummary,
+      detail,
+      failureReason: "cooldown-active",
+    };
+  }
+
+  return {
+    channelStatus: "waiting",
+    operationStatus: "failed",
+    eventType: "connector",
+    summary: `${failureSummary}：${detail}`,
+    detail,
+    failureReason: detail,
+  };
+}
 
 function summarizePlatformAccount(platformId, fields = {}) {
   switch (platformId) {
@@ -204,6 +551,106 @@ function writeJson(res, status, payload) {
     "Access-Control-Allow-Headers": "Content-Type",
   });
   res.end(JSON.stringify(payload));
+}
+
+function pickPlatformRuntimeFields(config = {}) {
+  return Object.fromEntries(
+    PLATFORM_RUNTIME_KEYS
+      .filter((key) => config[key] !== undefined)
+      .map((key) => [key, config[key]]),
+  );
+}
+
+function mergePlatformConfigs(nextConfigs = {}) {
+  const merged = {};
+  const platformIds = new Set([
+    ...Object.keys(settings.platformConfigs ?? {}),
+    ...Object.keys(nextConfigs ?? {}),
+  ]);
+
+  for (const platformId of platformIds) {
+    const currentConfig = settings.platformConfigs?.[platformId] ?? { enabled: false, fields: {} };
+    const incomingConfig = nextConfigs?.[platformId];
+    if (!incomingConfig) {
+      merged[platformId] = currentConfig;
+      continue;
+    }
+
+    merged[platformId] = {
+      ...currentConfig,
+      ...incomingConfig,
+      fields: incomingConfig.fields ?? currentConfig.fields ?? {},
+      ...pickPlatformRuntimeFields(currentConfig),
+    };
+  }
+
+  return merged;
+}
+
+async function persistRuntimeSettings() {
+  try {
+    await fs.mkdir(join(repoRoot, "output"), { recursive: true });
+    await fs.writeFile(runtimeSettingsPath, JSON.stringify(settings, null, 2), "utf8");
+  } catch (error) {
+    console.error("[ws-server] persist settings failed:", error?.message || error);
+  }
+}
+
+async function restoreRuntimeSettings() {
+  try {
+    if (!existsSync(runtimeSettingsPath)) return;
+    const raw = await fs.readFile(runtimeSettingsPath, "utf8");
+    const parsed = JSON.parse(raw);
+    settings = {
+      ...settings,
+      ...parsed,
+      platformConfigs: mergePlatformConfigs(parsed.platformConfigs ?? {}),
+    };
+  } catch (error) {
+    console.error("[ws-server] restore settings failed:", error?.message || error);
+  }
+}
+
+async function ensureEnabledPlatformsRunning(trigger = "restore") {
+  const entries = Object.entries(settings.platformConfigs ?? {});
+  for (const [platformId, config] of entries) {
+    const fields = config?.fields ?? {};
+    if (!config?.enabled || Object.keys(fields).length === 0 || isPlatformRunning(platformId)) {
+      continue;
+    }
+
+    try {
+      broadcastPlatformStatus(platformId, {
+        status: "syncing",
+        detail: trigger === "restore" ? "正在恢复上次连接器状态。" : "正在自动恢复连接器运行态。",
+        healthScore: 60,
+        lastSyncedAt: Date.now(),
+        webhookUrl: PLATFORM_WEBHOOK_PATHS[platformId] ?? undefined,
+        accountLabel: summarizePlatformAccount(platformId, fields),
+      });
+      await startPlatform(platformId, fields, handlePlatformMessage);
+      const isWebhookPlatform = Boolean(PLATFORM_WEBHOOK_PATHS[platformId]);
+      broadcastPlatformStatus(platformId, {
+        status: isWebhookPlatform ? "webhook_missing" : "connected",
+        detail: isWebhookPlatform
+          ? `连接器已恢复，等待公网回调打通 ${PLATFORM_WEBHOOK_PATHS[platformId]}。`
+          : "连接器已自动恢复，可直接接收和发送消息。",
+        healthScore: isWebhookPlatform ? 75 : 100,
+        lastSyncedAt: Date.now(),
+        webhookUrl: PLATFORM_WEBHOOK_PATHS[platformId] ?? undefined,
+        accountLabel: summarizePlatformAccount(platformId, fields),
+      });
+    } catch (error) {
+      const runtimeStatus = classifyPlatformRuntimeStatus(platformId, error);
+      broadcastPlatformStatus(platformId, {
+        ...runtimeStatus,
+        lastSyncedAt: Date.now(),
+        webhookUrl: PLATFORM_WEBHOOK_PATHS[platformId] ?? undefined,
+        accountLabel: summarizePlatformAccount(platformId, fields),
+      });
+    }
+  }
+  await persistRuntimeSettings();
 }
 
 function commandLocator() {
@@ -353,6 +800,26 @@ function tailText(value, maxChars = 6000) {
   return value.length <= maxChars ? value : value.slice(-maxChars);
 }
 
+function writeHermesTerminalChunk(runId, streamName, chunk, targetStream) {
+  const text = chunk?.toString?.() ?? String(chunk ?? "");
+  if (!text) {
+    return;
+  }
+
+  const normalized = text.replace(/\r\n/g, "\n");
+  const lines = normalized.split("\n");
+  const prefix = `[Hermes ${runId} ${streamName}] `;
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    const isLastEmpty = index === lines.length - 1 && line === "";
+    if (isLastEmpty) {
+      continue;
+    }
+    targetStream.write(`${prefix}${line}\n`);
+  }
+}
+
 function buildDefaultHermesSessionStateFile(profileId) {
   const id = String(profileId || "").trim() || "default";
   return `output/hermes-dispatch/planner-sessions/${id}.json`;
@@ -441,6 +908,102 @@ function resolveHermesPlannerProfile(selectedProfileId) {
     || hermesDispatchSettings.plannerProfiles[0];
 }
 
+function buildHermesControlFilePath(outputDir) {
+  return join(outputDir, "control.json");
+}
+
+function createEmptyHermesControlState() {
+  return {
+    updatedAt: new Date().toISOString(),
+    runAction: null,
+    runReason: null,
+    stopTasks: [],
+  };
+}
+
+function normalizeHermesControlState(input) {
+  const stopTasks = Array.isArray(input?.stopTasks)
+    ? input.stopTasks
+      .map((entry) => {
+        const taskId = String(entry?.taskId || "").trim();
+        if (!taskId) {
+          return null;
+        }
+
+        return {
+          taskId,
+          reason: String(entry?.reason || "").trim() || null,
+          requestedAt: String(entry?.requestedAt || "").trim() || new Date().toISOString(),
+        };
+      })
+      .filter(Boolean)
+    : [];
+
+  const runAction = String(input?.runAction || "").trim().toLowerCase();
+  return {
+    updatedAt: String(input?.updatedAt || "").trim() || new Date().toISOString(),
+    runAction: runAction === "cancel" ? "cancel" : null,
+    runReason: String(input?.runReason || "").trim() || null,
+    stopTasks,
+  };
+}
+
+async function readHermesControlState(outputDir) {
+  try {
+    return normalizeHermesControlState(await safeReadJson(buildHermesControlFilePath(outputDir)));
+  } catch {
+    return createEmptyHermesControlState();
+  }
+}
+
+async function writeHermesControlState(outputDir, payload) {
+  const controlPath = buildHermesControlFilePath(outputDir);
+  await fs.writeFile(controlPath, JSON.stringify(normalizeHermesControlState(payload), null, 2), "utf8");
+}
+
+function deriveHermesRunStatus(summary, progress, fallbackStatus = "planned") {
+  if (summary?.status === "cancelled" || progress?.runStatus === "cancelled") {
+    return "cancelled";
+  }
+  if (progress?.runStatus === "cancelling") {
+    return "cancelling";
+  }
+  if (summary?.failed > 0) {
+    return "failed";
+  }
+  if (summary && summary.failed === 0) {
+    return "completed";
+  }
+
+  const progressSummary = progress?.summary || null;
+  if (!progressSummary) {
+    return fallbackStatus;
+  }
+  if (progress?.runStatus === "cancelling") {
+    return "cancelling";
+  }
+  if (progressSummary.running > 0 || (progressSummary.queued > 0 && (progressSummary.completed > 0 || progressSummary.failed > 0 || progressSummary.cancelled > 0))) {
+    return "running";
+  }
+  if (progressSummary.failed > 0 && progressSummary.completed + progressSummary.failed + (progressSummary.cancelled || 0) >= progressSummary.total) {
+    return "failed";
+  }
+  if ((progressSummary.cancelled || 0) > 0 && progressSummary.completed + progressSummary.failed + (progressSummary.cancelled || 0) >= progressSummary.total) {
+    return "cancelled";
+  }
+  if (progressSummary.completed >= progressSummary.total && progressSummary.total > 0) {
+    return "completed";
+  }
+  if (progressSummary.queued > 0) {
+    return "queued";
+  }
+  return fallbackStatus;
+}
+
+function isHermesRunActive(status) {
+  return status === "queued" || status === "running" || status === "cancelling";
+}
+
 async function getHermesDispatchAvailability() {
   const commands = getHermesToolCommands();
   const checks = await Promise.all([
@@ -475,27 +1038,7 @@ async function collectHermesDispatchRunFromDirectory(dirName) {
   const progressUpdatedAt = Number.isFinite(Date.parse(progress?.updatedAt || ""))
     ? Date.parse(progress.updatedAt)
     : createdAt;
-  const progressSummary = progress?.summary || null;
-  const derivedStatus = summary
-    ? (summary.failed > 0 ? "failed" : "completed")
-    : (() => {
-        if (!progressSummary) {
-          return "planned";
-        }
-        if (progressSummary.running > 0 || (progressSummary.queued > 0 && (progressSummary.completed > 0 || progressSummary.failed > 0))) {
-          return "running";
-        }
-        if (progressSummary.failed > 0 && progressSummary.completed + progressSummary.failed >= progressSummary.total) {
-          return "failed";
-        }
-        if (progressSummary.completed >= progressSummary.total && progressSummary.total > 0) {
-          return "completed";
-        }
-        if (progressSummary.queued > 0) {
-          return "queued";
-        }
-        return "planned";
-      })();
+  const derivedStatus = deriveHermesRunStatus(summary, progress, "planned");
 
   return {
     id: dirName,
@@ -559,7 +1102,11 @@ async function collectHermesTaskLogs(runDir, plan, progress, results) {
         taskId: task.id,
         title: task.title,
         executor: task.executor,
-        status: progressItem?.status || (resultItem?.status === "fulfilled" ? "completed" : (resultItem?.status === "rejected" ? "failed" : "queued")),
+        status: progressItem?.status || (resultItem?.status === "fulfilled"
+          ? "completed"
+          : (resultItem?.status === "rejected"
+            ? "failed"
+            : (resultItem?.status === "cancelled" ? "cancelled" : "queued"))),
         writeTargets: Array.isArray(task.writeTargets) ? task.writeTargets : [],
         canUseSubagents: Boolean(task.canUseSubagents),
         startedAt: progressItem?.startedAt ?? resultItem?.startedAt ?? null,
@@ -632,7 +1179,10 @@ async function deleteHermesDispatchRun(runId) {
   }
 
   const inMemoryRun = hermesDispatchRuns.get(normalizedRunId);
-  if (inMemoryRun && (inMemoryRun.status === "queued" || inMemoryRun.status === "running")) {
+  if (inMemoryRun) {
+    await refreshHermesDispatchRunState(inMemoryRun);
+  }
+  if (inMemoryRun && isHermesRunActive(inMemoryRun.status)) {
     throw new Error("运行中的记录暂时不能删除，请等待结束后再删除。");
   }
 
@@ -643,18 +1193,138 @@ async function deleteHermesDispatchRun(runId) {
 
   const existedOnDisk = existsSync(runDir);
   if (!existedOnDisk && !inMemoryRun) {
-    throw new Error("找不到对应的运行记录。");
+    return {
+      ok: true,
+      runId: normalizedRunId,
+      deleted: false,
+      missing: true,
+    };
   }
 
   if (existedOnDisk) {
     await fs.rm(runDir, { recursive: true, force: true });
   }
   hermesDispatchRuns.delete(normalizedRunId);
+  hermesDispatchRuntime.delete(normalizedRunId);
 
   return {
     ok: true,
     runId: normalizedRunId,
     deleted: existedOnDisk || Boolean(inMemoryRun),
+  };
+}
+
+async function refreshHermesDispatchRunState(runState) {
+  if (!runState?.outputDir) {
+    return runState;
+  }
+
+  const [plan, progress, plannerMeta, summary, results] = await Promise.all([
+    safeReadJson(join(runState.outputDir, "plan.json")),
+    safeReadJson(join(runState.outputDir, "progress.json")),
+    safeReadJson(join(runState.outputDir, "planner-meta.json")),
+    safeReadJson(join(runState.outputDir, "summary.json")),
+    safeReadJson(join(runState.outputDir, "results.json")),
+  ]);
+  const taskLogs = await collectHermesTaskLogs(runState.outputDir, plan, progress, results);
+
+  runState.plan = plan;
+  runState.progress = progress;
+  runState.summary = summary;
+  runState.results = results;
+  runState.taskLogs = taskLogs;
+  runState.plannerProfileId = plannerMeta?.profileId ?? runState.plannerProfileId ?? null;
+  runState.planner = plannerMeta?.label ?? runState.planner;
+  runState.plannerModel = plannerMeta?.model ?? runState.plannerModel ?? null;
+  runState.plannerSessionId = plannerMeta?.sessionId ?? runState.plannerSessionId ?? null;
+  runState.plannerSessionStateFile = plannerMeta?.sessionStateFile ?? runState.plannerSessionStateFile ?? null;
+  runState.executorModels = plannerMeta?.executorModels ?? runState.executorModels ?? null;
+  runState.status = deriveHermesRunStatus(summary, progress, runState.status || "planned");
+  runState.updatedAt = Date.now();
+  return runState;
+}
+
+async function cancelHermesDispatchRun(runId) {
+  const normalizedRunId = String(runId || "").trim();
+  if (!normalizedRunId) {
+    throw new Error("runId 不能为空。");
+  }
+
+  const runState = hermesDispatchRuns.get(normalizedRunId);
+  if (!runState) {
+    throw new Error("找不到对应的运行记录，只有当前活跃运行支持取消。");
+  }
+
+  await refreshHermesDispatchRunState(runState);
+  if (!isHermesRunActive(runState.status)) {
+    throw new Error("当前运行已经结束，不能再取消。");
+  }
+
+  const control = await readHermesControlState(runState.outputDir);
+  await writeHermesControlState(runState.outputDir, {
+    ...control,
+    runAction: "cancel",
+    runReason: "Run cancelled from workbench.",
+    updatedAt: new Date().toISOString(),
+  });
+
+  runState.status = "cancelling";
+  runState.updatedAt = Date.now();
+  return {
+    ok: true,
+    runId: normalizedRunId,
+    status: runState.status,
+  };
+}
+
+async function stopHermesDispatchTask(runId, taskId) {
+  const normalizedRunId = String(runId || "").trim();
+  const normalizedTaskId = String(taskId || "").trim();
+  if (!normalizedRunId) {
+    throw new Error("runId 不能为空。");
+  }
+  if (!normalizedTaskId) {
+    throw new Error("taskId 不能为空。");
+  }
+
+  const runState = hermesDispatchRuns.get(normalizedRunId);
+  if (!runState) {
+    throw new Error("找不到对应的运行记录，只有当前活跃运行支持停止任务。");
+  }
+
+  await refreshHermesDispatchRunState(runState);
+  if (!isHermesRunActive(runState.status)) {
+    throw new Error("当前运行已经结束，不能再停止任务。");
+  }
+
+  const progressTasks = Array.isArray(runState.progress?.tasks) ? runState.progress.tasks : [];
+  const task = progressTasks.find((item) => item.id === normalizedTaskId);
+  if (!task || task.status !== "running") {
+    throw new Error("该任务当前不在运行中，无法停止。");
+  }
+
+  const control = await readHermesControlState(runState.outputDir);
+  const stopTasks = [...control.stopTasks];
+  if (!stopTasks.some((entry) => entry.taskId === normalizedTaskId)) {
+    stopTasks.push({
+      taskId: normalizedTaskId,
+      reason: "Task stopped from workbench.",
+      requestedAt: new Date().toISOString(),
+    });
+  }
+
+  await writeHermesControlState(runState.outputDir, {
+    ...control,
+    stopTasks,
+    updatedAt: new Date().toISOString(),
+  });
+
+  runState.updatedAt = Date.now();
+  return {
+    ok: true,
+    runId: normalizedRunId,
+    taskId: normalizedTaskId,
+    status: runState.status,
   };
 }
 
@@ -664,6 +1334,7 @@ async function startHermesDispatchRun({ instruction, planOnly = false, useSample
   const runId = `${new Date().toISOString().replace(/[:.]/g, "-")}-run-${slugify(instruction || "sample")}`;
   const outputDir = join(hermesDispatchOutputRoot, runId);
   await fs.mkdir(outputDir, { recursive: true });
+  await writeHermesControlState(outputDir, createEmptyHermesControlState());
 
   const args = [hermesDispatchPrototypePath, "--output-dir", outputDir];
   const commandOverrides = getHermesToolCommands();
@@ -733,6 +1404,12 @@ async function startHermesDispatchRun({ instruction, planOnly = false, useSample
     stderrTail: "",
     error: null,
   };
+  Object.defineProperty(runState, "child", {
+    value: null,
+    writable: true,
+    enumerable: false,
+    configurable: true,
+  });
   hermesDispatchRuns.set(runId, runState);
 
   const child = spawn(process.execPath, args, {
@@ -741,22 +1418,26 @@ async function startHermesDispatchRun({ instruction, planOnly = false, useSample
     stdio: ["ignore", "pipe", "pipe"],
     shell: false,
   });
+  runState.child = child;
 
   runState.status = "running";
   runState.updatedAt = Date.now();
+  console.log(`[Hermes ${runId}] started: ${runState.mode} · ${runState.instruction}`);
 
   child.stdout.on("data", chunk => {
     runState.stdoutTail = tailText(`${runState.stdoutTail}${chunk.toString()}`);
     runState.updatedAt = Date.now();
+    writeHermesTerminalChunk(runId, "stdout", chunk, process.stdout);
   });
 
   child.stderr.on("data", chunk => {
     runState.stderrTail = tailText(`${runState.stderrTail}${chunk.toString()}`);
     runState.updatedAt = Date.now();
+    writeHermesTerminalChunk(runId, "stderr", chunk, process.stderr);
   });
 
   child.on("error", error => {
-    runState.status = "failed";
+    runState.status = runState.status === "cancelling" ? "cancelled" : "failed";
     runState.error = error.message;
     runState.updatedAt = Date.now();
   });
@@ -769,11 +1450,10 @@ async function startHermesDispatchRun({ instruction, planOnly = false, useSample
     const results = await safeReadJson(join(outputDir, "results.json"));
     const taskLogs = await collectHermesTaskLogs(outputDir, plan, progress, results);
 
-    runState.status = summary
-      ? (summary.failed > 0 || code !== 0 ? "failed" : "completed")
-      : (code === 0 ? "planned" : "failed");
+    runState.status = deriveHermesRunStatus(summary, progress, code === 0 ? "planned" : "failed");
     runState.updatedAt = Date.now();
     runState.exitCode = code;
+    runState.child = null;
     runState.plannerProfileId = plannerMeta?.profileId ?? runState.plannerProfileId ?? null;
     runState.planner = plannerMeta?.label ?? runState.planner;
     runState.plannerModel = plannerMeta?.model ?? runState.plannerModel ?? null;
@@ -785,9 +1465,10 @@ async function startHermesDispatchRun({ instruction, planOnly = false, useSample
     runState.summary = summary;
     runState.results = results;
     runState.taskLogs = taskLogs;
-    if (code !== 0 && !runState.error) {
+    if (code !== 0 && runState.status !== "cancelled" && !runState.error) {
       runState.error = tailText(runState.stderrTail) || `dispatch process exited with code ${code}`;
     }
+    console.log(`[Hermes ${runId}] finished: ${runState.status} (exit ${code})`);
   });
 
   return runState;
@@ -831,11 +1512,38 @@ function broadcast(msg) {
 }
 
 function broadcastPlatformStatus(platformId, payload = {}) {
+  const debugHistory = normalizePlatformDebugHistory(payload.debugHistory);
+  const recentFailedMessages = normalizePlatformFailedMessages(payload.recentFailedMessages);
+  const nextStatus = {
+    ...(settings.platformConfigs?.[platformId] ?? { enabled: false, fields: {} }),
+    ...payload,
+    lastCheckedAt: payload.lastCheckedAt ?? Date.now(),
+    ...(payload.debugHistory ? { debugHistory } : {}),
+    ...(payload.recentFailedMessages ? { recentFailedMessages } : {}),
+  };
+  settings.platformConfigs = {
+    ...settings.platformConfigs,
+    [platformId]: nextStatus,
+  };
+  void persistRuntimeSettings();
   broadcast({
     type: "platform_status",
     platformId,
-    lastCheckedAt: Date.now(),
+    ...nextStatus,
+  });
+}
+
+function rememberPlatformDebug(platformId, entry, payload = {}) {
+  const nextHistory = buildPlatformDebugHistory(platformId, entry);
+  broadcastPlatformStatus(platformId, {
     ...payload,
+    lastDebugAction: entry.action,
+    lastDebugOk: entry.ok,
+    lastDebugStatus: entry.status,
+    lastDebugMessage: entry.message,
+    lastDebugTarget: entry.target,
+    lastDebugAt: entry.at,
+    debugHistory: nextHistory,
   });
 }
 
@@ -846,10 +1554,268 @@ function mapPlatformToChannel(platformId) {
   return "web";
 }
 
+function resolvePlatformDebugTarget(platformId, targetId) {
+  const normalizedTarget = String(targetId || "").trim();
+  if (normalizedTarget) return normalizedTarget;
+
+  const fields = settings.platformConfigs?.[platformId]?.fields ?? {};
+  if (platformId === "telegram") {
+    return String(fields.defaultChatId || "").trim();
+  }
+  if (platformId === "feishu") {
+    return String(fields.defaultOpenId || "").trim();
+  }
+  return "";
+}
+
+async function executePlatformDebugAction({ action, platformId, targetId, text }) {
+  if (action === "diagnose") {
+    const report = buildPlatformDiagnosis(platformId);
+    const debugAt = Date.now();
+    rememberPlatformDebug(
+      platformId,
+      {
+        action: "diagnose",
+        ok: true,
+        status: "completed",
+        target: resolvePlatformDebugTarget(platformId, targetId) || undefined,
+        message: report.summary,
+        at: debugAt,
+      },
+      {},
+    );
+
+    return {
+      httpStatus: 200,
+      body: {
+        ok: true,
+        action,
+        report,
+        message: report.summary,
+      },
+    };
+  }
+
+  if (action === "probe_webhook") {
+    const probe = await probePlatformWebhook(platformId);
+    const probeOk = probe.localReachable && probe.adapterReady && (!probe.configuredPublicUrl || probe.pathMatches);
+    const probeAt = Date.now();
+    rememberPlatformDebug(
+      platformId,
+      {
+        action: "probe_webhook",
+        ok: probeOk,
+        status: probeOk ? "completed" : "failed",
+        target: probe.configuredPublicUrl || probe.webhookRoute,
+        message: probe.summary,
+        at: probeAt,
+      },
+      {
+        detail: probe.summary,
+        lastCheckedAt: probeAt,
+      },
+    );
+
+    return {
+      httpStatus: 200,
+      body: {
+        ok: probeOk,
+        action,
+        probe,
+        message: probe.summary,
+      },
+    };
+  }
+
+  if (action === "send_test_message") {
+    const resolvedTargetId = resolvePlatformDebugTarget(platformId, targetId);
+    if (!resolvedTargetId) {
+      return {
+        httpStatus: 400,
+        body: { ok: false, error: "缺少 targetId，或当前平台未配置默认目标。" },
+      };
+    }
+
+    const outboundText = text || "这是一条平台联调测试消息。";
+    const { sentAt: outboundTimestamp } = await sendPlatformMessageWithRetry({
+      platformId,
+      targetId: resolvedTargetId,
+      text: outboundText,
+      trigger: "debug",
+      bypassCooldown: true,
+      successDetail: `联调测试消息已发送到 ${resolvedTargetId}。`,
+      failureDetailPrefix: "联调测试消息发送失败",
+    });
+    const message = `已向 ${resolvedTargetId} 发送测试消息`;
+
+    rememberPlatformDebug(
+      platformId,
+      {
+        action: "send_test_message",
+        ok: true,
+        status: "sent",
+        target: resolvedTargetId,
+        message,
+        at: outboundTimestamp,
+      },
+      {
+        status: "connected",
+        lastEventAt: outboundTimestamp,
+        accountLabel: summarizePlatformAccount(platformId, settings.platformConfigs?.[platformId]?.fields ?? {}),
+      },
+    );
+    broadcastChannelEvent({
+      session: buildChannelSessionSnapshot({
+        platformId,
+        targetId: resolvedTargetId,
+        direction: "outbound",
+        text: outboundText,
+        deliveryStatus: "sent",
+        requiresReply: false,
+        status: "active",
+        summary: `联调测试消息已发送：${outboundText.slice(0, 80)}`,
+        timestamp: outboundTimestamp,
+      }),
+      title: "发送联调测试消息",
+      detail: outboundText.slice(0, 500),
+      status: "sent",
+      eventType: "connector",
+      trigger: "debug",
+      externalRef: resolvedTargetId,
+    });
+
+    return {
+      httpStatus: 200,
+      body: {
+        ok: true,
+        action,
+        platformId,
+        targetId: resolvedTargetId,
+        message,
+      },
+    };
+  }
+
+  if (action === "simulate_inbound") {
+    const resolvedTargetId = String(targetId || resolvePlatformDebugTarget(platformId, targetId) || `debug-${platformId}`).trim();
+    const inboundText = text || "这是一条模拟入站消息，用于联调工作台。";
+    const inboundTimestamp = Date.now();
+    const inboundMessageKey = `debug:${platformId}:${resolvedTargetId}:${inboundTimestamp}`;
+    const message = `已注入 ${resolvedTargetId} 的模拟入站消息`;
+    markInboundMessageProcessed(platformId, inboundMessageKey, inboundTimestamp);
+
+    rememberPlatformDebug(
+      platformId,
+      {
+        action: "simulate_inbound",
+        ok: true,
+        status: "completed",
+        target: resolvedTargetId,
+        message,
+        at: inboundTimestamp,
+      },
+      {
+        status: "connected",
+        detail: `已注入模拟入站事件：${resolvedTargetId}`,
+        healthScore: 100,
+        pendingEvents: 1,
+        lastEventAt: inboundTimestamp,
+        lastInboundAt: inboundTimestamp,
+        lastInboundMessageKey: inboundMessageKey,
+        accountLabel: summarizePlatformAccount(platformId, settings.platformConfigs?.[platformId]?.fields ?? {}),
+      },
+    );
+    broadcastChannelEvent({
+      session: buildChannelSessionSnapshot({
+        platformId,
+        targetId: resolvedTargetId,
+        direction: "inbound",
+        text: inboundText,
+        deliveryStatus: "delivered",
+        requiresReply: true,
+        status: "active",
+        summary: `模拟入站消息：${inboundText.slice(0, 80)}`,
+        timestamp: inboundTimestamp,
+        externalMessageId: inboundMessageKey,
+      }),
+      title: "模拟入站消息",
+      detail: inboundText.slice(0, 500),
+      status: "completed",
+      eventType: "message",
+      trigger: "debug",
+      externalRef: resolvedTargetId,
+    });
+
+    return {
+      httpStatus: 200,
+      body: {
+        ok: true,
+        action,
+        platformId,
+        targetId: resolvedTargetId,
+        message,
+      },
+    };
+  }
+
+  return {
+    httpStatus: 400,
+    body: { ok: false, error: `不支持的 action：${action || "empty"}` },
+  };
+}
+
+function buildChannelSessionPayload({
+  platformId,
+  externalRef,
+  direction,
+  text,
+  timestamp,
+  requiresReply,
+  status,
+  deliveryStatus,
+  summary,
+  unreadCount,
+  handledBy,
+  lastHandledAt,
+  lastDeliveryError,
+  externalMessageId,
+}) {
+  const channel = mapPlatformToChannel(platformId);
+  return {
+    channel,
+    externalRef: String(externalRef),
+    title: `${platformId}:${externalRef}`,
+    participantLabel: String(externalRef),
+    remoteUserId: String(externalRef),
+    accountLabel: summarizePlatformAccount(platformId, settings.platformConfigs?.[platformId]?.fields ?? {}),
+    lastMessageDirection: direction,
+    lastDeliveryStatus: deliveryStatus,
+    lastMessagePreview: String(text || "").slice(0, 140),
+    unreadCount,
+    requiresReply,
+    status,
+    summary,
+    lastMessageAt: timestamp,
+    lastSyncedAt: timestamp,
+    ...(externalMessageId ? { lastExternalMessageId: String(externalMessageId) } : {}),
+    ...(direction === "outbound" ? { lastOutboundAt: timestamp } : {}),
+    ...(lastHandledAt ? { lastHandledAt } : {}),
+    ...(handledBy ? { handledBy } : {}),
+    ...(lastDeliveryError ? { lastDeliveryError } : {}),
+  };
+}
+
 function broadcastChannelEvent(payload) {
+  const session = payload?.session
+    ? {
+        ...payload.session,
+        lastSyncedAt: payload.session.lastSyncedAt ?? Date.now(),
+      }
+    : undefined;
   broadcast({
     type: "channel_event",
     ...payload,
+    ...(session ? { session } : {}),
   });
 }
 
@@ -870,6 +1836,170 @@ function broadcastExecutionUpdate(payload) {
     type: "execution_update",
     ...payload,
   });
+}
+
+function buildChannelSessionSnapshot({
+  platformId,
+  targetId,
+  direction,
+  text,
+  deliveryStatus,
+  requiresReply,
+  status,
+  summary,
+  timestamp,
+  deliveryError,
+  externalMessageId,
+}) {
+  const channel = mapPlatformToChannel(platformId);
+  return {
+    channel,
+    externalRef: String(targetId),
+    title: `${platformId}:${targetId}`,
+    participantLabel: String(targetId),
+    remoteUserId: String(targetId),
+    lastMessageDirection: direction,
+    lastDeliveryStatus: deliveryStatus,
+    lastDeliveryError: deliveryError,
+    lastMessagePreview: String(text || "").slice(0, 140),
+    unreadCount: direction === "inbound" ? 1 : 0,
+    requiresReply,
+    status,
+    summary,
+    lastMessageAt: timestamp,
+    lastExternalMessageId: externalMessageId ? String(externalMessageId) : undefined,
+    lastInboundAt: direction === "inbound" ? timestamp : undefined,
+    lastOutboundAt: direction === "outbound" ? timestamp : undefined,
+    lastOutboundText: direction === "outbound" ? String(text || "") : undefined,
+    lastFailedOutboundText: deliveryStatus === "failed" ? String(text || "") : undefined,
+    accountLabel: summarizePlatformAccount(platformId, settings.platformConfigs?.[platformId]?.fields ?? {}),
+  };
+}
+
+function buildPlatformDiagnosis(platformId) {
+  const platformConfig = settings.platformConfigs?.[platformId] ?? { enabled: false, fields: {} };
+  const fields = platformConfig.fields ?? {};
+  const requiredKeys = PLATFORM_FIELD_REQUIREMENTS[platformId] ?? [];
+  const missingRequiredKeys = requiredKeys.filter((key) => !String(fields[key] || "").trim());
+  const publicWebhookHint = String(fields.webhookUrl || "").trim();
+  const defaultTarget = resolvePlatformDebugTarget(platformId, "");
+  const webhookRoute = PLATFORM_WEBHOOK_PATHS[platformId] ?? "";
+  const running = isPlatformRunning(platformId);
+
+  const checks = [
+    {
+      id: "configured",
+      label: "基础凭证",
+      status: missingRequiredKeys.length === 0 ? "pass" : "fail",
+      detail: missingRequiredKeys.length === 0
+        ? "必填字段已补齐。"
+        : `缺少必填字段：${missingRequiredKeys.join("、")}`,
+    },
+    {
+      id: "enabled",
+      label: "运行开关",
+      status: platformConfig.enabled ? "pass" : "warn",
+      detail: platformConfig.enabled ? "平台已启用。" : "平台尚未启用，服务端不会启动连接器。",
+    },
+    {
+      id: "runtime",
+      label: "适配器运行态",
+      status: running ? "pass" : (platformConfig.enabled ? "warn" : "neutral"),
+      detail: running ? "连接器进程已启动。" : (platformConfig.enabled ? "连接器未在服务端运行。" : "平台未启用，暂不检查运行态。"),
+    },
+  ];
+
+  if (webhookRoute) {
+    checks.push({
+      id: "webhook",
+      label: "Webhook 回调",
+      status: publicWebhookHint ? "pass" : "warn",
+      detail: publicWebhookHint
+        ? `已填写公网回调标记：${publicWebhookHint}`
+        : `服务端回调入口为 ${webhookRoute}，但尚未填写公网映射地址标记。`,
+    });
+  }
+
+  if (platformId === "telegram" || platformId === "feishu") {
+    checks.push({
+      id: "defaultTarget",
+      label: "默认联调目标",
+      status: defaultTarget ? "pass" : "warn",
+      detail: defaultTarget
+        ? `当前默认目标为 ${defaultTarget}`
+        : "未配置默认目标，发送测试消息时需要手动填写目标 ID。",
+    });
+  }
+
+  if (platformConfig.errorMsg) {
+    checks.push({
+      id: "recentError",
+      label: "最近错误",
+      status: "warn",
+      detail: platformConfig.errorMsg,
+    });
+  }
+
+  const failingCount = checks.filter((item) => item.status === "fail").length;
+  const warningCount = checks.filter((item) => item.status === "warn").length;
+  const score = Math.max(0, Math.min(100, 100 - failingCount * 35 - warningCount * 15));
+  const summary = failingCount > 0
+    ? "存在阻断项，建议先补齐配置后再联调。"
+    : warningCount > 0
+      ? "基础链路可继续，但仍有风险项建议处理。"
+      : "诊断通过，可以继续做真实联调。";
+
+  const suggestedActions = checks
+    .filter((item) => item.status === "fail" || item.status === "warn")
+    .map((item) => item.detail);
+
+  return {
+    platformId,
+    summary,
+    score,
+    checks,
+    suggestedActions,
+    status: platformConfig.status ?? "idle",
+    detail: platformConfig.detail ?? "",
+    accountLabel: summarizePlatformAccount(platformId, fields),
+    checkedAt: Date.now(),
+  };
+}
+
+async function probePlatformWebhook(platformId) {
+  const webhookRoute = PLATFORM_WEBHOOK_PATHS[platformId];
+  if (!webhookRoute) {
+    throw new Error("当前平台不是 Webhook 型接入，无需探测。");
+  }
+
+  const configuredPublicUrl = String(settings.platformConfigs?.[platformId]?.fields?.webhookUrl || "").trim();
+  const localProbeUrl = `http://127.0.0.1:${PORT}${webhookRoute}?probe=1`;
+  const response = await fetch(localProbeUrl, { method: "GET" });
+  const payload = await response.json().catch(() => ({}));
+  const adapterReady = Boolean(payload?.adapterReady);
+  const localReachable = response.ok;
+  const pathMatches = configuredPublicUrl ? configuredPublicUrl.endsWith(webhookRoute) : false;
+  const summary = localReachable
+    ? adapterReady
+      ? (configuredPublicUrl
+          ? (pathMatches
+              ? "Webhook 本机路由可达，适配器已挂载，公网地址路径也匹配。"
+              : "Webhook 本机路由可达，适配器已挂载，但公网地址路径与预期不一致。")
+          : "Webhook 本机路由可达，适配器已挂载，但还没填写公网地址标记。")
+      : "Webhook 路由可达，但适配器尚未挂载，通常说明平台未成功启用。"
+    : "Webhook 本机路由探测失败。";
+
+  return {
+    platformId,
+    webhookRoute,
+    localProbeUrl,
+    configuredPublicUrl,
+    localReachable,
+    adapterReady,
+    pathMatches,
+    probeStatus: response.status,
+    summary,
+  };
 }
 
 function parseToolResultPayload(result) {
@@ -1790,190 +2920,161 @@ async function meeting(topic, participants = ["explorer", "writer", "performer",
   return summary;
 }
 
-async function handlePlatformMessage(userId, text, platformId) {
+function normalizePlatformInboundMessage(messageOrUserId, text, platformId) {
+  const payload = messageOrUserId && typeof messageOrUserId === "object" && !Array.isArray(messageOrUserId)
+    ? messageOrUserId
+    : {
+        userId: messageOrUserId,
+        text,
+        platformId,
+      };
+
+  return {
+    userId: String(payload?.userId || "").trim(),
+    text: String(payload?.text || "").trim(),
+    platformId: String(payload?.platformId || platformId || "").trim(),
+    inboundMessageKey: String(payload?.inboundMessageKey || "").trim() || undefined,
+    externalMessageId: String(payload?.externalMessageId || "").trim() || undefined,
+  };
+}
+
+async function handlePlatformMessage(messageOrUserId, text, platformId) {
   const taskAgentMap = {};
-  const channel = mapPlatformToChannel(platformId);
+  const inboundMessage = normalizePlatformInboundMessage(messageOrUserId, text, platformId);
+  if (!inboundMessage.userId || !inboundMessage.text || !inboundMessage.platformId) {
+    return;
+  }
+
+  const { userId, text: inboundText, platformId: inboundPlatformId, inboundMessageKey, externalMessageId } = inboundMessage;
+  const channel = mapPlatformToChannel(inboundPlatformId);
   const inboundTimestamp = Date.now();
 
-  broadcastPlatformStatus(platformId, {
+  if (inboundMessageKey && hasProcessedInboundMessage(inboundPlatformId, inboundMessageKey, inboundTimestamp)) {
+    broadcastPlatformStatus(inboundPlatformId, {
+      status: "connected",
+      detail: "检测到重复入站消息，已自动去重忽略。",
+      healthScore: 100,
+      lastEventAt: inboundTimestamp,
+      lastInboundAt: inboundTimestamp,
+      lastInboundMessageKey: inboundMessageKey,
+      accountLabel: summarizePlatformAccount(inboundPlatformId, settings.platformConfigs?.[inboundPlatformId]?.fields ?? {}),
+    });
+    return;
+  }
+
+  if (inboundMessageKey) {
+    markInboundMessageProcessed(inboundPlatformId, inboundMessageKey, inboundTimestamp);
+  }
+
+  broadcastPlatformStatus(inboundPlatformId, {
     status: "connected",
     detail: "已收到最新入站消息，连接器在线。",
     healthScore: 100,
+    pendingEvents: 1,
     lastEventAt: inboundTimestamp,
+    lastInboundAt: inboundTimestamp,
+    lastInboundMessageKey: inboundMessageKey,
+    accountLabel: summarizePlatformAccount(inboundPlatformId, settings.platformConfigs?.[inboundPlatformId]?.fields ?? {}),
   });
   broadcastChannelEvent({
-    session: {
-      channel,
-      externalRef: String(userId),
-      title: `${platformId}:${userId}`,
-      participantLabel: String(userId),
-      remoteUserId: String(userId),
-      lastMessageDirection: "inbound",
-      lastDeliveryStatus: "delivered",
-      lastMessagePreview: String(text || "").slice(0, 140),
-      unreadCount: 1,
+    session: buildChannelSessionSnapshot({
+      platformId: inboundPlatformId,
+      targetId: userId,
+      direction: "inbound",
+      text: inboundText,
+      deliveryStatus: "delivered",
       requiresReply: true,
       status: "active",
-      summary: `最近收到入站消息：${String(text || "").slice(0, 80)}`,
-      lastMessageAt: inboundTimestamp,
-      accountLabel: summarizePlatformAccount(platformId, settings.platformConfigs?.[platformId]?.fields ?? {}),
-    },
+      summary: `最近收到入站消息：${inboundText.slice(0, 80)}`,
+      timestamp: inboundTimestamp,
+      externalMessageId,
+    }),
     title: "收到入站消息",
-    detail: String(text || "").slice(0, 500),
+    detail: inboundText.slice(0, 500),
     status: "completed",
     eventType: "message",
     externalRef: String(userId),
   });
 
+  const deliverPlatformReply = (agentId, resultText) => {
+    const normalizedResult = String(resultText || "").trim();
+    if (!normalizedResult) return;
+    const label = AGENT_DISPLAY[agentId] || agentId || "龙虾";
+    const outboundEnvelope = `【${label}】\n\n${normalizedResult}`;
+
+    sendPlatformMessageWithRetry({
+      platformId: inboundPlatformId,
+      targetId: userId,
+      text: outboundEnvelope,
+      trigger: "auto",
+      successDetail: "最近一条出站回复已成功送达。",
+      failureDetailPrefix: "最近一条出站回复发送失败",
+    })
+      .then(({ sentAt: outboundTimestamp }) => {
+        broadcastChannelEvent({
+          session: buildChannelSessionSnapshot({
+            platformId: inboundPlatformId,
+            targetId: userId,
+            direction: "outbound",
+            text: normalizedResult,
+            deliveryStatus: "sent",
+            requiresReply: false,
+            status: "active",
+            summary: `最近回复已发出：${normalizedResult.slice(0, 80)}`,
+            timestamp: outboundTimestamp,
+          }),
+          title: "发送平台回复",
+          detail: `【${label}】 ${normalizedResult.slice(0, 500)}`,
+          status: "sent",
+          eventType: "message",
+          externalRef: String(userId),
+        });
+      })
+      .catch((error) => {
+        const failure = resolveOutboundFailurePresentation(error, {
+          approvalSummary: "自动回复等待人工批准",
+          cooldownSummary: "连接器冷却中，等待人工重试",
+          failureSummary: "最近回复发送失败",
+        });
+        const failureAt = Date.now();
+        broadcastChannelEvent({
+          session: buildChannelSessionSnapshot({
+            platformId: inboundPlatformId,
+            targetId: userId,
+            direction: "outbound",
+            text: normalizedResult,
+            deliveryStatus: failure.operationStatus === "failed" ? "failed" : "pending",
+            requiresReply: true,
+            status: failure.channelStatus,
+            summary: failure.summary,
+            timestamp: failureAt,
+            deliveryError: failure.detail,
+          }),
+          title: failure.operationStatus === "blocked" ? "平台回复等待人工" : "平台回复发送失败",
+          detail: failure.detail,
+          status: failure.operationStatus,
+          eventType: failure.eventType,
+          failureReason: failure.failureReason,
+          externalRef: String(userId),
+        });
+      });
+  };
+
   global.__platformResultListener = (msg) => {
     if (msg.type === "task_add" && msg.task) {
       taskAgentMap[msg.task.id] = msg.task.assignedTo;
       if (msg.task.status === "done" && msg.task.result) {
-        const label = AGENT_DISPLAY[msg.task.assignedTo] || msg.task.assignedTo;
-        sendToPlatform(platformId, userId, `【${label}】\n\n${msg.task.result}`)
-          .then(() => {
-            const outboundTimestamp = Date.now();
-            broadcastPlatformStatus(platformId, {
-              status: "connected",
-              detail: "最近一条出站回复已成功送达。",
-              healthScore: 100,
-              lastEventAt: outboundTimestamp,
-            });
-            broadcastChannelEvent({
-              session: {
-                channel,
-                externalRef: String(userId),
-                title: `${platformId}:${userId}`,
-                participantLabel: String(userId),
-                remoteUserId: String(userId),
-                lastMessageDirection: "outbound",
-                lastDeliveryStatus: "sent",
-                lastMessagePreview: String(msg.task.result || "").slice(0, 140),
-                unreadCount: 0,
-                requiresReply: false,
-                status: "active",
-                summary: `最近回复已发出：${String(msg.task.result || "").slice(0, 80)}`,
-                lastMessageAt: outboundTimestamp,
-                accountLabel: summarizePlatformAccount(platformId, settings.platformConfigs?.[platformId]?.fields ?? {}),
-              },
-              title: "发送平台回复",
-              detail: `【${label}】 ${String(msg.task.result || "").slice(0, 500)}`,
-              status: "sent",
-              eventType: "message",
-              externalRef: String(userId),
-            });
-          })
-          .catch((error) => {
-            const failureMessage = String(error?.message || error || "平台回消息失败");
-            broadcastPlatformStatus(platformId, {
-              status: "degraded",
-              detail: `最近一条出站回复发送失败：${failureMessage}`,
-              errorMsg: failureMessage,
-              healthScore: 55,
-              lastEventAt: Date.now(),
-            });
-            broadcastChannelEvent({
-              session: {
-                channel,
-                externalRef: String(userId),
-                title: `${platformId}:${userId}`,
-                participantLabel: String(userId),
-                remoteUserId: String(userId),
-                lastMessageDirection: "outbound",
-                lastDeliveryStatus: "failed",
-                lastMessagePreview: String(msg.task.result || "").slice(0, 140),
-                unreadCount: 0,
-                requiresReply: true,
-                status: "waiting",
-                summary: `最近回复发送失败：${failureMessage}`,
-                lastMessageAt: Date.now(),
-                accountLabel: summarizePlatformAccount(platformId, settings.platformConfigs?.[platformId]?.fields ?? {}),
-              },
-              title: "平台回复发送失败",
-              detail: failureMessage,
-              status: "failed",
-              eventType: "connector",
-              failureReason: failureMessage,
-              externalRef: String(userId),
-            });
-          });
+        deliverPlatformReply(msg.task.assignedTo, msg.task.result);
       }
     }
     if (msg.type === "task_update" && msg.updates?.status === "done" && msg.updates?.result) {
       const agentId = taskAgentMap[msg.taskId];
-      const label = AGENT_DISPLAY[agentId] || agentId || "龙虾";
-      sendToPlatform(platformId, userId, `【${label}】\n\n${msg.updates.result}`)
-        .then(() => {
-          const outboundTimestamp = Date.now();
-          broadcastPlatformStatus(platformId, {
-            status: "connected",
-            detail: "最近一条出站回复已成功送达。",
-            healthScore: 100,
-            lastEventAt: outboundTimestamp,
-          });
-          broadcastChannelEvent({
-            session: {
-              channel,
-              externalRef: String(userId),
-              title: `${platformId}:${userId}`,
-              participantLabel: String(userId),
-              remoteUserId: String(userId),
-              lastMessageDirection: "outbound",
-              lastDeliveryStatus: "sent",
-              lastMessagePreview: String(msg.updates.result || "").slice(0, 140),
-              unreadCount: 0,
-              requiresReply: false,
-              status: "active",
-              summary: `最近回复已发出：${String(msg.updates.result || "").slice(0, 80)}`,
-              lastMessageAt: outboundTimestamp,
-              accountLabel: summarizePlatformAccount(platformId, settings.platformConfigs?.[platformId]?.fields ?? {}),
-            },
-            title: "发送平台回复",
-            detail: `【${label}】 ${String(msg.updates.result || "").slice(0, 500)}`,
-            status: "sent",
-            eventType: "message",
-            externalRef: String(userId),
-          });
-        })
-        .catch((error) => {
-          const failureMessage = String(error?.message || error || "平台回消息失败");
-          broadcastPlatformStatus(platformId, {
-            status: "degraded",
-            detail: `最近一条出站回复发送失败：${failureMessage}`,
-            errorMsg: failureMessage,
-            healthScore: 55,
-            lastEventAt: Date.now(),
-          });
-          broadcastChannelEvent({
-            session: {
-              channel,
-              externalRef: String(userId),
-              title: `${platformId}:${userId}`,
-              participantLabel: String(userId),
-              remoteUserId: String(userId),
-              lastMessageDirection: "outbound",
-              lastDeliveryStatus: "failed",
-              lastMessagePreview: String(msg.updates.result || "").slice(0, 140),
-              unreadCount: 0,
-              requiresReply: true,
-              status: "waiting",
-              summary: `最近回复发送失败：${failureMessage}`,
-              lastMessageAt: Date.now(),
-              accountLabel: summarizePlatformAccount(platformId, settings.platformConfigs?.[platformId]?.fields ?? {}),
-            },
-            title: "平台回复发送失败",
-            detail: failureMessage,
-            status: "failed",
-            eventType: "connector",
-            failureReason: failureMessage,
-            externalRef: String(userId),
-          });
-        });
+      deliverPlatformReply(agentId, msg.updates.result);
     }
   };
 
   try {
-    await dispatch(text);
+    await dispatch(inboundText);
     await new Promise((resolve) => setTimeout(resolve, 1500));
   } finally {
     global.__platformResultListener = null;
@@ -2062,6 +3163,28 @@ const httpServer = createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === "POST" && url.pathname === "/api/hermes-dispatch/cancel-run") {
+    try {
+      const body = await readJson(req);
+      const result = await cancelHermesDispatchRun(body.runId);
+      writeJson(res, 200, result);
+    } catch (error) {
+      writeJson(res, 400, { ok: false, error: error instanceof Error ? error.message : String(error) });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/hermes-dispatch/stop-task") {
+    try {
+      const body = await readJson(req);
+      const result = await stopHermesDispatchTask(body.runId, body.taskId);
+      writeJson(res, 200, result);
+    } catch (error) {
+      writeJson(res, 400, { ok: false, error: error instanceof Error ? error.message : String(error) });
+    }
+    return;
+  }
+
   if (req.method === "POST" && url.pathname === "/api/hermes-dispatch/run") {
     try {
       const body = await readJson(req);
@@ -2094,15 +3217,93 @@ const httpServer = createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === "POST" && url.pathname === "/api/platform-debug") {
+    let body = {};
+    try {
+      body = await readJson(req);
+      const action = String(body.action || "").trim();
+      const platformId = String(body.platformId || "").trim();
+      const text = String(body.text || "").trim();
+      const targetId = String(body.targetId || "").trim();
+
+      if (!platformId) {
+        writeJson(res, 400, { ok: false, error: "platformId 不能为空" });
+        return;
+      }
+
+      if (!["send_test_message", "simulate_inbound", "diagnose", "probe_webhook", "replay_last_debug"].includes(action)) {
+        writeJson(res, 400, { ok: false, error: `不支持的 action：${action || "empty"}` });
+        return;
+      }
+
+      let effectiveAction = action;
+      let effectiveTargetId = targetId;
+      let effectiveText = text;
+
+      if (action === "replay_last_debug") {
+        const lastAction = settings.platformConfigs?.[platformId]?.lastDebugAction;
+        if (!lastAction) {
+          writeJson(res, 400, { ok: false, error: "当前平台还没有可重放的最近联调记录。" });
+          return;
+        }
+        effectiveAction = lastAction;
+        effectiveTargetId = targetId || String(settings.platformConfigs?.[platformId]?.lastDebugTarget || "").trim();
+      }
+
+      const result = await executePlatformDebugAction({
+        action: effectiveAction,
+        platformId,
+        targetId: effectiveTargetId,
+        text: effectiveText,
+      });
+
+      writeJson(res, result.httpStatus, {
+        ...result.body,
+        replayedFrom: action === "replay_last_debug" ? settings.platformConfigs?.[platformId]?.lastDebugAction : undefined,
+        requestedAction: action,
+      });
+      return;
+
+    } catch (error) {
+      const failureMessage = error instanceof Error ? error.message : String(error);
+      const platformId = String(body?.platformId || "").trim();
+      if (platformId) {
+        const fallbackAction = String(body?.action || "").trim();
+        const lastAction = settings.platformConfigs?.[platformId]?.lastDebugAction;
+        const effectiveAction = fallbackAction === "replay_last_debug" ? lastAction : fallbackAction;
+        rememberPlatformDebug(
+          platformId,
+          {
+            action: effectiveAction || "diagnose",
+            ok: false,
+            status: "failed",
+            target: resolvePlatformDebugTarget(platformId, body?.targetId) || String(body?.targetId || "").trim() || undefined,
+            message: failureMessage,
+            at: Date.now(),
+          },
+          {
+            status: settings.platformConfigs?.[platformId]?.status ?? "degraded",
+            errorMsg: failureMessage,
+            detail: `联调动作失败：${failureMessage}`,
+          },
+        );
+      }
+      writeJson(res, 500, { ok: false, error: failureMessage });
+    }
+    return;
+  }
+
   if (req.method === "POST" && url.pathname === "/api/settings") {
     try {
       const body = await readJson(req);
       if (body.providers) settings.providers = body.providers;
       if (body.agentConfigs) settings.agentConfigs = body.agentConfigs;
-      if (body.platformConfigs) settings.platformConfigs = body.platformConfigs;
+      if (body.platformConfigs) settings.platformConfigs = mergePlatformConfigs(body.platformConfigs);
       if (body.userNickname !== undefined) settings.userNickname = body.userNickname;
       if (body.desktopProgramSettings) settings.desktopProgramSettings = body.desktopProgramSettings;
       if (body.hermesDispatchSettings) settings.hermesDispatchSettings = normalizeHermesDispatchSettings(body.hermesDispatchSettings);
+      await persistRuntimeSettings();
+      await ensureEnabledPlatformsRunning("settings");
       writeJson(res, 200, { ok: true });
     } catch {
       writeJson(res, 400, { ok: false, error: "设置数据格式错误" });
@@ -2230,6 +3431,19 @@ const httpServer = createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === "GET" && url.pathname === "/webhook/line" && url.searchParams.get("probe") === "1") {
+    const adapter = globalThis.__lineAdapter;
+    writeJson(res, 200, {
+      ok: true,
+      platformId: "line",
+      route: "/webhook/line",
+      adapterReady: Boolean(adapter),
+      accepts: ["POST"],
+      message: adapter ? "LINE Webhook 路由可达，适配器已挂载。" : "LINE Webhook 路由可达，但适配器尚未挂载。",
+    });
+    return;
+  }
+
   if (req.method === "POST" && url.pathname === "/webhook/line") {
     let body = "";
     req.on("data", (d) => { body += d; });
@@ -2265,6 +3479,18 @@ const httpServer = createServer(async (req, res) => {
   }
 
   if ((req.method === "POST" || req.method === "GET") && url.pathname === "/webhook/feishu") {
+    if (req.method === "GET" && url.searchParams.get("probe") === "1") {
+      const adapter = globalThis.__feishuAdapter;
+      writeJson(res, 200, {
+        ok: true,
+        platformId: "feishu",
+        route: "/webhook/feishu",
+        adapterReady: Boolean(adapter),
+        accepts: ["GET", "POST"],
+        message: adapter ? "飞书 Webhook 路由可达，适配器已挂载。" : "飞书 Webhook 路由可达，但适配器尚未挂载。",
+      });
+      return;
+    }
     let body = "";
     req.on("data", (d) => { body += d; });
     req.on("end", async () => {
@@ -2300,8 +3526,19 @@ const httpServer = createServer(async (req, res) => {
 
   if (url.pathname === "/webhook/wecom") {
     const adapter = globalThis.__wecomAdapter;
-    if (!adapter) { res.writeHead(404); res.end(); return; }
     if (req.method === "GET") {
+      if (url.searchParams.get("probe") === "1") {
+        writeJson(res, 200, {
+          ok: true,
+          platformId: "wecom",
+          route: "/webhook/wecom",
+          adapterReady: Boolean(adapter),
+          accepts: ["GET", "POST"],
+          message: adapter ? "企业微信 Webhook 路由可达，适配器已挂载。" : "企业微信 Webhook 路由可达，但适配器尚未挂载。",
+        });
+        return;
+      }
+      if (!adapter) { res.writeHead(404); res.end(); return; }
       const echostr = url.searchParams.get("echostr") ?? "";
       const query = Object.fromEntries(url.searchParams);
       if (adapter.verifySignature({ ...query, echostr })) {
@@ -2329,6 +3566,7 @@ const httpServer = createServer(async (req, res) => {
       return;
     }
     if (req.method === "POST") {
+      if (!adapter) { res.writeHead(404); res.end(); return; }
       let body = "";
       req.on("data", (d) => { body += d; });
       req.on("end", async () => {
@@ -2370,6 +3608,13 @@ const wss = new WebSocketServer({ server: httpServer });
 wss.on("connection", (ws) => {
   clients.add(ws);
   ws.send(JSON.stringify({ type: "connected" }));
+  for (const [platformId, config] of Object.entries(settings.platformConfigs ?? {})) {
+    ws.send(JSON.stringify({
+      type: "platform_status",
+      platformId,
+      ...config,
+    }));
+  }
 
   ws.on("message", async (data) => {
     let msg;
@@ -2383,11 +3628,13 @@ wss.on("connection", (ws) => {
       case "settings_sync":
         if (msg.providers) settings.providers = msg.providers;
         if (msg.agentConfigs) settings.agentConfigs = msg.agentConfigs;
-        if (msg.platformConfigs) settings.platformConfigs = msg.platformConfigs;
+        if (msg.platformConfigs) settings.platformConfigs = mergePlatformConfigs(msg.platformConfigs);
         if (msg.userNickname !== undefined) settings.userNickname = msg.userNickname;
         if (msg.desktopProgramSettings) settings.desktopProgramSettings = msg.desktopProgramSettings;
         if (msg.hermesDispatchSettings) settings.hermesDispatchSettings = normalizeHermesDispatchSettings(msg.hermesDispatchSettings);
         if (msg.runtime) updateClientRuntime(ws, msg.runtime);
+        void persistRuntimeSettings();
+        void ensureEnabledPlatformsRunning("settings_sync");
         ws.send(JSON.stringify({ type: "settings_ack" }));
         break;
       case "desktop_launch_result":
@@ -2464,6 +3711,159 @@ wss.on("connection", (ws) => {
           });
         }
         break;
+      case "channel_session_action":
+        if (msg.action === "send_reply") {
+          const platformId = String(msg.platformId || "").trim();
+          const externalRef = String(msg.externalRef || "").trim();
+          const replyText = String(msg.text || "").trim();
+          if (!platformId || !externalRef || !replyText) {
+            break;
+          }
+
+          try {
+            const { sentAt } = await sendPlatformMessageWithRetry({
+              platformId,
+              targetId: externalRef,
+              text: replyText,
+              trigger: "manual",
+              bypassCooldown: true,
+              successDetail: msg.retry ? "失败消息已重试并发出。" : "渠道会话回复已发出。",
+              failureDetailPrefix: msg.retry ? "重试平台回复失败" : "渠道会话回复失败",
+            });
+            ws.send(JSON.stringify({
+              type: "channel_action_result",
+              requestId: String(msg.requestId || ""),
+              sessionId: msg.sessionId,
+              ok: true,
+              message: msg.retry ? "失败消息已重新发出。" : "渠道会话回复已发送。",
+            }));
+            broadcastChannelEvent({
+              sessionId: msg.sessionId,
+              session: {
+                channel: mapPlatformToChannel(platformId),
+                externalRef,
+                title: msg.title || `${platformId}:${externalRef}`,
+                participantLabel: msg.participantLabel || externalRef,
+                remoteUserId: msg.remoteUserId || externalRef,
+                accountLabel: msg.accountLabel || summarizePlatformAccount(platformId, settings.platformConfigs?.[platformId]?.fields ?? {}),
+                lastMessageDirection: "outbound",
+                lastDeliveryStatus: "sent",
+                lastMessagePreview: replyText.slice(0, 140),
+                unreadCount: 0,
+                requiresReply: false,
+                status: "active",
+                summary: `最近回复已发出：${replyText.slice(0, 80)}`,
+                lastMessageAt: sentAt,
+                lastOutboundAt: sentAt,
+                lastOutboundText: replyText,
+                lastHandledAt: sentAt,
+                handledBy: "manual",
+              },
+              title: msg.retry ? "重试平台回复" : "发送平台回复",
+              detail: replyText.slice(0, 500),
+              status: "sent",
+              eventType: "message",
+              trigger: "manual",
+              externalRef,
+            });
+          } catch (error) {
+            const failedAt = Date.now();
+            const failure = resolveOutboundFailurePresentation(error, {
+              approvalSummary: "当前平台要求先审批再自动外发",
+              cooldownSummary: "连接器冷却中，请稍后重试或回到聊天接管",
+              failureSummary: msg.retry ? "重试平台回复失败" : "渠道会话回复失败",
+            });
+            ws.send(JSON.stringify({
+              type: "channel_action_result",
+              requestId: String(msg.requestId || ""),
+              sessionId: msg.sessionId,
+              ok: false,
+              message: failure.operationStatus === "blocked"
+                ? "当前回复已被治理规则拦截。"
+                : msg.retry ? "重试平台回复失败。" : "渠道会话回复失败。",
+              failureReason: failure.detail,
+            }));
+            broadcastChannelEvent({
+              sessionId: msg.sessionId,
+              session: {
+                channel: mapPlatformToChannel(platformId),
+                externalRef,
+                title: msg.title || `${platformId}:${externalRef}`,
+                participantLabel: msg.participantLabel || externalRef,
+                remoteUserId: msg.remoteUserId || externalRef,
+                accountLabel: msg.accountLabel || summarizePlatformAccount(platformId, settings.platformConfigs?.[platformId]?.fields ?? {}),
+                lastMessageDirection: "outbound",
+                lastDeliveryStatus: failure.operationStatus === "failed" ? "failed" : "pending",
+                lastMessagePreview: replyText.slice(0, 140),
+                unreadCount: 0,
+                requiresReply: true,
+                status: failure.channelStatus,
+                summary: failure.summary,
+                lastMessageAt: failedAt,
+                lastOutboundAt: failedAt,
+                lastOutboundText: replyText,
+                lastFailedOutboundText: replyText,
+                lastDeliveryError: failure.detail,
+              },
+              title: failure.operationStatus === "blocked"
+                ? (msg.retry ? "重试平台回复等待人工" : "发送平台回复已拦截")
+                : msg.retry ? "重试平台回复失败" : "发送平台回复失败",
+              detail: failure.detail,
+              status: failure.operationStatus,
+              eventType: failure.eventType,
+              trigger: "manual",
+              failureReason: failure.failureReason,
+              externalRef,
+            });
+          }
+        }
+        if (msg.action === "mark_handled") {
+          const platformId = String(msg.platformId || "").trim();
+          const externalRef = String(msg.externalRef || "").trim();
+          const handledAt = Date.now();
+          ws.send(JSON.stringify({
+            type: "channel_action_result",
+            requestId: String(msg.requestId || ""),
+            sessionId: msg.sessionId,
+            ok: true,
+            message: "渠道会话已标记为已处理。",
+          }));
+          if (platformId && externalRef) {
+            broadcastPlatformStatus(platformId, {
+              status: "connected",
+              detail: "渠道会话已人工标记为已处理。",
+              healthScore: 100,
+              pendingEvents: 0,
+              lastEventAt: handledAt,
+              accountLabel: summarizePlatformAccount(platformId, settings.platformConfigs?.[platformId]?.fields ?? {}),
+            });
+            broadcastChannelEvent({
+              sessionId: msg.sessionId,
+              session: {
+                channel: mapPlatformToChannel(platformId),
+                externalRef,
+                title: msg.title || `${platformId}:${externalRef}`,
+                participantLabel: msg.participantLabel || externalRef,
+                remoteUserId: msg.remoteUserId || externalRef,
+                accountLabel: msg.accountLabel || summarizePlatformAccount(platformId, settings.platformConfigs?.[platformId]?.fields ?? {}),
+                unreadCount: 0,
+                requiresReply: false,
+                status: "closed",
+                summary: "已由人工在渠道看板标记为已处理。",
+                lastHandledAt: handledAt,
+                handledBy: "manual",
+                lastMessageAt: handledAt,
+              },
+              title: "渠道会话已处理",
+              detail: "会话已由人工在 Channels Center 标记为已处理。",
+              status: "completed",
+              eventType: "message",
+              trigger: "manual",
+              externalRef,
+            });
+          }
+        }
+        break;
       case "dispatch":
         if (msg.instruction?.trim()) {
           const sessionId = msg.sessionId || "default";
@@ -2502,8 +3902,17 @@ wss.on("connection", (ws) => {
   });
 });
 
-httpServer.listen(PORT, () => {
-  console.log(`[ws-server] listening on ws://localhost:${PORT}`);
+async function startServer() {
+  await restoreRuntimeSettings();
+  await ensureEnabledPlatformsRunning("restore");
+  httpServer.listen(PORT, () => {
+    console.log(`[ws-server] listening on ws://localhost:${PORT}`);
+  });
+}
+
+startServer().catch((error) => {
+  console.error("[ws-server] failed to start:", error?.message || error);
+  process.exitCode = 1;
 });
 
 export function stopServer() {

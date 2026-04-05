@@ -1,10 +1,17 @@
 "use client";
 
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { sendWs } from "@/hooks/useWebSocket";
 import { syncRuntimeSettings } from "@/lib/runtime-settings-sync";
 import { useStore } from "@/store";
 import { filterByProjectScope, getSessionProjectLabel } from "@/lib/project-context";
+import {
+  canDirectReplySession,
+  getChannelSessionNextAction,
+  getChannelSessionRecentAction,
+  getChannelSessionStateLabel,
+  shouldSuggestDesktopTakeover,
+} from "@/lib/channel-session-presentation";
 import {
   buildPlatformConnectionSnapshot,
   getPlatformRequiredFieldSummary,
@@ -22,12 +29,15 @@ import type {
 } from "@/types/business-entities";
 
 export function ChannelsCenter() {
+  const [replyDrafts, setReplyDrafts] = useState<Record<string, string>>({});
+  const [sendingReplyKey, setSendingReplyKey] = useState<string | null>(null);
   const { platformConfigs, updatePlatformConfig, reconcilePlatformConfig } = useStore();
   const chatSessions = useStore(s => s.chatSessions);
   const activeSessionId = useStore(s => s.activeSessionId);
   const businessOperationLogs = useStore(s => s.businessOperationLogs);
   const businessContentTasks = useStore(s => s.businessContentTasks);
   const businessChannelSessions = useStore(s => s.businessChannelSessions);
+  const channelActionResult = useStore(s => s.channelActionResult);
   const wsStatus = useStore(s => s.wsStatus);
   const setActiveControlCenterSection = useStore(s => s.setActiveControlCenterSection);
   const setTab = useStore(s => s.setTab);
@@ -36,6 +46,8 @@ export function ChannelsCenter() {
   const focusWorkflowRun = useStore(s => s.focusWorkflowRun);
   const launchContentTaskNextCycle = useStore(s => s.launchContentTaskNextCycle);
   const applyContentChannelGovernance = useStore(s => s.applyContentChannelGovernance);
+  const markBusinessChannelSessionHandled = useStore(s => s.markBusinessChannelSessionHandled);
+  const setChannelActionResult = useStore(s => s.setChannelActionResult);
 
   const openControlSection = (section: ControlCenterSectionId) => {
     setActiveControlCenterSection(section);
@@ -144,6 +156,16 @@ export function ChannelsCenter() {
         .slice(0, 6),
     [platformSnapshots],
   );
+  const latestConnectorFailure = useMemo(
+    () => recentConnectorEvents.find(item => item.log.status === "failed") ?? null,
+    [recentConnectorEvents],
+  );
+  const webhookPendingCount = useMemo(
+    () => platformSnapshots.filter(({ config, snapshot, def }) =>
+      config.enabled && def.webhookBased && (snapshot.status === "webhook_missing" || snapshot.status === "configured"),
+    ).length,
+    [platformSnapshots],
+  );
 
   const enabledCount = PLATFORM_DEFINITIONS.filter(def => platformConfigs[def.id]?.enabled).length;
   const connectedCount = PLATFORM_DEFINITIONS.filter(def => isPlatformOperationalStatus(platformConfigs[def.id]?.status ?? "idle")).length;
@@ -180,6 +202,74 @@ export function ChannelsCenter() {
     void syncRuntimeSettings();
   };
 
+  useEffect(() => {
+    if (!channelActionResult?.sessionId) return;
+    setSendingReplyKey(current => (current === channelActionResult.sessionId ? null : current));
+    if (channelActionResult.ok) {
+      setReplyDraft(channelActionResult.sessionId, "");
+    }
+    const timer = window.setTimeout(() => {
+      setChannelActionResult(null);
+    }, channelActionResult.ok ? 1800 : 4200);
+    return () => window.clearTimeout(timer);
+  }, [channelActionResult, setChannelActionResult]);
+
+  const setReplyDraft = (sessionId: string, value: string) => {
+    setReplyDrafts(current => ({
+      ...current,
+      [sessionId]: value,
+    }));
+  };
+
+  const sendChannelReply = (session: BusinessChannelSession, options?: { text?: string; retry?: boolean }) => {
+    const text = (options?.text ?? replyDrafts[session.id] ?? "").trim();
+    if (!text || !canDirectReplySession(session)) return;
+
+    setSendingReplyKey(session.id);
+    if (options?.text && !(replyDrafts[session.id] ?? "").trim()) {
+      setReplyDraft(session.id, text);
+    }
+    const requestId = `channel-action-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    sendWs({
+      requestId,
+      type: "channel_session_action",
+      action: "send_reply",
+      sessionId: session.id,
+      platformId: session.channel,
+      externalRef: session.externalRef,
+      title: session.title,
+      participantLabel: session.participantLabel,
+      remoteUserId: session.remoteUserId,
+      accountLabel: session.accountLabel,
+      text,
+      retry: Boolean(options?.retry),
+    });
+  };
+
+  const markSessionHandled = (session: BusinessChannelSession) => {
+    const requestId = `channel-action-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const sent = sendWs({
+      requestId,
+      type: "channel_session_action",
+      action: "mark_handled",
+      sessionId: session.id,
+      platformId: session.channel,
+      externalRef: session.externalRef,
+      title: session.title,
+      participantLabel: session.participantLabel,
+      remoteUserId: session.remoteUserId,
+      accountLabel: session.accountLabel,
+    });
+    if (!sent) {
+      markBusinessChannelSessionHandled({
+        channelSessionId: session.id,
+        trigger: "manual",
+        detail: `已在 Channels Center 将 ${session.title} 标记为已处理。`,
+        handledBy: "manual",
+      });
+    }
+  };
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <div
@@ -212,6 +302,34 @@ export function ChannelsCenter() {
         </div>
       </div>
 
+      {channelActionResult ? (
+        <div
+          className="card"
+          style={{
+            padding: 14,
+            borderColor: channelActionResult.ok ? "rgba(34, 197, 94, 0.24)" : "rgba(239, 68, 68, 0.24)",
+            background: channelActionResult.ok
+              ? "linear-gradient(135deg, rgba(34, 197, 94, 0.1), rgba(255,255,255,0.02))"
+              : "linear-gradient(135deg, rgba(239, 68, 68, 0.1), rgba(255,255,255,0.02))",
+          }}
+        >
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", flexWrap: "wrap" }}>
+            <div style={{ display: "grid", gap: 6 }}>
+              <div style={{ fontSize: 13, fontWeight: 700 }}>
+                {channelActionResult.ok ? "渠道动作已完成" : "渠道动作失败"}
+              </div>
+              <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.7 }}>
+                {channelActionResult.message}
+                {channelActionResult.failureReason ? ` · ${channelActionResult.failureReason}` : ""}
+              </div>
+            </div>
+            <span style={eventBadgeStyle(channelActionResult.ok ? "completed" : "failed")}>
+              {channelActionResult.ok ? "OK" : "失败"}
+            </span>
+          </div>
+        </div>
+      ) : null}
+
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
         <ChannelMetric label="Channels" value={PLATFORM_DEFINITIONS.length} accent="var(--accent)" />
         <ChannelMetric label="Enabled" value={enabledCount} accent="#60a5fa" />
@@ -220,6 +338,72 @@ export function ChannelsCenter() {
         <ChannelMetric label="Attention" value={unhealthyCount} accent="#fb7185" />
         <ChannelMetric label="Webhook-based" value={webhookCount} accent="var(--warning)" />
       </div>
+
+      <div className="card" style={{ padding: 16 }}>
+        <div style={{ fontSize: 14, fontWeight: 700 }}>Quick Diagnosis</div>
+        <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 4 }}>
+          不需要真实凭证也能先判断更可能卡在配置、实时链路还是平台回执。
+        </div>
+
+        <div style={{ display: "grid", gap: 10, marginTop: 14 }}>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            <span style={inlineTagStyle}>WebSocket {wsStatus}</span>
+            <span style={inlineTagStyle}>已启用 {enabledCount}</span>
+            <span style={inlineTagStyle}>可运行 {connectedCount}</span>
+            <span style={inlineTagStyle}>待回调 {webhookPendingCount}</span>
+            <span style={inlineTagStyle}>待回复 {pendingRepliesCount}</span>
+          </div>
+
+          <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.8 }}>
+            {wsStatus !== "connected"
+              ? "如果 WebSocket 是 disconnected，先修实时链路，否则平台状态和动作回执都不会及时回流。"
+              : enabledCount === 0
+                ? "如果一个连接器都没启用，先去详细平台设置保存并同步凭证。"
+                : connectedCount === 0
+                  ? "连接器已启用但没有进入 connected/degraded，优先检查必填字段、Webhook 地址和服务端握手。"
+                  : latestConnectorFailure
+                    ? `最近失败来自 ${latestConnectorFailure.session.title}：${latestConnectorFailure.log.detail}`
+                    : "当前没有明显的连接器级失败，下一步优先用真实会话验证入站和回复。"}
+          </div>
+
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button type="button" className="btn-ghost" onClick={() => openControlSection("settings")}>
+              去平台设置排查
+            </button>
+            <button type="button" className="btn-ghost" onClick={() => openControlSection("readiness")}>
+              去上线总看板
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {channelActionResult ? (
+        <div
+          className="card"
+          style={{
+            padding: 14,
+            borderColor: channelActionResult.ok ? "rgba(34, 197, 94, 0.24)" : "rgba(248, 113, 113, 0.24)",
+            background: channelActionResult.ok
+              ? "linear-gradient(135deg, rgba(34, 197, 94, 0.08), rgba(255,255,255,0.02))"
+              : "linear-gradient(135deg, rgba(248, 113, 113, 0.08), rgba(255,255,255,0.02))",
+          }}
+        >
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start", flexWrap: "wrap" }}>
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: channelActionResult.ok ? "var(--success)" : "var(--danger)" }}>
+                {channelActionResult.ok ? "渠道动作已完成" : "渠道动作失败"}
+              </div>
+              <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 4, lineHeight: 1.75 }}>
+                {channelActionResult.message}
+                {channelActionResult.failureReason ? ` · ${channelActionResult.failureReason}` : ""}
+              </div>
+            </div>
+            <button type="button" className="btn-ghost" onClick={() => setChannelActionResult(null)}>
+              关闭
+            </button>
+          </div>
+        </div>
+      ) : null}
 
       <div className="card" style={{ padding: 16 }}>
         <div style={{ fontSize: 14, fontWeight: 700 }}>Platform Health Snapshot</div>
@@ -309,6 +493,13 @@ export function ChannelsCenter() {
           ) : (
             <>
               {attentionSessions.map(session => (
+                (() => {
+                  const stateLabel = getChannelSessionStateLabel(session);
+                  const recentAction = getChannelSessionRecentAction(session);
+                  const nextAction = getChannelSessionNextAction(session);
+                  const needsDesktopTakeover = shouldSuggestDesktopTakeover(session);
+
+                  return (
                 <article
                   key={`attention-session-${session.id}`}
                   style={{
@@ -327,8 +518,8 @@ export function ChannelsCenter() {
                         {session.channel} · {session.accountLabel ?? "默认账号"} · {session.participantLabel ?? session.remoteUserId ?? "未命名会话"}
                       </div>
                     </div>
-                    <span style={eventBadgeStyle(session.lastDeliveryStatus === "failed" ? "failed" : "pending")}>
-                      {session.lastDeliveryStatus === "failed" ? "发送失败" : "待回复"}
+                    <span style={eventBadgeStyle(session.lastDeliveryStatus === "failed" ? "failed" : stateLabel === "已处理" ? "completed" : "pending")}>
+                      {stateLabel}
                     </span>
                   </div>
 
@@ -340,12 +531,63 @@ export function ChannelsCenter() {
                     <span>未读 {session.unreadCount ?? 0}</span>
                     <span>方向 {session.lastMessageDirection ?? "mixed"}</span>
                     <span>最近活动 {formatEventTime(session.lastMessageAt)}</span>
+                    <span>最近动作 {recentAction}</span>
+                    <span>下一步 {nextAction}</span>
+                    {session.lastSyncedAt ? <span>同步 {formatEventTime(session.lastSyncedAt)}</span> : null}
                   </div>
+
+                  {session.lastDeliveryError ? (
+                    <div style={{ fontSize: 11, color: "var(--danger)", lineHeight: 1.7 }}>
+                      最近错误: {session.lastDeliveryError}
+                    </div>
+                  ) : null}
+
+                  {canDirectReplySession(session) ? (
+                    <div style={{ display: "grid", gap: 8 }}>
+                      <textarea
+                        className="input"
+                        value={replyDrafts[session.id] ?? ""}
+                        onChange={event => setReplyDraft(session.id, event.target.value)}
+                        placeholder="输入快速回复..."
+                        style={{ minHeight: 82, resize: "vertical" }}
+                      />
+                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                        <button
+                          type="button"
+                          className="btn-ghost"
+                          onClick={() => sendChannelReply(session)}
+                          disabled={sendingReplyKey === session.id || !(replyDrafts[session.id] ?? "").trim()}
+                        >
+                          {sendingReplyKey === session.id ? "发送中..." : "发送回复"}
+                        </button>
+                        {session.lastDeliveryStatus === "failed" && session.lastMessageDirection === "outbound" && session.lastMessagePreview ? (
+                          <button
+                            type="button"
+                            className="btn-ghost"
+                            onClick={() => sendChannelReply(session, { text: session.lastMessagePreview, retry: true })}
+                            disabled={sendingReplyKey === session.id}
+                          >
+                            重试最近发送
+                          </button>
+                        ) : null}
+                        {(session.requiresReply || (session.unreadCount ?? 0) > 0) ? (
+                          <button type="button" className="btn-ghost" onClick={() => markSessionHandled(session)}>
+                            标记已处理
+                          </button>
+                        ) : null}
+                      </div>
+                    </div>
+                  ) : null}
 
                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                     <button type="button" className="btn-ghost" onClick={() => openControlSection("remote")}>
                       去远程值守接管
                     </button>
+                    {needsDesktopTakeover ? (
+                      <button type="button" className="btn-ghost" onClick={() => openControlSection("desktop")}>
+                        去桌面接管
+                      </button>
+                    ) : null}
                     <button type="button" className="btn-ghost" onClick={() => setTab("tasks")}>
                       回聊天接管
                     </button>
@@ -354,6 +596,8 @@ export function ChannelsCenter() {
                     </button>
                   </div>
                 </article>
+                  );
+                })()
               ))}
 
               {platformAttentionItems.map(({ def, snapshot }) => (
@@ -413,7 +657,13 @@ export function ChannelsCenter() {
               当前项目还没有同步到真实渠道会话。
             </div>
           ) : (
-            scopedChannelSessions.slice(0, 6).map(session => (
+            scopedChannelSessions.slice(0, 6).map(session => {
+              const stateLabel = getChannelSessionStateLabel(session);
+              const recentAction = getChannelSessionRecentAction(session);
+              const nextAction = getChannelSessionNextAction(session);
+              const needsDesktopTakeover = shouldSuggestDesktopTakeover(session);
+
+              return (
               <article
                 key={session.id}
                 style={{
@@ -433,8 +683,8 @@ export function ChannelsCenter() {
                     </div>
                   </div>
                   <div style={{ display: "grid", justifyItems: "end", gap: 6 }}>
-                    <span style={eventBadgeStyle(session.lastDeliveryStatus === "failed" ? "failed" : session.requiresReply ? "pending" : "completed")}>
-                      {session.requiresReply ? "待回复" : session.lastDeliveryStatus ?? session.status}
+                    <span style={eventBadgeStyle(session.lastDeliveryStatus === "failed" ? "failed" : stateLabel === "已处理" ? "completed" : "pending")}>
+                      {stateLabel}
                     </span>
                     <span style={{ fontSize: 11, color: "var(--text-muted)" }}>{formatEventTime(session.lastMessageAt)}</span>
                   </div>
@@ -445,11 +695,58 @@ export function ChannelsCenter() {
                   <span>方向 {session.lastMessageDirection ?? "mixed"}</span>
                   <span>未读 {session.unreadCount ?? 0}</span>
                   <span>投递 {session.lastDeliveryStatus ?? "pending"}</span>
+                  <span>最近动作 {recentAction}</span>
+                  <span>下一步 {nextAction}</span>
+                  {session.lastHandledAt ? <span>处理 {formatEventTime(session.lastHandledAt)}</span> : null}
+                  {session.lastSyncedAt ? <span>同步 {formatEventTime(session.lastSyncedAt)}</span> : null}
                 </div>
 
                 <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.75 }}>
                   {session.lastMessagePreview ?? session.summary}
                 </div>
+
+                {session.lastDeliveryError ? (
+                  <div style={{ fontSize: 11, color: "var(--danger)", lineHeight: 1.7 }}>
+                    最近错误: {session.lastDeliveryError}
+                  </div>
+                ) : null}
+
+                {canDirectReplySession(session) ? (
+                  <div style={{ display: "grid", gap: 8 }}>
+                    <textarea
+                      className="input"
+                      value={replyDrafts[session.id] ?? ""}
+                      onChange={event => setReplyDraft(session.id, event.target.value)}
+                      placeholder="输入快速回复..."
+                      style={{ minHeight: 82, resize: "vertical" }}
+                    />
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                      <button
+                        type="button"
+                        className="btn-ghost"
+                        onClick={() => sendChannelReply(session)}
+                        disabled={sendingReplyKey === session.id || !(replyDrafts[session.id] ?? "").trim()}
+                      >
+                        {sendingReplyKey === session.id ? "发送中..." : "发送回复"}
+                      </button>
+                      {session.lastDeliveryStatus === "failed" && session.lastMessageDirection === "outbound" && session.lastMessagePreview ? (
+                        <button
+                          type="button"
+                          className="btn-ghost"
+                          onClick={() => sendChannelReply(session, { text: session.lastMessagePreview, retry: true })}
+                          disabled={sendingReplyKey === session.id}
+                        >
+                          重试最近发送
+                        </button>
+                      ) : null}
+                      {(session.requiresReply || (session.unreadCount ?? 0) > 0) ? (
+                        <button type="button" className="btn-ghost" onClick={() => markSessionHandled(session)}>
+                          标记已处理
+                        </button>
+                      ) : null}
+                    </div>
+                  </div>
+                ) : null}
 
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                   <button type="button" className="btn-ghost" onClick={() => openControlSection("entities")}>
@@ -458,12 +755,18 @@ export function ChannelsCenter() {
                   <button type="button" className="btn-ghost" onClick={() => openControlSection("remote")}>
                     去远程值守
                   </button>
+                  {needsDesktopTakeover ? (
+                    <button type="button" className="btn-ghost" onClick={() => openControlSection("desktop")}>
+                      去桌面接管
+                    </button>
+                  ) : null}
                   <button type="button" className="btn-ghost" onClick={() => setTab("tasks")}>
                     回聊天接管
                   </button>
                 </div>
               </article>
-            ))
+              );
+            })
           )}
         </div>
       </div>

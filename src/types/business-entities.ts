@@ -112,8 +112,13 @@ export interface BusinessChannelSession extends BusinessScopedEntity {
   lastMessagePreview?: string;
   unreadCount?: number;
   requiresReply?: boolean;
+  lastHandledAt?: number;
+  handledBy?: AgentId | "manual";
+  lastSyncedAt?: number;
   lastInboundAt?: number;
   lastOutboundAt?: number;
+  lastOutboundText?: string;
+  lastFailedOutboundText?: string;
   lastExecutionRunId?: string;
   lastWorkflowRunId?: string;
   status: "open" | "active" | "waiting" | "closed";

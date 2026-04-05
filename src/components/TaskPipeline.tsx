@@ -8,12 +8,12 @@ import { CHAT_GAP_MS, CHAT_TIMELINE_MAX, CHAT_VIEWPORT_MAX } from "@/lib/chat-se
 
 // 每个 Agent 的主题色
 const AGENT_COLORS: Record<string, { bg: string; text: string; border: string }> = {
-  orchestrator: { bg: "#ff6b6b22", text: "#ff6b6b", border: "#ff6b6b44" },
-  explorer:     { bg: "#4ecdc422", text: "#4ecdc4", border: "#4ecdc444" },
-  writer:       { bg: "#95e1d322", text: "#95e1d3", border: "#95e1d344" },
-  designer:     { bg: "#f3818122", text: "#f38181", border: "#f3818144" },
-  performer:    { bg: "#a78bfa22", text: "#a78bfa", border: "#a78bfa44" },
-  greeter:      { bg: "#feca5722", text: "#feca57", border: "#feca5744" },
+  orchestrator: { bg: "transparent", text: "var(--text)", border: "transparent" },
+  explorer:     { bg: "transparent", text: "var(--text)", border: "transparent" },
+  writer:       { bg: "transparent", text: "var(--text)", border: "transparent" },
+  designer:     { bg: "transparent", text: "var(--text)", border: "transparent" },
+  performer:    { bg: "transparent", text: "var(--text)", border: "transparent" },
+  greeter:      { bg: "transparent", text: "var(--text)", border: "transparent" },
 };
 
 const DESK_NOTE_TONES = ["amber", "mint", "sky", "rose"] as const;
@@ -162,9 +162,9 @@ function ChatBubble({ task, highlight }: { task: Task; highlight: boolean }) {
   const isUser = task.isUserMessage === true;
 
   const userColors = {
-    bg: "#3b82f622",
-    text: "#60a5fa",
-    border: "#3b82f644",
+    bg: "#F0F4F9",
+    text: "#1F1F1F",
+    border: "transparent",
   };
 
   const bubbleColors = isUser ? userColors : colors;

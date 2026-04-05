@@ -671,6 +671,11 @@ export function BusinessEntitiesCenter() {
                   <span>渠道 {session.channel}</span>
                   <span>客户 {session.customerId ? customerNameMap[session.customerId] ?? "未关联" : "未关联"}</span>
                 </div>
+                {(session.lastHandledAt || session.handledBy) ? (
+                  <div className="control-center__entity-note">
+                    最近处理: {session.handledBy ?? "manual"} {session.lastHandledAt ? `· ${new Date(session.lastHandledAt).toLocaleString("zh-CN", { hour12: false })}` : ""}
+                  </div>
+                ) : null}
                 <div className="control-center__quick-actions">
                   <button type="button" className="btn-ghost" onClick={() => advanceBusinessChannelSessionStatus(session.id)}>
                     推进状态

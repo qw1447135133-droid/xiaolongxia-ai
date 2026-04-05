@@ -64,9 +64,18 @@ export default class WecomAdapter {
     const fromUser = xmlBody.match(/<FromUserName><!\[CDATA\[(.*?)\]\]>/)?.[1];
     const msgType  = xmlBody.match(/<MsgType><!\[CDATA\[(.*?)\]\]>/)?.[1];
     const content  = xmlBody.match(/<Content><!\[CDATA\[(.*?)\]\]>/)?.[1];
+    const msgId = xmlBody.match(/<MsgId>(.*?)<\/MsgId>/)?.[1];
+    const createTime = xmlBody.match(/<CreateTime>(.*?)<\/CreateTime>/)?.[1];
 
     if (msgType === 'text' && fromUser && content?.trim()) {
-      this.onMessage(fromUser, content.trim(), 'wecom');
+      const externalMessageId = String(msgId || `${fromUser}:${createTime || Date.now()}`);
+      this.onMessage({
+        userId: fromUser,
+        text: content.trim(),
+        platformId: "wecom",
+        externalMessageId,
+        inboundMessageKey: `wecom:${externalMessageId}`,
+      });
     }
     return 'success';
   }

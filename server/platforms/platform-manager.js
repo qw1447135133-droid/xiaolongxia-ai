@@ -22,6 +22,10 @@ const ADAPTER_MAP = {
 // 当前运行中的适配器实例
 const runningAdapters = {};
 
+export function isPlatformRunning(platformId) {
+  return Boolean(runningAdapters[platformId]);
+}
+
 /**
  * 启动或更新一个平台适配器
  * @param {string} platformId

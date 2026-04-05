@@ -329,176 +329,150 @@ export function CommandInput({
             <span>{describeProjectMemory(activeProjectMemory)}</span>
           </div>
           <div className="command-input__memory-actions">
+            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: "var(--text-muted)" }}>
+              <input
+                type="checkbox"
+                checked={includeProjectMemory}
+                onChange={(event) => setIncludeProjectMemory(event.target.checked)}
+              />
+              发送时附带
+            </label>
             <button
-              type="button"
-              className={`btn-ghost command-input__memory-toggle ${includeProjectMemory ? "is-active" : ""}`}
-              onClick={() => setIncludeProjectMemory(value => !value)}
-            >
-              {includeProjectMemory ? "发送时附带" : "暂不附带"}
-            </button>
-            <button
-              type="button"
               className="btn-ghost"
-              onClick={() => appendCommandDraft(buildProjectMemorySnippet(activeProjectMemory))}
-            >
-              展开到输入框
-            </button>
-            <button
               type="button"
-              className="btn-ghost"
               onClick={() => setActiveWorkspaceProjectMemory(null)}
+              style={{ fontSize: 11, padding: "4px 10px" }}
             >
-              清除激活
+              关闭
             </button>
           </div>
         </div>
       )}
 
-      {!activeProjectMemory && recommendedProjectMemories.length > 0 && (
-        <div className="command-input__memory command-input__memory--suggested">
-          <div className="command-input__memory-copy">
-            <span className="command-input__memory-label">Suggested Memory</span>
-            <strong>{recommendedProjectMemories[0]!.memory.name}</strong>
-            <span>{recommendedProjectMemories[0]!.reasons.join(" · ") || describeProjectMemory(recommendedProjectMemories[0]!.memory)}</span>
-          </div>
-          <div className="command-input__memory-actions">
+      {recommendedProjectMemories.length > 0 && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 10 }}>
+          <div style={{ fontSize: 11, color: "var(--text-muted)" }}>推荐项目记忆</div>
+          {recommendedProjectMemories.slice(0, 2).map(({ memory, score }) => (
             <button
-              type="button"
-              className="btn-ghost command-input__memory-toggle is-active"
-              onClick={() => setActiveWorkspaceProjectMemory(recommendedProjectMemories[0]!.memory.id)}
-            >
-              激活推荐
-            </button>
-            <button
+              key={memory.id}
               type="button"
               className="btn-ghost"
-              onClick={() => appendCommandDraft(buildProjectMemorySnippet(recommendedProjectMemories[0]!.memory))}
+              onClick={() => setActiveWorkspaceProjectMemory(memory.id)}
+              style={{ display: "flex", justifyContent: "space-between", gap: 12, fontSize: 11, padding: "8px 10px" }}
             >
-              展开到输入框
-            </button>
-          </div>
-        </div>
-      )}
-
-      {recommendedProjectMemories.length > 1 && (
-        <div className="command-input__memory-rail">
-          {recommendedProjectMemories.slice(0, 3).map(item => (
-            <button
-              key={item.memory.id}
-              type="button"
-              className="command-input__memory-chip"
-              onClick={() => setActiveWorkspaceProjectMemory(item.memory.id)}
-            >
-              <strong>{item.memory.name}</strong>
-              <span>{item.reasons.join(" · ") || describeProjectMemory(item.memory)}</span>
+              <span style={{ textAlign: "left" }}>
+                <strong style={{ display: "block", color: "var(--text)" }}>{memory.name}</strong>
+                <span style={{ color: "var(--text-muted)" }}>{describeProjectMemory(memory)}</span>
+              </span>
+              <span style={{ color: "var(--text-muted)", whiteSpace: "nowrap" }}>相关度 {Math.round(score * 100)}%</span>
             </button>
           ))}
         </div>
       )}
 
-      {recommendedDeskNotes.length > 0 && (
-        <div className="command-input__memory-rail">
-          {recommendedDeskNotes.map(item => (
+      {(recommendedDeskNotes.length > 0 || recommendedKnowledgeDocuments.length > 0) && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 10 }}>
+          <div style={{ fontSize: 11, color: "var(--text-muted)" }}>可注入上下文</div>
+          {recommendedDeskNotes.slice(0, 2).map(({ note }) => (
             <button
-              key={item.note.id}
+              key={note.id}
               type="button"
-              className="command-input__memory-chip"
-              onClick={() => appendCommandDraft(buildDeskNoteSnippet(item.note))}
+              className="btn-ghost"
+              onClick={() => appendCommandDraft(`\n\n${buildDeskNoteSnippet(note)}`)}
+              style={{ display: "flex", justifyContent: "space-between", gap: 12, fontSize: 11, padding: "8px 10px" }}
             >
-              <strong>{item.note.title}</strong>
-              <span>{item.reasons.join(" · ") || describeDeskNote(item.note)}</span>
+              <span style={{ textAlign: "left" }}>
+                <strong style={{ display: "block", color: "var(--text)" }}>{note.title}</strong>
+                <span style={{ color: "var(--text-muted)" }}>{describeDeskNote(note)}</span>
+              </span>
+              <span style={{ color: "var(--text-muted)", whiteSpace: "nowrap" }}>注入 Desk Note</span>
             </button>
           ))}
-        </div>
-      )}
-
-      {recommendedKnowledgeDocuments.length > 0 && (
-        <div className="command-input__memory-rail">
-          {recommendedKnowledgeDocuments.map(item => (
+          {recommendedKnowledgeDocuments.slice(0, 2).map(({ document }) => (
             <button
-              key={item.document.id}
+              key={document.id}
               type="button"
-              className="command-input__memory-chip"
-              onClick={() => appendCommandDraft(buildKnowledgeDocumentSnippet(item.document))}
+              className="btn-ghost"
+              onClick={() => appendCommandDraft(`\n\n${buildKnowledgeDocumentSnippet(document)}`)}
+              style={{ display: "flex", justifyContent: "space-between", gap: 12, fontSize: 11, padding: "8px 10px" }}
             >
-              <strong>{item.document.title}</strong>
-              <span>{item.reasons.join(" · ") || describeKnowledgeDocument(item.document)}</span>
+              <span style={{ textAlign: "left" }}>
+                <strong style={{ display: "block", color: "var(--text)" }}>{document.title}</strong>
+                <span style={{ color: "var(--text-muted)" }}>{describeKnowledgeDocument(document)}</span>
+              </span>
+              <span style={{ color: "var(--text-muted)", whiteSpace: "nowrap" }}>注入知识文档</span>
             </button>
           ))}
         </div>
       )}
 
       {attachments.length > 0 && (
-        <div className="attachment-list">
-          {attachments.map(item => (
-            <div key={item.id} className="attachment-chip">
-              <span className="attachment-chip__type">{getAttachmentBadge(item.kind)}</span>
-              <span className="attachment-chip__name" title={item.file.name}>
-                {item.file.name}
-              </span>
-              <span className="attachment-chip__size">{formatFileSize(item.file.size)}</span>
-              <button
-                type="button"
-                className="attachment-chip__remove"
-                onClick={() => removeAttachment(item.id)}
-                aria-label={`Remove attachment ${item.file.name}`}
-                title="Remove attachment"
-              >
-                x
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 10 }}>
+          {attachments.map(({ id, file, kind }) => (
+            <div
+              key={id}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                padding: "6px 10px",
+                borderRadius: "var(--radius-sm)",
+                border: "1px solid var(--border)",
+                background: "var(--bg-secondary)",
+                fontSize: 11,
+              }}
+            >
+              <span style={{ color: "var(--text-muted)" }}>{getAttachmentBadge(kind)}</span>
+              <span style={{ color: "var(--text)" }}>{file.name}</span>
+              <span style={{ color: "var(--text-muted)" }}>{formatFileSize(file.size)}</span>
+              <button type="button" className="btn-ghost" onClick={() => removeAttachment(id)} style={{ padding: "2px 6px", fontSize: 11 }}>
+                移除
               </button>
             </div>
           ))}
         </div>
       )}
 
-      <div className="command-input__row">
+      <div style={{ display: "flex", gap: 10, alignItems: "flex-end", marginTop: 12 }}>
         <input
           ref={fileInputRef}
           type="file"
-          multiple
           accept={ACCEPTED_FILE_TYPES}
-          style={{ display: "none" }}
+          multiple
           onChange={handleFileChange}
+          style={{ display: "none" }}
         />
-
         <button
           type="button"
+          className="btn-ghost"
           onClick={openFilePicker}
           disabled={isDispatching}
-          title="Upload files"
-          aria-label="Upload attachments"
-          className={`btn-ghost command-input__upload ${attachments.length > 0 ? "is-active" : ""}`}
+          style={{ padding: "10px 12px" }}
+          title="添加附件"
         >
           +
         </button>
-
         <textarea
-          className="input command-input__field"
-          placeholder="例如：帮我分析这个需求、写一版开发计划，或结合 Desk 里的文件上下文继续当前任务..."
+          className="input"
           value={commandDraft}
           onChange={(event) => setCommandDraft(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Enter" && !event.shiftKey) {
-              event.preventDefault();
-              void dispatch();
-            }
-          }}
-          disabled={isDispatching}
-          rows={1}
+          placeholder="输入你的任务、问题、网页研究需求或桌面执行目标"
+          rows={4}
+          style={{ flex: 1, resize: "vertical", minHeight: 96 }}
         />
-
         <button
-          className="btn-primary command-input__send"
+          className={`command-input__send ${commandDraft.trim() && !isDispatching ? "is-ready" : ""}`}
           onClick={() => void dispatch()}
           disabled={isDispatching || !commandDraft.trim()}
+          title="Send message"
+          type="button"
         >
           {isDispatching ? (
-            <>
-              <span className="spinner" />
-              Running
-            </>
+            <span className="spinner" style={{ width: 16, height: 16, borderWidth: 2 }} />
           ) : (
-            "Send"
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" />
+            </svg>
           )}
         </button>
       </div>
@@ -508,8 +482,8 @@ export function CommandInput({
           ? `${attachments.length} attachment(s) ready.${activeProjectMemory && includeProjectMemory ? ` Active memory: ${activeProjectMemory.name}.` : ""} You can also inject file context directly from Desk preview tabs.`
           : activeProjectMemory && includeProjectMemory
             ? `当前发送会自动附带项目记忆「${activeProjectMemory.name}」，也可以在上方随时关闭。`
-              : recommendedProjectMemories.length > 0
-                ? `未手动激活项目记忆时，系统会优先参考推荐结果，并在命中足够高时自动召回。`
+            : recommendedProjectMemories.length > 0
+              ? `未手动激活项目记忆时，系统会优先参考推荐结果，并在命中足够高时自动召回。`
               : recommendedDeskNotes.length > 0
                 ? `系统已找到相关 Desk Notes，可一键注入输入框作为语义上下文。`
                 : recommendedKnowledgeDocuments.length > 0

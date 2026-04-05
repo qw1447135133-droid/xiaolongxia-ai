@@ -3,6 +3,7 @@
 import { useDeferredValue, useEffect, useMemo, useState, startTransition } from "react";
 import { resolveBackendUrl } from "@/lib/backend-url";
 import { sendWs } from "@/hooks/useWebSocket";
+import { syncRuntimeSettings } from "@/lib/runtime-settings-sync";
 import { applyDesktopLaunchNavigation } from "@/lib/desktop-launch-routing";
 import { useStore } from "@/store";
 import { getSessionProjectLabel } from "@/lib/project-context";
@@ -165,10 +166,26 @@ export function NativeAppsCenter() {
   }, [filteredCatalog]);
 
   const syncDesktopSettings = async () => {
-    const { providers, agentConfigs, userNickname, desktopProgramSettings: nextDesktopProgramSettings } = useStore.getState();
+    const {
+      providers,
+      agentConfigs,
+      platformConfigs,
+      userNickname,
+      desktopProgramSettings: nextDesktopProgramSettings,
+      hermesDispatchSettings,
+    } = useStore.getState();
 
     try {
-      if (sendWs({ type: "settings_sync", providers, agentConfigs, userNickname, desktopProgramSettings: nextDesktopProgramSettings })) {
+      if (sendWs({
+        type: "settings_sync",
+        providers,
+        agentConfigs,
+        platformConfigs,
+        userNickname,
+        desktopProgramSettings: nextDesktopProgramSettings,
+        hermesDispatchSettings,
+      })) {
+        void syncRuntimeSettings();
         return;
       }
 
@@ -176,7 +193,14 @@ export function NativeAppsCenter() {
       await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ providers, agentConfigs, userNickname, desktopProgramSettings: nextDesktopProgramSettings }),
+        body: JSON.stringify({
+          providers,
+          agentConfigs,
+          platformConfigs,
+          userNickname,
+          desktopProgramSettings: nextDesktopProgramSettings,
+          hermesDispatchSettings,
+        }),
       });
     } catch (error) {
       console.error("Failed to sync desktop program settings:", error);

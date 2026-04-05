@@ -8,6 +8,7 @@ export type AppTab = "dashboard" | "tasks" | "workspace" | "dispatch" | "meeting
 export type AutomationMode = "manual" | "supervised" | "autonomous";
 export type ControlCenterSectionId =
   | "overview"
+  | "readiness"
   | "entities"
   | "remote"
   | "execution"
@@ -286,6 +287,17 @@ export interface AgentConfig {
 
 export type ModelPresetTier = "reasoning" | "balanced" | "budget";
 export type TeamOperatingTemplateId = "engineering" | "support" | "content";
+export type PlatformConnectionStatus =
+  | "idle"
+  | "syncing"
+  | "configured"
+  | "connected"
+  | "degraded"
+  | "error"
+  | "auth_failed"
+  | "webhook_missing"
+  | "webhook_unreachable"
+  | "rate_limited";
 
 export const AGENT_META: Record<AgentId, { name: string; emoji: string; badge: string; defaultPersonality: string }> = {
   orchestrator: {
@@ -722,8 +734,16 @@ export interface PlatformDef {
 export interface PlatformConfig {
   enabled: boolean;
   fields: Record<string, string>;
-  status: "idle" | "connected" | "error";
+  status: PlatformConnectionStatus;
   errorMsg?: string;
+  detail?: string;
+  accountLabel?: string;
+  webhookUrl?: string;
+  healthScore?: number;
+  pendingEvents?: number;
+  lastSyncedAt?: number;
+  lastCheckedAt?: number;
+  lastEventAt?: number;
 }
 
 export const PLATFORM_DEFINITIONS: PlatformDef[] = [
@@ -781,6 +801,13 @@ export const PLATFORM_DEFINITIONS: PlatformDef[] = [
         required: true,
         secret: true,
       },
+      {
+        key: "webhookUrl",
+        label: "Webhook 回调地址",
+        placeholder: "https://your-domain.com/webhooks/line",
+        required: false,
+        hint: "用于标记已经配置公网回调地址",
+      },
     ],
   },
   {
@@ -825,6 +852,13 @@ export const PLATFORM_DEFINITIONS: PlatformDef[] = [
         required: false,
         hint: "用于会议结束后主动发送文案",
       },
+      {
+        key: "webhookUrl",
+        label: "Webhook 回调地址",
+        placeholder: "https://your-domain.com/webhooks/feishu",
+        required: false,
+        hint: "用于标记已经配置公网回调地址",
+      },
     ],
   },
   {
@@ -868,6 +902,13 @@ export const PLATFORM_DEFINITIONS: PlatformDef[] = [
         placeholder: "43 位字符...",
         required: true,
         secret: true,
+      },
+      {
+        key: "webhookUrl",
+        label: "Webhook 回调地址",
+        placeholder: "https://your-domain.com/webhooks/wecom",
+        required: false,
+        hint: "用于标记已经配置公网回调地址",
       },
     ],
   },

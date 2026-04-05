@@ -9,6 +9,7 @@ import { ArtifactsCenter } from "./ArtifactsCenter";
 import { BusinessEntitiesCenter } from "./BusinessEntitiesCenter";
 import { ChannelsCenter } from "./ChannelsCenter";
 import { ExecutionCenter } from "./ExecutionCenter";
+import { LaunchReadinessPanel } from "./LaunchReadinessPanel";
 import { NativeAppsCenter } from "./NativeAppsCenter";
 import { PluginsCenter } from "./PluginsCenter";
 import { RemoteOpsCenter } from "./RemoteOpsCenter";
@@ -30,6 +31,7 @@ export function ControlCenter() {
   const sections = useMemo<Array<{ id: ControlCenterSectionId; label: string; hint: string }>>(() => {
     const baseSections: Array<{ id: ControlCenterSectionId; label: string; hint: string }> = [
       { id: "overview", label: "Overview", hint: "Workbench status and shell structure" },
+      { id: "readiness", label: "Launch Readiness", hint: "Go-live blockers, recovery, and launch risks" },
       { id: "entities", label: "Business Entities", hint: "Customers, leads, tickets, content, sessions" },
       { id: "remote", label: "Remote Ops", hint: "Digital workforce readiness and gaps" },
       { id: "execution", label: "Execution Center", hint: "Tracked runs, steps, and outcomes" },
@@ -140,6 +142,7 @@ export function ControlCenter() {
             onSelectSection={setActiveControlCenterSection}
           />
         )}
+        {section === "readiness" && <ReadinessCenter onSelectSection={setActiveControlCenterSection} />}
         {section === "entities" && <BusinessEntitiesCenter />}
         {section === "remote" && <RemoteOpsCenter />}
         {section === "execution" && <ExecutionCenter />}
@@ -213,6 +216,8 @@ function ControlOverview({
         </div>
       </div>
 
+      <LaunchReadinessPanel onSelectSection={onSelectSection} />
+
       {activeTemplate && activeSurface ? (
         <div
           className="control-center__panel"
@@ -258,6 +263,7 @@ function ControlOverview({
             {activeSurface.recommendedSectionIds.map(sectionId => {
               const labelMap: Record<ControlCenterSectionId, string> = {
                 overview: "Overview",
+                readiness: "Launch Readiness",
                 entities: "Business Entities",
                 remote: "Remote Ops",
                 execution: "Execution Center",
@@ -314,6 +320,122 @@ function ControlOverview({
             <div className="control-center__stat-value" style={{ color: item.color }}>{item.value}</div>
           </div>
         ))}
+      </div>
+    </div>
+  );
+}
+
+function ReadinessCenter({
+  onSelectSection,
+}: {
+  onSelectSection: (section: ControlCenterSectionId) => void;
+}) {
+  const platformConfigs = useStore(s => s.platformConfigs);
+  const executionRuns = useStore(s => s.executionRuns);
+  const businessApprovals = useStore(s => s.businessApprovals);
+  const businessOperationLogs = useStore(s => s.businessOperationLogs);
+  const automationMode = useStore(s => s.automationMode);
+  const automationPaused = useStore(s => s.automationPaused);
+  const remoteSupervisorEnabled = useStore(s => s.remoteSupervisorEnabled);
+  const desktopInputSession = useStore(s => s.desktopInputSession);
+
+  const enabledPlatforms = Object.values(platformConfigs).filter(platform => platform.enabled);
+  const connectedPlatforms = enabledPlatforms.filter(platform =>
+    platform.status === "connected" || platform.status === "degraded",
+  );
+  const recoveryQueue = executionRuns.filter(run =>
+    run.status === "failed" || (run.recoveryState && run.recoveryState !== "none"),
+  ).length;
+  const pendingApprovals = businessApprovals.filter(item => item.status === "pending").length;
+  const publishFailures = businessOperationLogs.filter(log =>
+    log.eventType === "publish" && log.status === "failed",
+  ).length;
+  const blockedDispatches = businessOperationLogs.filter(log =>
+    (log.eventType === "dispatch" || log.eventType === "desktop") && (log.status === "blocked" || log.status === "failed"),
+  ).length;
+  const platformAlerts = enabledPlatforms.filter(platform =>
+    !["connected", "configured", "degraded", "syncing"].includes(platform.status),
+  ).length;
+
+  return (
+    <div className="control-center">
+      <div className="control-center__hero">
+        <div className="control-center__eyebrow">Launch Readiness</div>
+        <div className="control-center__hero-title">
+          把上线前阻断项集中看，不再分散在执行、连接器和远程值守里
+        </div>
+        <div className="control-center__hero-copy">
+          这一页只做一件事：把当前项目距离“可托管、可监督、可恢复”的差距一次摊开，方便上线前最后收口。
+        </div>
+      </div>
+
+      <LaunchReadinessPanel onSelectSection={onSelectSection} />
+
+      <div className="control-center__stats">
+        <div className="control-center__stat-card">
+          <div className="control-center__stat-label">平台告警</div>
+          <div className="control-center__stat-value" style={{ color: "#fb7185" }}>{platformAlerts}</div>
+        </div>
+        <div className="control-center__stat-card">
+          <div className="control-center__stat-label">已连接平台</div>
+          <div className="control-center__stat-value" style={{ color: "#22c55e" }}>
+            {connectedPlatforms.length}/{enabledPlatforms.length}
+          </div>
+        </div>
+        <div className="control-center__stat-card">
+          <div className="control-center__stat-label">恢复队列</div>
+          <div className="control-center__stat-value" style={{ color: "#f59e0b" }}>{recoveryQueue}</div>
+        </div>
+        <div className="control-center__stat-card">
+          <div className="control-center__stat-label">待审批</div>
+          <div className="control-center__stat-value" style={{ color: "#ef4444" }}>{pendingApprovals}</div>
+        </div>
+        <div className="control-center__stat-card">
+          <div className="control-center__stat-label">发布失败</div>
+          <div className="control-center__stat-value" style={{ color: "#c084fc" }}>{publishFailures}</div>
+        </div>
+        <div className="control-center__stat-card">
+          <div className="control-center__stat-label">阻断派发</div>
+          <div className="control-center__stat-value" style={{ color: "#7dd3fc" }}>{blockedDispatches}</div>
+        </div>
+      </div>
+
+      <div className="control-center__columns">
+        <div className="control-center__panel">
+          <div className="control-center__panel-title">当前托管模式</div>
+          <div className="control-center__list control-center__list--dense">
+            <div>自动化模式: <strong className="control-center__strong">{automationMode}</strong></div>
+            <div>自动化暂停: <strong className="control-center__strong">{automationPaused ? "是" : "否"}</strong></div>
+            <div>远程值守: <strong className="control-center__strong">{remoteSupervisorEnabled ? "开启" : "关闭"}</strong></div>
+            <div>桌面接管: <strong className="control-center__strong">{desktopInputSession.state}</strong></div>
+          </div>
+          <div className="control-center__quick-actions">
+            <button type="button" className="btn-ghost" onClick={() => onSelectSection("remote")}>
+              去远程值守
+            </button>
+            <button type="button" className="btn-ghost" onClick={() => onSelectSection("desktop")}>
+              去桌面接管
+            </button>
+          </div>
+        </div>
+
+        <div className="control-center__panel">
+          <div className="control-center__panel-title">最后收口建议</div>
+          <div className="control-center__list control-center__list--dense">
+            <div>1. 平台告警不为 0 时，优先去 Channels Center 处理 webhook、鉴权和限流问题。</div>
+            <div>2. 恢复队列不清空时，不建议直接进入全自动托管。</div>
+            <div>3. 审批积压或发布失败仍存在时，应由 Remote Ops 先做人工裁决。</div>
+            <div>4. 桌面接管若仍是 `manual-required`，说明真人兜底链路还在前台。</div>
+          </div>
+          <div className="control-center__quick-actions">
+            <button type="button" className="btn-ghost" onClick={() => onSelectSection("channels")}>
+              去连接器看板
+            </button>
+            <button type="button" className="btn-ghost" onClick={() => onSelectSection("execution")}>
+              去执行恢复
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   );

@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { reconnectWebSocket } from "@/hooks/useWebSocket";
 import { getProjectContentChannelSummaries } from "@/lib/content-governance";
 import { sendExecutionDispatch } from "@/lib/execution-dispatch";
+import { isPlatformOperationalStatus } from "@/lib/platform-connectors";
 import { useStore } from "@/store";
 import {
   buildBusinessAutomationQueue,
@@ -18,6 +19,7 @@ import {
 } from "@/lib/project-context";
 import { getTeamOperatingTemplate, TEAM_OPERATING_SURFACES, type AutomationMode, type ControlCenterSectionId, PLATFORM_DEFINITIONS } from "@/store/types";
 import type { BusinessOperationRecord } from "@/types/business-entities";
+import { LaunchReadinessPanel } from "./LaunchReadinessPanel";
 
 type AuditFocusRequest = {
   entityType: BusinessOperationRecord["entityType"];
@@ -138,8 +140,16 @@ export function RemoteOpsCenter() {
     [platformConfigs],
   );
   const connectedPlatforms = useMemo(
-    () => PLATFORM_DEFINITIONS.filter(def => platformConfigs[def.id]?.status === "connected"),
+    () => PLATFORM_DEFINITIONS.filter(def => isPlatformOperationalStatus(platformConfigs[def.id]?.status ?? "idle")),
     [platformConfigs],
+  );
+  const connectorAttentionCount = useMemo(
+    () =>
+      enabledPlatforms.filter(def => {
+        const status = platformConfigs[def.id]?.status ?? "idle";
+        return !isPlatformOperationalStatus(status) && status !== "configured" && status !== "syncing";
+      }).length,
+    [enabledPlatforms, platformConfigs],
   );
   const enabledScheduledTasks = useMemo(
     () => scheduledTasks.filter(task => task.enabled),
@@ -527,7 +537,7 @@ export function RemoteOpsCenter() {
       title: "自动化客服",
       description: "适合接 Webhook/机器人消息，自动分派给客服型数字员工并保留执行轨迹。",
       checks: {
-        channels: enabledPlatforms.length > 0,
+        channels: connectedPlatforms.length > 0,
         supervision: recentProjectRuns.length > 0,
         memory: scopedMemories.length > 0 || scopedDeskNotes.length > 0,
       },
@@ -541,7 +551,7 @@ export function RemoteOpsCenter() {
       title: "自动化销售",
       description: "更像多步骤流程执行，需要预设工作流、定时触发、结果回传和上下文记忆。",
       checks: {
-        channels: enabledPlatforms.length > 0,
+        channels: connectedPlatforms.length > 0,
         supervision: workflowRuns.length > 0 || enabledScheduledTasks.length > 0,
         memory: scopedMemories.length > 0,
       },
@@ -587,6 +597,8 @@ export function RemoteOpsCenter() {
           当前项目: {activeSession ? getSessionProjectLabel(activeSession) : "General"} · 远程运营就绪度 {remoteReadinessPercent}%
         </div>
       </div>
+
+      <LaunchReadinessPanel compact onSelectSection={setActiveControlCenterSection} />
 
       {activeTemplate && remoteRecommendation ? (
         <div
@@ -638,6 +650,10 @@ export function RemoteOpsCenter() {
         <div className="control-center__stat-card">
           <div className="control-center__stat-label">已连接渠道</div>
           <div className="control-center__stat-value" style={{ color: "var(--success)" }}>{connectedPlatforms.length}</div>
+        </div>
+        <div className="control-center__stat-card">
+          <div className="control-center__stat-label">连接器告警</div>
+          <div className="control-center__stat-value" style={{ color: "#fb7185" }}>{connectorAttentionCount}</div>
         </div>
         <div className="control-center__stat-card">
           <div className="control-center__stat-label">自动化计划</div>
@@ -1908,8 +1924,12 @@ function getAuditEventLabel(eventType: BusinessOperationRecord["eventType"]) {
   switch (eventType) {
     case "approval":
       return "审批";
+    case "connector":
+      return "连接器";
     case "desktop":
       return "桌面动作";
+    case "message":
+      return "消息";
     case "workflow":
       return "Workflow";
     case "publish":

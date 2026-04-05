@@ -3,6 +3,8 @@ import { useState, useEffect } from "react";
 import { useStore } from "@/store";
 import { PLATFORM_DEFINITIONS } from "@/store/types";
 import type { PlatformDef } from "@/store/types";
+import { derivePlatformProvisionState, getPlatformStatusLabel } from "@/lib/platform-connectors";
+import { syncRuntimeSettings } from "@/lib/runtime-settings-sync";
 import { sendWs } from "@/hooks/useWebSocket";
 
 export function PlatformSettings() {
@@ -19,7 +21,7 @@ export function PlatformSettings() {
 }
 
 function PlatformCard({ def }: { def: PlatformDef }) {
-  const { platformConfigs, updatePlatformConfig, updatePlatformField } = useStore();
+  const { platformConfigs, updatePlatformConfig, updatePlatformField, reconcilePlatformConfig } = useStore();
   const config = platformConfigs[def.id] ?? { enabled: false, fields: {}, status: "idle" };
   const [expanded, setExpanded] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -35,17 +37,34 @@ function PlatformCard({ def }: { def: PlatformDef }) {
 
   function toggle() {
     const next = !config.enabled;
-    updatePlatformConfig(def.id, { enabled: next, status: "idle", errorMsg: undefined });
+    updatePlatformConfig(def.id, {
+      enabled: next,
+      status: next ? "syncing" : "idle",
+      errorMsg: undefined,
+      detail: next ? "正在同步连接器配置。" : undefined,
+      lastSyncedAt: Date.now(),
+    });
     setExpanded(next);
     if (!next) {
       sendWs({ type: "platform_sync", platformId: def.id, enabled: false, fields: {} });
+      void syncRuntimeSettings();
+      return;
     }
+    reconcilePlatformConfig(def.id);
+    void syncRuntimeSettings();
   }
 
   async function handleSave() {
     if (!allRequiredFilled) return;
     setSaving(true);
-    updatePlatformConfig(def.id, { status: "idle", errorMsg: undefined });
+    const nextState = derivePlatformProvisionState(def, { ...config, enabled: true });
+    updatePlatformConfig(def.id, {
+      status: "syncing",
+      errorMsg: undefined,
+      detail: nextState.detail,
+      healthScore: nextState.healthScore,
+      lastSyncedAt: Date.now(),
+    });
     // 发送到服务端
     sendWs({
       type: "platform_sync",
@@ -53,28 +72,33 @@ function PlatformCard({ def }: { def: PlatformDef }) {
       enabled: true,
       fields: config.fields,
     });
-    // 乐观更新状态，等服务端回调（如需可扩展 ws 返回 platform_status）
-    setTimeout(() => {
-      updatePlatformConfig(def.id, { status: "connected" });
-      setSaving(false);
-    }, 800);
+    reconcilePlatformConfig(def.id);
+    await syncRuntimeSettings();
+    setSaving(false);
   }
 
   function handleDisconnect() {
-    updatePlatformConfig(def.id, { enabled: false, status: "idle", errorMsg: undefined });
+    updatePlatformConfig(def.id, { enabled: false, status: "idle", errorMsg: undefined, detail: undefined, healthScore: 0 });
     setExpanded(false);
     sendWs({ type: "platform_sync", platformId: def.id, enabled: false, fields: {} });
+    void syncRuntimeSettings();
   }
 
   const statusColor =
     config.status === "connected" ? "var(--success)" :
-    config.status === "error"     ? "var(--danger)" :
-    "var(--text-muted)";
+    config.status === "configured" || config.status === "syncing" || config.status === "degraded"
+      ? "var(--warning)"
+      : config.status === "idle"
+        ? "var(--text-muted)"
+        : "var(--danger)";
 
   const statusDot =
     config.status === "connected" ? "#22c55e" :
-    config.status === "error"     ? "#ef4444" :
-    "#888";
+    config.status === "configured" || config.status === "syncing" || config.status === "degraded"
+      ? "#f59e0b"
+      : config.status === "idle"
+        ? "#888"
+        : "#ef4444";
 
   return (
     <div className="card" style={{ padding: 0, overflow: "hidden" }}>
@@ -100,7 +124,7 @@ function PlatformCard({ def }: { def: PlatformDef }) {
           <div style={{ display: "flex", alignItems: "center", gap: 5, marginRight: 6 }}>
             <span style={{ width: 7, height: 7, borderRadius: "50%", background: statusDot, display: "inline-block" }} />
             <span style={{ fontSize: 11, color: statusColor }}>
-              {config.status === "connected" ? "已连接" : config.status === "error" ? "连接失败" : "未连接"}
+              {getPlatformStatusLabel(config.status)}
             </span>
           </div>
         )}
@@ -185,6 +209,17 @@ function PlatformCard({ def }: { def: PlatformDef }) {
               ✗ {config.errorMsg}
             </div>
           )}
+
+          {!config.errorMsg && config.detail ? (
+            <div style={{
+              fontSize: 11, padding: "5px 8px", borderRadius: "var(--radius-sm)",
+              background: "rgba(255,255,255,0.04)",
+              border: "1px solid rgba(255,255,255,0.08)",
+              color: "var(--text-muted)",
+            }}>
+              {config.detail}
+            </div>
+          ) : null}
 
           {/* 操作按钮 */}
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>

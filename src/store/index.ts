@@ -56,6 +56,7 @@ import {
 } from "@/lib/content-governance";
 import { getWorkflowTemplateById } from "@/lib/workflow-runtime";
 import { buildProjectContext, getProjectScopeKey, matchProjectScope } from "@/lib/project-context";
+import { derivePlatformProvisionState, getPlatformDefinition } from "@/lib/platform-connectors";
 import { PLUGIN_PACKS } from "@/lib/plugin-runtime";
 import type {
   BusinessApprovalRecord,
@@ -169,6 +170,7 @@ interface SettingsSlice {
   updateAgentConfig: (id: AgentId, updates: Partial<AgentConfig>) => void;
   updatePlatformConfig: (id: string, updates: Partial<PlatformConfig>) => void;
   updatePlatformField: (platformId: string, fieldKey: string, value: string) => void;
+  reconcilePlatformConfig: (platformId: string) => void;
   togglePlugin: (id: string) => void;
   applyPluginPack: (id: string) => void;
   setUserNickname: (nickname: string) => void;
@@ -266,7 +268,14 @@ interface BusinessEntitiesSlice {
     >,
   ) => void;
   updateBusinessContentTask: (id: string, updates: Partial<Omit<BusinessContentTask, "id" | "projectId" | "rootPath" | "createdAt">>) => void;
-  createBusinessChannelSession: (payload: Pick<BusinessChannelSession, "title" | "customerId" | "channel" | "externalRef" | "status" | "summary">) => void;
+  createBusinessChannelSession: (
+    payload: Pick<BusinessChannelSession, "title" | "customerId" | "channel" | "externalRef" | "status" | "summary">
+      & Partial<Omit<BusinessChannelSession, "id" | "projectId" | "rootPath" | "createdAt" | "updatedAt" | "title" | "customerId" | "channel" | "externalRef" | "status" | "summary">>,
+  ) => void;
+  upsertBusinessChannelSession: (
+    payload: Pick<BusinessChannelSession, "channel" | "externalRef">
+      & Partial<Omit<BusinessChannelSession, "createdAt" | "updatedAt">>,
+  ) => string;
   advanceBusinessLeadStage: (id: string) => void;
   advanceBusinessTicketStatus: (id: string) => void;
   advanceBusinessContentTaskStatus: (id: string) => void;
@@ -1559,7 +1568,7 @@ export const useStore = create<Store>()(
       setUserNickname: (nickname) => set({ userNickname: nickname }),
       setActiveTeamOperatingTemplate: (activeTeamOperatingTemplateId) => set({ activeTeamOperatingTemplateId }),
       platformConfigs: Object.fromEntries(
-        PLATFORM_DEFINITIONS.map(p => [p.id, { enabled: false, fields: {}, status: "idle" as const }])
+        PLATFORM_DEFINITIONS.map(p => [p.id, { enabled: false, fields: {}, status: "idle" as const, healthScore: 0 }])
       ),
       addProvider: (p) => set(s => ({ providers: [...s.providers, p] })),
       updateProvider: (id, updates) =>
@@ -1604,6 +1613,31 @@ export const useStore = create<Store>()(
             },
           },
         })),
+      reconcilePlatformConfig: (platformId) =>
+        set(s => {
+          const definition = getPlatformDefinition(platformId);
+          const current = s.platformConfigs[platformId];
+          if (!definition || !current) return {};
+
+          const derived = derivePlatformProvisionState(definition, current);
+          return {
+            platformConfigs: {
+              ...s.platformConfigs,
+              [platformId]: {
+                ...current,
+                status: derived.status,
+                detail: derived.detail,
+                healthScore: derived.healthScore,
+                errorMsg:
+                  derived.status === "idle"
+                  || derived.status === "configured"
+                  || derived.status === "webhook_missing"
+                    ? undefined
+                    : current.errorMsg,
+              },
+            },
+          };
+        }),
       togglePlugin: (id) =>
         set(s => ({
           enabledPluginIds: s.enabledPluginIds.includes(id)
@@ -2102,13 +2136,47 @@ export const useStore = create<Store>()(
                 rootPath: scope.rootPath,
                 createdAt: now,
                 updatedAt: now,
-                lastMessageAt: now,
+                lastMessageAt: payload.lastMessageAt ?? now,
                 ...payload,
               },
               ...s.businessChannelSessions,
             ],
           };
         }),
+      upsertBusinessChannelSession: (payload) => {
+        const state = get();
+        const now = Date.now();
+        const scope = resolveBusinessScope(state);
+        const existing = state.businessChannelSessions.find(item =>
+          (payload.id && item.id === payload.id) || item.externalRef === payload.externalRef,
+        );
+        const nextId = payload.id ?? existing?.id ?? `channel-session-${now}-${Math.random().toString(36).slice(2, 7)}`;
+        const mergedSession: BusinessChannelSession = {
+          ...existing,
+          ...payload,
+          id: nextId,
+          projectId: payload.projectId ?? existing?.projectId ?? scope.projectId,
+          rootPath: payload.rootPath ?? existing?.rootPath ?? scope.rootPath,
+          createdAt: existing?.createdAt ?? now,
+          updatedAt: now,
+          title: payload.title ?? existing?.title ?? `${payload.channel}:${payload.externalRef}`,
+          customerId: payload.customerId ?? existing?.customerId ?? null,
+          channel: payload.channel,
+          externalRef: payload.externalRef,
+          status: payload.status ?? existing?.status ?? "open",
+          summary: payload.summary ?? existing?.summary ?? "已同步新的渠道会话。",
+          lastMessageAt: payload.lastMessageAt ?? existing?.lastMessageAt ?? now,
+        };
+
+        set(s => ({
+          businessChannelSessions: [
+            mergedSession,
+            ...s.businessChannelSessions.filter(item => item.id !== nextId),
+          ],
+        }));
+
+        return nextId;
+      },
       advanceBusinessLeadStage: (id) =>
         set(s => ({
           businessLeads: s.businessLeads.map(item =>

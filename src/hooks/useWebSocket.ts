@@ -4,7 +4,17 @@ import { useEffect } from "react";
 import { applyDesktopLaunchNavigation } from "@/lib/desktop-launch-routing";
 import { useStore } from "@/store";
 import { randomId } from "@/lib/utils";
-import type { AgentId, AgentStatus, Task, Activity, ExecutionEvent, ExecutionRunSource, ExecutionRunStatus } from "@/store/types";
+import type {
+  AgentId,
+  AgentStatus,
+  Task,
+  Activity,
+  ExecutionEvent,
+  ExecutionRunSource,
+  ExecutionRunStatus,
+  PlatformConnectionStatus,
+} from "@/store/types";
+import type { BusinessChannelSession } from "@/types/business-entities";
 import type {
   DesktopInputControlPayload,
   DesktopInputControlResult,
@@ -23,6 +33,40 @@ type WsMessage =
   | { type: "desktop_input_request"; requestId: string; payload: DesktopInputControlPayload; executionRunId?: string; taskId?: string; sessionId?: string }
   | { type: "desktop_capture_request"; requestId: string; payload?: DesktopScreenshotPayload; executionRunId?: string; sessionId?: string }
   | { type: "desktop_installed_apps_request"; requestId: string; payload?: { forceRefresh?: boolean } }
+  | {
+      type: "platform_status";
+      platformId: string;
+      status: PlatformConnectionStatus;
+      errorMsg?: string;
+      detail?: string;
+      accountLabel?: string;
+      webhookUrl?: string;
+      healthScore?: number;
+      pendingEvents?: number;
+      lastSyncedAt?: number;
+      lastCheckedAt?: number;
+      lastEventAt?: number;
+    }
+  | {
+      type: "channel_session_sync";
+      session: Pick<BusinessChannelSession, "channel" | "externalRef">
+        & Partial<Omit<BusinessChannelSession, "projectId" | "rootPath" | "createdAt" | "updatedAt">>;
+    }
+  | {
+      type: "channel_event";
+      session?: Pick<BusinessChannelSession, "channel" | "externalRef">
+        & Partial<Omit<BusinessChannelSession, "projectId" | "rootPath" | "createdAt" | "updatedAt">>;
+      sessionId?: string;
+      title: string;
+      detail: string;
+      status: "pending" | "sent" | "blocked" | "completed" | "failed";
+      trigger?: "manual" | "auto";
+      eventType?: "connector" | "message";
+      failureReason?: string;
+      executionRunId?: string;
+      workflowRunId?: string;
+      externalRef?: string;
+    }
   | { type: "agent_status"; agentId: AgentId; status: AgentStatus; currentTask?: string; executionRunId?: string }
   | { type: "task_add"; task: Task; executionRunId?: string }
   | { type: "task_update"; taskId: string; updates: Partial<Task>; executionRunId?: string }
@@ -66,6 +110,7 @@ function syncSettingsToSocket() {
     type: "settings_sync",
     providers,
     agentConfigs,
+    platformConfigs,
     userNickname,
     desktopProgramSettings,
     hermesDispatchSettings,
@@ -603,6 +648,10 @@ function handleMessage(msg: WsMessage) {
     finalizeMeeting,
     meetingTopic,
     updateExecutionRun,
+    updatePlatformConfig,
+    reconcilePlatformConfig,
+    upsertBusinessChannelSession,
+    recordBusinessOperation,
   } = getStore();
 
   switch (msg.type) {
@@ -652,6 +701,47 @@ function handleMessage(msg: WsMessage) {
       addCost(msg.agentId, msg.tokens);
       addTokens(msg.agentId, msg.tokens);
       break;
+    case "platform_status":
+      updatePlatformConfig(msg.platformId, {
+        status: msg.status,
+        errorMsg: msg.errorMsg,
+        detail: msg.detail,
+        accountLabel: msg.accountLabel,
+        webhookUrl: msg.webhookUrl,
+        healthScore: msg.healthScore,
+        pendingEvents: msg.pendingEvents,
+        lastSyncedAt: msg.lastSyncedAt,
+        lastCheckedAt: msg.lastCheckedAt,
+        lastEventAt: msg.lastEventAt,
+      });
+      if (msg.status === "idle" || msg.status === "configured" || msg.status === "webhook_missing") {
+        reconcilePlatformConfig(msg.platformId);
+      }
+      break;
+    case "channel_session_sync":
+      upsertBusinessChannelSession(msg.session);
+      break;
+    case "channel_event": {
+      const sessionId = msg.session
+        ? upsertBusinessChannelSession(msg.session)
+        : msg.sessionId;
+      if (sessionId) {
+        recordBusinessOperation({
+          entityType: "channelSession",
+          entityId: sessionId,
+          eventType: msg.eventType ?? "message",
+          trigger: msg.trigger ?? "auto",
+          status: msg.status,
+          title: msg.title,
+          detail: msg.detail,
+          executionRunId: msg.executionRunId,
+          workflowRunId: msg.workflowRunId,
+          externalRef: msg.externalRef ?? msg.session?.externalRef,
+          failureReason: msg.failureReason,
+        });
+      }
+      break;
+    }
     case "meeting_speech":
       addMeetingSpeech({
         id: randomId(),

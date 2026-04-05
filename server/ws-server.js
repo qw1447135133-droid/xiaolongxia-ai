@@ -90,6 +90,7 @@ const DEFAULT_HERMES_DISPATCH_SETTINGS = {
 let settings = {
   providers: [],
   agentConfigs: {},
+  platformConfigs: {},
   userNickname: "您",
   desktopProgramSettings: {
     enabled: true,
@@ -105,6 +106,55 @@ let settings = {
   hermesDispatchSettings: DEFAULT_HERMES_DISPATCH_SETTINGS,
 };
 const hermesDispatchRuns = new Map();
+const PLATFORM_WEBHOOK_PATHS = {
+  line: "/webhook/line",
+  feishu: "/webhook/feishu",
+  wecom: "/webhook/wecom",
+};
+
+function summarizePlatformAccount(platformId, fields = {}) {
+  switch (platformId) {
+    case "telegram":
+      return fields.defaultChatId?.trim() ? `chat:${fields.defaultChatId.trim()}` : "Telegram Bot";
+    case "line":
+      return "LINE OA";
+    case "feishu":
+      return fields.defaultOpenId?.trim() ? `open:${fields.defaultOpenId.trim()}` : "Feishu App";
+    case "wecom":
+      return fields.agentId?.trim() ? `agent:${fields.agentId.trim()}` : "WeCom App";
+    default:
+      return platformId;
+  }
+}
+
+function classifyPlatformRuntimeStatus(platformId, err) {
+  const message = String(err?.message || err || "连接器启动失败");
+  const lower = message.toLowerCase();
+  if (lower.includes("token") || lower.includes("secret") || lower.includes("access") || lower.includes("appid")) {
+    return {
+      status: "auth_failed",
+      detail: `鉴权失败：${message}`,
+      errorMsg: message,
+      healthScore: 20,
+    };
+  }
+
+  if (lower.includes("webhook") || lower.includes("callback")) {
+    return {
+      status: "webhook_unreachable",
+      detail: `回调链路异常：${message}`,
+      errorMsg: message,
+      healthScore: 35,
+    };
+  }
+
+  return {
+    status: "error",
+    detail: `连接器异常：${message}`,
+    errorMsg: message,
+    healthScore: 30,
+  };
+}
 
 const ROUTING_RULES = [
   { keywords: ["浏览器", "打开网页", "打开网站", "截图", "爬取", "爬虫", "搜索网页", "访问网址", "访问网站", "点击", "填写表单", "自动化操作", "browser"], agent: "orchestrator", complexity: "medium" },
@@ -778,6 +828,29 @@ function broadcast(msg) {
   if (global.__platformResultListener) {
     global.__platformResultListener(msg);
   }
+}
+
+function broadcastPlatformStatus(platformId, payload = {}) {
+  broadcast({
+    type: "platform_status",
+    platformId,
+    lastCheckedAt: Date.now(),
+    ...payload,
+  });
+}
+
+function mapPlatformToChannel(platformId) {
+  if (platformId === "telegram" || platformId === "line" || platformId === "feishu" || platformId === "wecom") {
+    return platformId;
+  }
+  return "web";
+}
+
+function broadcastChannelEvent(payload) {
+  broadcast({
+    type: "channel_event",
+    ...payload,
+  });
 }
 
 function makeExecutionEvent({ type, title, detail, agentId, taskId, timestamp = Date.now() }) {
@@ -1719,19 +1792,183 @@ async function meeting(topic, participants = ["explorer", "writer", "performer",
 
 async function handlePlatformMessage(userId, text, platformId) {
   const taskAgentMap = {};
+  const channel = mapPlatformToChannel(platformId);
+  const inboundTimestamp = Date.now();
+
+  broadcastPlatformStatus(platformId, {
+    status: "connected",
+    detail: "已收到最新入站消息，连接器在线。",
+    healthScore: 100,
+    lastEventAt: inboundTimestamp,
+  });
+  broadcastChannelEvent({
+    session: {
+      channel,
+      externalRef: String(userId),
+      title: `${platformId}:${userId}`,
+      participantLabel: String(userId),
+      remoteUserId: String(userId),
+      lastMessageDirection: "inbound",
+      lastDeliveryStatus: "delivered",
+      lastMessagePreview: String(text || "").slice(0, 140),
+      unreadCount: 1,
+      requiresReply: true,
+      status: "active",
+      summary: `最近收到入站消息：${String(text || "").slice(0, 80)}`,
+      lastMessageAt: inboundTimestamp,
+      accountLabel: summarizePlatformAccount(platformId, settings.platformConfigs?.[platformId]?.fields ?? {}),
+    },
+    title: "收到入站消息",
+    detail: String(text || "").slice(0, 500),
+    status: "completed",
+    eventType: "message",
+    externalRef: String(userId),
+  });
 
   global.__platformResultListener = (msg) => {
     if (msg.type === "task_add" && msg.task) {
       taskAgentMap[msg.task.id] = msg.task.assignedTo;
       if (msg.task.status === "done" && msg.task.result) {
         const label = AGENT_DISPLAY[msg.task.assignedTo] || msg.task.assignedTo;
-        sendToPlatform(platformId, userId, `【${label}】\n\n${msg.task.result}`).catch(() => {});
+        sendToPlatform(platformId, userId, `【${label}】\n\n${msg.task.result}`)
+          .then(() => {
+            const outboundTimestamp = Date.now();
+            broadcastPlatformStatus(platformId, {
+              status: "connected",
+              detail: "最近一条出站回复已成功送达。",
+              healthScore: 100,
+              lastEventAt: outboundTimestamp,
+            });
+            broadcastChannelEvent({
+              session: {
+                channel,
+                externalRef: String(userId),
+                title: `${platformId}:${userId}`,
+                participantLabel: String(userId),
+                remoteUserId: String(userId),
+                lastMessageDirection: "outbound",
+                lastDeliveryStatus: "sent",
+                lastMessagePreview: String(msg.task.result || "").slice(0, 140),
+                unreadCount: 0,
+                requiresReply: false,
+                status: "active",
+                summary: `最近回复已发出：${String(msg.task.result || "").slice(0, 80)}`,
+                lastMessageAt: outboundTimestamp,
+                accountLabel: summarizePlatformAccount(platformId, settings.platformConfigs?.[platformId]?.fields ?? {}),
+              },
+              title: "发送平台回复",
+              detail: `【${label}】 ${String(msg.task.result || "").slice(0, 500)}`,
+              status: "sent",
+              eventType: "message",
+              externalRef: String(userId),
+            });
+          })
+          .catch((error) => {
+            const failureMessage = String(error?.message || error || "平台回消息失败");
+            broadcastPlatformStatus(platformId, {
+              status: "degraded",
+              detail: `最近一条出站回复发送失败：${failureMessage}`,
+              errorMsg: failureMessage,
+              healthScore: 55,
+              lastEventAt: Date.now(),
+            });
+            broadcastChannelEvent({
+              session: {
+                channel,
+                externalRef: String(userId),
+                title: `${platformId}:${userId}`,
+                participantLabel: String(userId),
+                remoteUserId: String(userId),
+                lastMessageDirection: "outbound",
+                lastDeliveryStatus: "failed",
+                lastMessagePreview: String(msg.task.result || "").slice(0, 140),
+                unreadCount: 0,
+                requiresReply: true,
+                status: "waiting",
+                summary: `最近回复发送失败：${failureMessage}`,
+                lastMessageAt: Date.now(),
+                accountLabel: summarizePlatformAccount(platformId, settings.platformConfigs?.[platformId]?.fields ?? {}),
+              },
+              title: "平台回复发送失败",
+              detail: failureMessage,
+              status: "failed",
+              eventType: "connector",
+              failureReason: failureMessage,
+              externalRef: String(userId),
+            });
+          });
       }
     }
     if (msg.type === "task_update" && msg.updates?.status === "done" && msg.updates?.result) {
       const agentId = taskAgentMap[msg.taskId];
       const label = AGENT_DISPLAY[agentId] || agentId || "龙虾";
-      sendToPlatform(platformId, userId, `【${label}】\n\n${msg.updates.result}`).catch(() => {});
+      sendToPlatform(platformId, userId, `【${label}】\n\n${msg.updates.result}`)
+        .then(() => {
+          const outboundTimestamp = Date.now();
+          broadcastPlatformStatus(platformId, {
+            status: "connected",
+            detail: "最近一条出站回复已成功送达。",
+            healthScore: 100,
+            lastEventAt: outboundTimestamp,
+          });
+          broadcastChannelEvent({
+            session: {
+              channel,
+              externalRef: String(userId),
+              title: `${platformId}:${userId}`,
+              participantLabel: String(userId),
+              remoteUserId: String(userId),
+              lastMessageDirection: "outbound",
+              lastDeliveryStatus: "sent",
+              lastMessagePreview: String(msg.updates.result || "").slice(0, 140),
+              unreadCount: 0,
+              requiresReply: false,
+              status: "active",
+              summary: `最近回复已发出：${String(msg.updates.result || "").slice(0, 80)}`,
+              lastMessageAt: outboundTimestamp,
+              accountLabel: summarizePlatformAccount(platformId, settings.platformConfigs?.[platformId]?.fields ?? {}),
+            },
+            title: "发送平台回复",
+            detail: `【${label}】 ${String(msg.updates.result || "").slice(0, 500)}`,
+            status: "sent",
+            eventType: "message",
+            externalRef: String(userId),
+          });
+        })
+        .catch((error) => {
+          const failureMessage = String(error?.message || error || "平台回消息失败");
+          broadcastPlatformStatus(platformId, {
+            status: "degraded",
+            detail: `最近一条出站回复发送失败：${failureMessage}`,
+            errorMsg: failureMessage,
+            healthScore: 55,
+            lastEventAt: Date.now(),
+          });
+          broadcastChannelEvent({
+            session: {
+              channel,
+              externalRef: String(userId),
+              title: `${platformId}:${userId}`,
+              participantLabel: String(userId),
+              remoteUserId: String(userId),
+              lastMessageDirection: "outbound",
+              lastDeliveryStatus: "failed",
+              lastMessagePreview: String(msg.updates.result || "").slice(0, 140),
+              unreadCount: 0,
+              requiresReply: true,
+              status: "waiting",
+              summary: `最近回复发送失败：${failureMessage}`,
+              lastMessageAt: Date.now(),
+              accountLabel: summarizePlatformAccount(platformId, settings.platformConfigs?.[platformId]?.fields ?? {}),
+            },
+            title: "平台回复发送失败",
+            detail: failureMessage,
+            status: "failed",
+            eventType: "connector",
+            failureReason: failureMessage,
+            externalRef: String(userId),
+          });
+        });
     }
   };
 
@@ -1862,6 +2099,7 @@ const httpServer = createServer(async (req, res) => {
       const body = await readJson(req);
       if (body.providers) settings.providers = body.providers;
       if (body.agentConfigs) settings.agentConfigs = body.agentConfigs;
+      if (body.platformConfigs) settings.platformConfigs = body.platformConfigs;
       if (body.userNickname !== undefined) settings.userNickname = body.userNickname;
       if (body.desktopProgramSettings) settings.desktopProgramSettings = body.desktopProgramSettings;
       if (body.hermesDispatchSettings) settings.hermesDispatchSettings = normalizeHermesDispatchSettings(body.hermesDispatchSettings);
@@ -2001,9 +2239,24 @@ const httpServer = createServer(async (req, res) => {
       try {
         const events = JSON.parse(body).events ?? [];
         await adapter.handleWebhookEvents(events);
+        broadcastPlatformStatus("line", {
+          status: "connected",
+          detail: "已收到 LINE Webhook 回调。",
+          healthScore: 100,
+          webhookUrl: PLATFORM_WEBHOOK_PATHS.line,
+          lastEventAt: Date.now(),
+        });
         res.writeHead(200);
         res.end("OK");
       } catch {
+        broadcastPlatformStatus("line", {
+          status: "webhook_unreachable",
+          detail: "LINE Webhook 回调处理失败。",
+          errorMsg: "LINE Webhook 回调处理失败",
+          healthScore: 45,
+          webhookUrl: PLATFORM_WEBHOOK_PATHS.line,
+          lastEventAt: Date.now(),
+        });
         res.writeHead(500);
         res.end();
       }
@@ -2020,9 +2273,24 @@ const httpServer = createServer(async (req, res) => {
       try {
         const parsed = body ? JSON.parse(body) : {};
         const result = await adapter.handleWebhookEvent(parsed);
+        broadcastPlatformStatus("feishu", {
+          status: "connected",
+          detail: "已收到飞书 Webhook 回调。",
+          healthScore: 100,
+          webhookUrl: PLATFORM_WEBHOOK_PATHS.feishu,
+          lastEventAt: Date.now(),
+        });
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify(result));
       } catch {
+        broadcastPlatformStatus("feishu", {
+          status: "webhook_unreachable",
+          detail: "飞书 Webhook 回调处理失败。",
+          errorMsg: "飞书 Webhook 回调处理失败",
+          healthScore: 45,
+          webhookUrl: PLATFORM_WEBHOOK_PATHS.feishu,
+          lastEventAt: Date.now(),
+        });
         res.writeHead(500);
         res.end();
       }
@@ -2037,9 +2305,24 @@ const httpServer = createServer(async (req, res) => {
       const echostr = url.searchParams.get("echostr") ?? "";
       const query = Object.fromEntries(url.searchParams);
       if (adapter.verifySignature({ ...query, echostr })) {
+        broadcastPlatformStatus("wecom", {
+          status: "connected",
+          detail: "企业微信回调校验通过。",
+          healthScore: 100,
+          webhookUrl: PLATFORM_WEBHOOK_PATHS.wecom,
+          lastEventAt: Date.now(),
+        });
         res.writeHead(200);
         res.end(echostr);
       } else {
+        broadcastPlatformStatus("wecom", {
+          status: "webhook_unreachable",
+          detail: "企业微信回调签名校验失败。",
+          errorMsg: "企业微信回调签名校验失败",
+          healthScore: 35,
+          webhookUrl: PLATFORM_WEBHOOK_PATHS.wecom,
+          lastEventAt: Date.now(),
+        });
         res.writeHead(403);
         res.end();
       }
@@ -2050,9 +2333,29 @@ const httpServer = createServer(async (req, res) => {
       req.on("data", (d) => { body += d; });
       req.on("end", async () => {
         const query = Object.fromEntries(url.searchParams);
-        const result = await adapter.handleWebhookMessage(body, query);
-        res.writeHead(200);
-        res.end(result);
+        try {
+          const result = await adapter.handleWebhookMessage(body, query);
+          broadcastPlatformStatus("wecom", {
+            status: "connected",
+            detail: "已收到企业微信 Webhook 消息。",
+            healthScore: 100,
+            webhookUrl: PLATFORM_WEBHOOK_PATHS.wecom,
+            lastEventAt: Date.now(),
+          });
+          res.writeHead(200);
+          res.end(result);
+        } catch {
+          broadcastPlatformStatus("wecom", {
+            status: "webhook_unreachable",
+            detail: "企业微信 Webhook 消息处理失败。",
+            errorMsg: "企业微信 Webhook 消息处理失败",
+            healthScore: 45,
+            webhookUrl: PLATFORM_WEBHOOK_PATHS.wecom,
+            lastEventAt: Date.now(),
+          });
+          res.writeHead(500);
+          res.end();
+        }
       });
       return;
     }
@@ -2080,6 +2383,7 @@ wss.on("connection", (ws) => {
       case "settings_sync":
         if (msg.providers) settings.providers = msg.providers;
         if (msg.agentConfigs) settings.agentConfigs = msg.agentConfigs;
+        if (msg.platformConfigs) settings.platformConfigs = msg.platformConfigs;
         if (msg.userNickname !== undefined) settings.userNickname = msg.userNickname;
         if (msg.desktopProgramSettings) settings.desktopProgramSettings = msg.desktopProgramSettings;
         if (msg.hermesDispatchSettings) settings.hermesDispatchSettings = normalizeHermesDispatchSettings(msg.hermesDispatchSettings);
@@ -2101,11 +2405,63 @@ wss.on("connection", (ws) => {
       case "platform_sync":
         if (!msg.platformId) break;
         if (msg.enabled && msg.fields) {
-          startPlatform(msg.platformId, msg.fields, handlePlatformMessage).catch((err) => {
-            ws.send(JSON.stringify({ type: "platform_error", platformId: msg.platformId, error: err.message }));
+          settings.platformConfigs = {
+            ...settings.platformConfigs,
+            [msg.platformId]: {
+              ...(settings.platformConfigs?.[msg.platformId] ?? {}),
+              enabled: true,
+              fields: msg.fields,
+            },
+          };
+          broadcastPlatformStatus(msg.platformId, {
+            status: "syncing",
+            detail: "正在把连接器配置同步到服务端。",
+            healthScore: 60,
+            lastSyncedAt: Date.now(),
+            webhookUrl: PLATFORM_WEBHOOK_PATHS[msg.platformId] ?? undefined,
+            accountLabel: summarizePlatformAccount(msg.platformId, msg.fields),
           });
+          startPlatform(msg.platformId, msg.fields, handlePlatformMessage)
+            .then(() => {
+              const isWebhookPlatform = Boolean(PLATFORM_WEBHOOK_PATHS[msg.platformId]);
+              broadcastPlatformStatus(msg.platformId, {
+                status: isWebhookPlatform ? "webhook_missing" : "connected",
+                detail: isWebhookPlatform
+                  ? `连接器已启动，等待公网回调打通 ${PLATFORM_WEBHOOK_PATHS[msg.platformId]}。`
+                  : "连接器已启动，可直接接收和发送消息。",
+                healthScore: isWebhookPlatform ? 75 : 100,
+                lastSyncedAt: Date.now(),
+                webhookUrl: PLATFORM_WEBHOOK_PATHS[msg.platformId] ?? undefined,
+                accountLabel: summarizePlatformAccount(msg.platformId, msg.fields),
+              });
+            })
+            .catch((err) => {
+              const runtimeStatus = classifyPlatformRuntimeStatus(msg.platformId, err);
+              broadcastPlatformStatus(msg.platformId, {
+                ...runtimeStatus,
+                lastSyncedAt: Date.now(),
+                webhookUrl: PLATFORM_WEBHOOK_PATHS[msg.platformId] ?? undefined,
+                accountLabel: summarizePlatformAccount(msg.platformId, msg.fields),
+              });
+              ws.send(JSON.stringify({ type: "platform_error", platformId: msg.platformId, error: err.message }));
+            });
         } else {
+          settings.platformConfigs = {
+            ...settings.platformConfigs,
+            [msg.platformId]: {
+              ...(settings.platformConfigs?.[msg.platformId] ?? {}),
+              enabled: false,
+              fields: {},
+            },
+          };
           stopPlatform(msg.platformId);
+          broadcastPlatformStatus(msg.platformId, {
+            status: "idle",
+            detail: "连接器已停用。",
+            healthScore: 0,
+            lastSyncedAt: Date.now(),
+            webhookUrl: PLATFORM_WEBHOOK_PATHS[msg.platformId] ?? undefined,
+          });
         }
         break;
       case "dispatch":

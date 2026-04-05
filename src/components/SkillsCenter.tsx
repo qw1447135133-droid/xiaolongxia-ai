@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { resolveBackendUrl } from "@/lib/backend-url";
 import { sendWs } from "@/hooks/useWebSocket";
+import { syncRuntimeSettings } from "@/lib/runtime-settings-sync";
 import { useStore } from "@/store";
 import { AGENT_META, AGENT_SKILLS } from "@/store/types";
 import type { AgentConfig, AgentId, AgentSkillId } from "@/store/types";
@@ -409,10 +410,26 @@ function MetricCard({ label, value, accent }: { label: string; value: string | n
 }
 
 async function syncSettings() {
-  const { providers, agentConfigs, userNickname, desktopProgramSettings } = useStore.getState();
+  const {
+    providers,
+    agentConfigs,
+    platformConfigs,
+    userNickname,
+    desktopProgramSettings,
+    hermesDispatchSettings,
+  } = useStore.getState();
 
   try {
-    if (sendWs({ type: "settings_sync", providers, agentConfigs, userNickname, desktopProgramSettings })) {
+    if (sendWs({
+      type: "settings_sync",
+      providers,
+      agentConfigs,
+      platformConfigs,
+      userNickname,
+      desktopProgramSettings,
+      hermesDispatchSettings,
+    })) {
+      void syncRuntimeSettings();
       return;
     }
 
@@ -420,7 +437,14 @@ async function syncSettings() {
     await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ providers, agentConfigs, userNickname, desktopProgramSettings }),
+      body: JSON.stringify({
+        providers,
+        agentConfigs,
+        platformConfigs,
+        userNickname,
+        desktopProgramSettings,
+        hermesDispatchSettings,
+      }),
     });
   } catch (error) {
     console.error("Failed to sync settings:", error);

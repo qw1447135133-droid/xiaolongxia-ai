@@ -101,6 +101,21 @@ export interface BusinessChannelSession extends BusinessScopedEntity {
   customerId: string | null;
   channel: "telegram" | "line" | "feishu" | "wecom" | "email" | "web";
   externalRef: string;
+  accountLabel?: string;
+  participantLabel?: string;
+  remoteUserId?: string;
+  remoteThreadId?: string;
+  lastExternalMessageId?: string;
+  lastMessageDirection?: "inbound" | "outbound";
+  lastDeliveryStatus?: "pending" | "sent" | "delivered" | "failed";
+  lastDeliveryError?: string;
+  lastMessagePreview?: string;
+  unreadCount?: number;
+  requiresReply?: boolean;
+  lastInboundAt?: number;
+  lastOutboundAt?: number;
+  lastExecutionRunId?: string;
+  lastWorkflowRunId?: string;
   status: "open" | "active" | "waiting" | "closed";
   lastMessageAt: number;
   summary: string;
@@ -118,7 +133,7 @@ export interface BusinessApprovalRecord extends BusinessScopedEntity {
 export interface BusinessOperationRecord extends BusinessScopedEntity {
   entityType: BusinessEntityType;
   entityId: string;
-  eventType: "approval" | "dispatch" | "workflow" | "publish" | "governance" | "desktop";
+  eventType: "approval" | "dispatch" | "workflow" | "publish" | "governance" | "desktop" | "connector" | "message";
   trigger: "manual" | "auto";
   status: "pending" | "approved" | "rejected" | "sent" | "blocked" | "completed" | "failed";
   title: string;

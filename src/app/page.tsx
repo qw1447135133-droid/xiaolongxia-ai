@@ -44,6 +44,7 @@ import type { AppTab, ControlCenterSectionId } from "@/store/types";
 import { retryExecutionDispatch, sendExecutionDispatch } from "@/lib/execution-dispatch";
 import { detectElectronRuntimeWindow } from "@/lib/electron-runtime";
 import { runExecutionVerification } from "@/lib/execution-verification";
+import { syncRuntimeSettings } from "@/lib/runtime-settings-sync";
 
 const NAV_ITEMS: Array<{ id: AppTab; label: string; eyebrow: string }> = [
   { id: "dashboard", label: "首页", eyebrow: "Home" },
@@ -108,8 +109,7 @@ export default function App() {
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
-      const { providers, agentConfigs, userNickname, desktopProgramSettings, hermesDispatchSettings } = useStore.getState();
-      sendWs({ type: "settings_sync", providers, agentConfigs, userNickname, desktopProgramSettings, hermesDispatchSettings });
+      void syncRuntimeSettings();
     }, 1500);
     return () => window.clearTimeout(timer);
   }, []);
@@ -2665,8 +2665,7 @@ function MeetingTab() {
     clearMeeting();
     setMeetingTopic(topic.trim());
     setMeetingActive(true);
-    const { providers, agentConfigs, userNickname, desktopProgramSettings, hermesDispatchSettings } = useStore.getState();
-    sendWs({ type: "settings_sync", providers, agentConfigs, userNickname, desktopProgramSettings, hermesDispatchSettings });
+    void syncRuntimeSettings();
     sendWs({ type: "meeting", topic: topic.trim() });
   };
 

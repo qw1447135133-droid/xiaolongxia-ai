@@ -66,11 +66,15 @@ export async function stopPlatform(platformId) {
  */
 export async function sendToPlatform(platformId, userId, text) {
   const adapter = runningAdapters[platformId];
-  if (!adapter) return;
+  if (!adapter) {
+    throw new Error(`平台 ${platformId} 未连接`);
+  }
   try {
     await adapter.sendMessage(userId, text);
+    return true;
   } catch (err) {
     console.error(`[platforms] ${platformId} sendMessage failed:`, err.message);
+    throw err;
   }
 }
 

@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type CSSProperties } from "react";
 import { resolveBackendUrl } from "@/lib/backend-url";
 import { sendWs } from "@/hooks/useWebSocket";
+import { syncRuntimeSettings } from "@/lib/runtime-settings-sync";
 import { useStore } from "@/store";
 import type { HermesDispatchSettings, HermesPlannerProfile } from "@/store/types";
 
@@ -206,6 +207,7 @@ export function HermesDispatchCenter() {
       type: "settings_sync",
       providers: store.providers,
       agentConfigs: store.agentConfigs,
+      platformConfigs: store.platformConfigs,
       userNickname: store.userNickname,
       desktopProgramSettings: store.desktopProgramSettings,
       hermesDispatchSettings: nextSettings,
@@ -219,6 +221,7 @@ export function HermesDispatchCenter() {
         body: JSON.stringify({
           providers: store.providers,
           agentConfigs: store.agentConfigs,
+          platformConfigs: store.platformConfigs,
           userNickname: store.userNickname,
           desktopProgramSettings: store.desktopProgramSettings,
           hermesDispatchSettings: nextSettings,
@@ -228,6 +231,7 @@ export function HermesDispatchCenter() {
         throw new Error("保存 Hermes dispatch 设置失败。");
       }
     }
+    void syncRuntimeSettings();
   };
 
   const exportProfiles = () => {

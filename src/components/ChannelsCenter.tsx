@@ -2,22 +2,33 @@
 
 import { useMemo } from "react";
 import { sendWs } from "@/hooks/useWebSocket";
+import { syncRuntimeSettings } from "@/lib/runtime-settings-sync";
 import { useStore } from "@/store";
 import { filterByProjectScope, getSessionProjectLabel } from "@/lib/project-context";
+import {
+  buildPlatformConnectionSnapshot,
+  getPlatformRequiredFieldSummary,
+  getPlatformStatusLabel,
+  getPlatformStatusTone,
+  isPlatformOperationalStatus,
+} from "@/lib/platform-connectors";
 import { PLATFORM_DEFINITIONS } from "@/store/types";
 import type { ControlCenterSectionId } from "@/store/types";
 import type {
+  BusinessChannelSession,
   BusinessContentPublishResult,
   BusinessContentTask,
   BusinessOperationRecord,
 } from "@/types/business-entities";
 
 export function ChannelsCenter() {
-  const { platformConfigs, updatePlatformConfig } = useStore();
+  const { platformConfigs, updatePlatformConfig, reconcilePlatformConfig } = useStore();
   const chatSessions = useStore(s => s.chatSessions);
   const activeSessionId = useStore(s => s.activeSessionId);
   const businessOperationLogs = useStore(s => s.businessOperationLogs);
   const businessContentTasks = useStore(s => s.businessContentTasks);
+  const businessChannelSessions = useStore(s => s.businessChannelSessions);
+  const wsStatus = useStore(s => s.wsStatus);
   const setActiveControlCenterSection = useStore(s => s.setActiveControlCenterSection);
   const setTab = useStore(s => s.setTab);
   const setActiveExecutionRun = useStore(s => s.setActiveExecutionRun);
@@ -38,6 +49,14 @@ export function ChannelsCenter() {
   const scopedContentTasks = useMemo(
     () => filterByProjectScope(businessContentTasks, activeSession ?? {}),
     [activeSession, businessContentTasks],
+  );
+  const scopedChannelSessions = useMemo(
+    () => filterByProjectScope(businessChannelSessions, activeSession ?? {}),
+    [activeSession, businessChannelSessions],
+  );
+  const channelSessionMap = useMemo(
+    () => Object.fromEntries(scopedChannelSessions.map(session => [session.id, session])),
+    [scopedChannelSessions],
   );
   const contentTaskMap = useMemo(
     () => Object.fromEntries(scopedContentTasks.map(task => [task.id, task])),
@@ -66,10 +85,76 @@ export function ChannelsCenter() {
         })),
     [contentTaskMap, scopedOperationLogs],
   );
+  const recentConnectorEvents = useMemo(
+    () =>
+      scopedOperationLogs
+        .filter(log =>
+          log.entityType === "channelSession"
+          && ["connector", "message", "dispatch"].includes(log.eventType)
+          && Boolean(channelSessionMap[log.entityId]),
+        )
+        .sort((left, right) => right.createdAt - left.createdAt)
+        .slice(0, 6)
+        .map(log => ({
+          log,
+          session: channelSessionMap[log.entityId],
+        })),
+    [channelSessionMap, scopedOperationLogs],
+  );
+  const platformSnapshots = useMemo(
+    () =>
+      PLATFORM_DEFINITIONS.map(def => {
+        const config = platformConfigs[def.id] ?? { enabled: false, fields: {}, status: "idle" as const };
+        const snapshot = buildPlatformConnectionSnapshot({
+          platformId: def.id,
+          config,
+          wsStatus,
+          sessions: scopedChannelSessions,
+          operationLogs: scopedOperationLogs,
+        });
+        return { def, config, snapshot };
+      }),
+    [platformConfigs, scopedChannelSessions, scopedOperationLogs, wsStatus],
+  );
+  const attentionSessions = useMemo(
+    () =>
+      scopedChannelSessions
+        .filter(session => session.requiresReply || (session.unreadCount ?? 0) > 0 || session.lastDeliveryStatus === "failed")
+        .sort((left, right) => right.lastMessageAt - left.lastMessageAt)
+        .slice(0, 6),
+    [scopedChannelSessions],
+  );
+  const platformAttentionItems = useMemo(
+    () =>
+      platformSnapshots
+        .filter(({ config, snapshot }) =>
+          config.enabled
+          && (
+            !isPlatformOperationalStatus(snapshot.status)
+            || snapshot.needsReplyCount > 0
+            || snapshot.failedSessionCount > 0
+            || snapshot.missingRequiredFields.length > 0
+          ),
+        )
+        .sort((left, right) => {
+          const leftScore = left.snapshot.failedSessionCount + left.snapshot.needsReplyCount;
+          const rightScore = right.snapshot.failedSessionCount + right.snapshot.needsReplyCount;
+          return rightScore - leftScore;
+        })
+        .slice(0, 6),
+    [platformSnapshots],
+  );
 
   const enabledCount = PLATFORM_DEFINITIONS.filter(def => platformConfigs[def.id]?.enabled).length;
-  const connectedCount = PLATFORM_DEFINITIONS.filter(def => platformConfigs[def.id]?.status === "connected").length;
+  const connectedCount = PLATFORM_DEFINITIONS.filter(def => isPlatformOperationalStatus(platformConfigs[def.id]?.status ?? "idle")).length;
   const webhookCount = PLATFORM_DEFINITIONS.filter(def => def.webhookBased).length;
+  const pendingRepliesCount = scopedChannelSessions.filter(session =>
+    session.requiresReply || (session.unreadCount ?? 0) > 0,
+  ).length;
+  const unhealthyCount = PLATFORM_DEFINITIONS.filter(def => {
+    const status = platformConfigs[def.id]?.status ?? "idle";
+    return status !== "idle" && !isPlatformOperationalStatus(status) && status !== "configured";
+  }).length;
 
   const toggleChannel = (platformId: string) => {
     const current = platformConfigs[platformId] ?? { enabled: false, fields: {}, status: "idle" as const };
@@ -77,9 +162,14 @@ export function ChannelsCenter() {
 
     updatePlatformConfig(platformId, {
       enabled: nextEnabled,
-      status: nextEnabled ? current.status : "idle",
+      status: nextEnabled ? "syncing" : "idle",
       errorMsg: undefined,
+      detail: nextEnabled ? "正在同步连接器配置。" : undefined,
+      lastSyncedAt: Date.now(),
     });
+    if (nextEnabled) {
+      reconcilePlatformConfig(platformId);
+    }
 
     sendWs({
       type: "platform_sync",
@@ -87,6 +177,7 @@ export function ChannelsCenter() {
       enabled: nextEnabled,
       fields: nextEnabled ? current.fields : {},
     });
+    void syncRuntimeSettings();
   };
 
   return (
@@ -125,7 +216,335 @@ export function ChannelsCenter() {
         <ChannelMetric label="Channels" value={PLATFORM_DEFINITIONS.length} accent="var(--accent)" />
         <ChannelMetric label="Enabled" value={enabledCount} accent="#60a5fa" />
         <ChannelMetric label="Connected" value={connectedCount} accent="var(--success)" />
+        <ChannelMetric label="Pending Replies" value={pendingRepliesCount} accent="#f59e0b" />
+        <ChannelMetric label="Attention" value={unhealthyCount} accent="#fb7185" />
         <ChannelMetric label="Webhook-based" value={webhookCount} accent="var(--warning)" />
+      </div>
+
+      <div className="card" style={{ padding: 16 }}>
+        <div style={{ fontSize: 14, fontWeight: 700 }}>Platform Health Snapshot</div>
+        <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 4 }}>
+          把凭证状态、实时会话流量、待回复压力和失败发送放进同一张平台健康图里。
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 12, marginTop: 14 }}>
+          {platformSnapshots.map(({ def, config, snapshot }) => {
+            const statusColor =
+              snapshot.tone === "ready" ? "var(--success)"
+                : snapshot.tone === "partial" ? "var(--warning)"
+                  : snapshot.tone === "blocked" ? "var(--danger)"
+                    : "var(--text-muted)";
+
+            return (
+              <article
+                key={`platform-health-${def.id}`}
+                style={{
+                  display: "grid",
+                  gap: 10,
+                  padding: 14,
+                  borderRadius: 18,
+                  border: "1px solid var(--border)",
+                  background: config.enabled ? "rgba(255,255,255,0.03)" : "rgba(255,255,255,0.02)",
+                }}
+              >
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start" }}>
+                  <div>
+                    <div style={{ fontSize: 15, fontWeight: 700 }}>{def.emoji} {def.name}</div>
+                    <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 4 }}>
+                      {config.accountLabel ?? snapshot.detail}
+                    </div>
+                  </div>
+                  <span style={buildStatusChipStyle(statusColor)}>
+                    {snapshot.label}
+                  </span>
+                </div>
+
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8, fontSize: 12, color: "var(--text-muted)" }}>
+                  <span>健康度 {snapshot.healthScore}%</span>
+                  <span>会话 {snapshot.sessionCount}</span>
+                  <span>待回复 {snapshot.needsReplyCount}</span>
+                  <span>失败 {snapshot.failedSessionCount}</span>
+                </div>
+
+                {snapshot.missingRequiredFields.length > 0 ? (
+                  <div style={{ fontSize: 11, color: "var(--warning)", lineHeight: 1.7 }}>
+                    缺少字段: {snapshot.missingRequiredFields.join(" / ")}
+                  </div>
+                ) : null}
+
+                {snapshot.lastActivityAt ? (
+                  <div style={{ fontSize: 11, color: "var(--text-muted)" }}>
+                    最近活动 {formatEventTime(snapshot.lastActivityAt)}
+                  </div>
+                ) : null}
+
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <button type="button" className="btn-ghost" onClick={() => openControlSection("settings")}>
+                    去配置字段
+                  </button>
+                  <button type="button" className="btn-ghost" onClick={() => openControlSection("remote")}>
+                    去远程值守
+                  </button>
+                  <button type="button" className="btn-ghost" onClick={() => toggleChannel(def.id)}>
+                    {config.enabled ? "重新同步" : "启用连接器"}
+                  </button>
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="card" style={{ padding: 16 }}>
+        <div style={{ fontSize: 14, fontWeight: 700 }}>Attention Queue</div>
+        <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 4 }}>
+          这里单独看需要人工处理的会话和平台，不再让它们淹没在普通事件流里。
+        </div>
+
+        <div style={{ display: "grid", gap: 12, marginTop: 14 }}>
+          {attentionSessions.length === 0 && platformAttentionItems.length === 0 ? (
+            <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
+              当前项目没有连接器侧的明显待办。
+            </div>
+          ) : (
+            <>
+              {attentionSessions.map(session => (
+                <article
+                  key={`attention-session-${session.id}`}
+                  style={{
+                    display: "grid",
+                    gap: 10,
+                    padding: 14,
+                    borderRadius: 18,
+                    border: "1px solid var(--border)",
+                    background: "rgba(255,255,255,0.025)",
+                  }}
+                >
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start" }}>
+                    <div>
+                      <div style={{ fontSize: 15, fontWeight: 700 }}>{session.title}</div>
+                      <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 4 }}>
+                        {session.channel} · {session.accountLabel ?? "默认账号"} · {session.participantLabel ?? session.remoteUserId ?? "未命名会话"}
+                      </div>
+                    </div>
+                    <span style={eventBadgeStyle(session.lastDeliveryStatus === "failed" ? "failed" : "pending")}>
+                      {session.lastDeliveryStatus === "failed" ? "发送失败" : "待回复"}
+                    </span>
+                  </div>
+
+                  <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.75 }}>
+                    {session.lastMessagePreview ?? session.summary}
+                  </div>
+
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 8, fontSize: 12, color: "var(--text-muted)" }}>
+                    <span>未读 {session.unreadCount ?? 0}</span>
+                    <span>方向 {session.lastMessageDirection ?? "mixed"}</span>
+                    <span>最近活动 {formatEventTime(session.lastMessageAt)}</span>
+                  </div>
+
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    <button type="button" className="btn-ghost" onClick={() => openControlSection("remote")}>
+                      去远程值守接管
+                    </button>
+                    <button type="button" className="btn-ghost" onClick={() => setTab("tasks")}>
+                      回聊天接管
+                    </button>
+                    <button type="button" className="btn-ghost" onClick={() => openControlSection("entities")}>
+                      查看会话实体
+                    </button>
+                  </div>
+                </article>
+              ))}
+
+              {platformAttentionItems.map(({ def, snapshot }) => (
+                <article
+                  key={`attention-platform-${def.id}`}
+                  style={{
+                    display: "grid",
+                    gap: 10,
+                    padding: 14,
+                    borderRadius: 18,
+                    border: "1px solid var(--border)",
+                    background: "rgba(255,255,255,0.025)",
+                  }}
+                >
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start" }}>
+                    <div>
+                      <div style={{ fontSize: 15, fontWeight: 700 }}>{def.emoji} {def.name}</div>
+                      <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 4 }}>
+                        {snapshot.detail}
+                      </div>
+                    </div>
+                    <span style={eventBadgeStyle(snapshot.failedSessionCount > 0 ? "failed" : "pending")}>
+                      {snapshot.label}
+                    </span>
+                  </div>
+
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 8, fontSize: 12, color: "var(--text-muted)" }}>
+                    <span>待回复 {snapshot.needsReplyCount}</span>
+                    <span>失败 {snapshot.failedSessionCount}</span>
+                    <span>会话 {snapshot.sessionCount}</span>
+                  </div>
+
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    <button type="button" className="btn-ghost" onClick={() => openControlSection("settings")}>
+                      去详细设置
+                    </button>
+                    <button type="button" className="btn-ghost" onClick={() => openControlSection("remote")}>
+                      去远程值守
+                    </button>
+                  </div>
+                </article>
+              ))}
+            </>
+          )}
+        </div>
+      </div>
+
+      <div className="card" style={{ padding: 16 }}>
+        <div style={{ fontSize: 14, fontWeight: 700 }}>Live Connector Sessions</div>
+        <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 4 }}>
+          这里展示真实渠道会话实体，而不只是内容任务的发布回写。
+        </div>
+
+        <div style={{ display: "grid", gap: 12, marginTop: 14 }}>
+          {scopedChannelSessions.length === 0 ? (
+            <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
+              当前项目还没有同步到真实渠道会话。
+            </div>
+          ) : (
+            scopedChannelSessions.slice(0, 6).map(session => (
+              <article
+                key={session.id}
+                style={{
+                  display: "grid",
+                  gap: 10,
+                  padding: 14,
+                  borderRadius: 18,
+                  border: "1px solid var(--border)",
+                  background: "rgba(255,255,255,0.025)",
+                }}
+              >
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start" }}>
+                  <div>
+                    <div style={{ fontSize: 15, fontWeight: 700 }}>{session.title}</div>
+                    <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 4 }}>
+                      {session.channel} · {session.accountLabel ?? "默认账号"} · {session.participantLabel ?? session.remoteUserId ?? "未命名会话"}
+                    </div>
+                  </div>
+                  <div style={{ display: "grid", justifyItems: "end", gap: 6 }}>
+                    <span style={eventBadgeStyle(session.lastDeliveryStatus === "failed" ? "failed" : session.requiresReply ? "pending" : "completed")}>
+                      {session.requiresReply ? "待回复" : session.lastDeliveryStatus ?? session.status}
+                    </span>
+                    <span style={{ fontSize: 11, color: "var(--text-muted)" }}>{formatEventTime(session.lastMessageAt)}</span>
+                  </div>
+                </div>
+
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8, fontSize: 12, color: "var(--text-muted)" }}>
+                  <span>状态 {session.status}</span>
+                  <span>方向 {session.lastMessageDirection ?? "mixed"}</span>
+                  <span>未读 {session.unreadCount ?? 0}</span>
+                  <span>投递 {session.lastDeliveryStatus ?? "pending"}</span>
+                </div>
+
+                <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.75 }}>
+                  {session.lastMessagePreview ?? session.summary}
+                </div>
+
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <button type="button" className="btn-ghost" onClick={() => openControlSection("entities")}>
+                    打开会话实体
+                  </button>
+                  <button type="button" className="btn-ghost" onClick={() => openControlSection("remote")}>
+                    去远程值守
+                  </button>
+                  <button type="button" className="btn-ghost" onClick={() => setTab("tasks")}>
+                    回聊天接管
+                  </button>
+                </div>
+              </article>
+            ))
+          )}
+        </div>
+      </div>
+
+      <div className="card" style={{ padding: 16 }}>
+        <div style={{ fontSize: 14, fontWeight: 700 }}>Recent Connector Events</div>
+        <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 4 }}>
+          连接器和消息事件现在单独可见，不再混在内容发布日志里。
+        </div>
+
+        <div style={{ display: "grid", gap: 12, marginTop: 14 }}>
+          {recentConnectorEvents.length === 0 ? (
+            <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
+              当前项目还没有连接器级事件。
+            </div>
+          ) : (
+            recentConnectorEvents.map(({ log, session }) => (
+              <article
+                key={log.id}
+                style={{
+                  display: "grid",
+                  gap: 10,
+                  padding: 14,
+                  borderRadius: 18,
+                  border: "1px solid var(--border)",
+                  background: "rgba(255,255,255,0.025)",
+                }}
+              >
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start" }}>
+                  <div>
+                    <div style={{ fontSize: 15, fontWeight: 700 }}>{session.title}</div>
+                    <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 4 }}>
+                      {getEventTypeLabel(log.eventType)} · {session.channel} · {session.accountLabel ?? "默认账号"}
+                    </div>
+                  </div>
+                  <div style={{ display: "grid", justifyItems: "end", gap: 6 }}>
+                    <span style={eventBadgeStyle(log.status)}>{log.status}</span>
+                    <span style={{ fontSize: 11, color: "var(--text-muted)" }}>{formatEventTime(log.createdAt)}</span>
+                  </div>
+                </div>
+
+                <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.75 }}>
+                  {log.detail}
+                </div>
+
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                  {log.failureReason ? (
+                    <span style={inlineTagStyle}>原因 {log.failureReason}</span>
+                  ) : null}
+                  {session.lastExternalMessageId ? (
+                    <span style={inlineTagStyle}>消息 {session.lastExternalMessageId}</span>
+                  ) : null}
+                  {session.externalRef ? (
+                    <span style={inlineTagStyle}>会话 {session.externalRef}</span>
+                  ) : null}
+                </div>
+
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  {log.executionRunId ? (
+                    <button
+                      type="button"
+                      className="btn-ghost"
+                      onClick={() => {
+                        setActiveExecutionRun(log.executionRunId!);
+                        openControlSection("execution");
+                      }}
+                    >
+                      查看对应执行
+                    </button>
+                  ) : null}
+                  <button type="button" className="btn-ghost" onClick={() => openControlSection("remote")}>
+                    打开远程值守
+                  </button>
+                  <button type="button" className="btn-ghost" onClick={() => setTab("tasks")}>
+                    回聊天接管
+                  </button>
+                </div>
+              </article>
+            ))
+          )}
+        </div>
       </div>
 
       <div className="card" style={{ padding: 16 }}>
@@ -313,18 +732,14 @@ export function ChannelsCenter() {
         </div>
 
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 12, marginTop: 14 }}>
-          {PLATFORM_DEFINITIONS.map(def => {
-            const config = platformConfigs[def.id] ?? { enabled: false, fields: {}, status: "idle" as const };
-            const requiredFields = def.fields.filter(field => field.required);
-            const readyCount = requiredFields.filter(field => (config.fields[field.key] ?? "").trim().length > 0).length;
-            const readiness = requiredFields.length === 0 ? 100 : Math.round((readyCount / requiredFields.length) * 100);
-
+          {platformSnapshots.map(({ def, config, snapshot }) => {
+            const { requiredFields, readyCount, readiness } = getPlatformRequiredFieldSummary(def, config);
+            const tone = getPlatformStatusTone(snapshot.status);
             const statusColor =
-              config.status === "connected"
-                ? "var(--success)"
-                : config.status === "error"
-                  ? "var(--danger)"
-                  : "var(--text-muted)";
+              tone === "ready" ? "var(--success)"
+                : tone === "partial" ? "var(--warning)"
+                  : tone === "blocked" ? "var(--danger)"
+                    : "var(--text-muted)";
 
             return (
               <article
@@ -359,8 +774,8 @@ export function ChannelsCenter() {
                       fontSize: 10,
                       fontWeight: 700,
                     }}
-                  >
-                    {config.status}
+                    >
+                    {getPlatformStatusLabel(snapshot.status)}
                   </span>
                 </div>
 
@@ -376,6 +791,14 @@ export function ChannelsCenter() {
                   <div style={channelRowStyle}>
                     <span>Readiness</span>
                     <strong>{readiness}%</strong>
+                  </div>
+                  <div style={channelRowStyle}>
+                    <span>Sessions</span>
+                    <strong>{snapshot.sessionCount}</strong>
+                  </div>
+                  <div style={channelRowStyle}>
+                    <span>Pending replies</span>
+                    <strong>{snapshot.needsReplyCount}</strong>
                   </div>
                 </div>
 
@@ -414,6 +837,28 @@ export function ChannelsCenter() {
                     This channel needs a public callback endpoint before it can behave like a live bridge.
                   </div>
                 )}
+
+                {snapshot.detail ? (
+                  <div
+                    style={{
+                      fontSize: 11,
+                      lineHeight: 1.7,
+                      color: statusColor,
+                      background: "rgba(255,255,255,0.04)",
+                      border: "1px solid rgba(255,255,255,0.08)",
+                      borderRadius: 12,
+                      padding: "10px 12px",
+                    }}
+                  >
+                    {snapshot.detail}
+                  </div>
+                ) : null}
+
+                {config.webhookUrl ? (
+                  <div style={{ fontSize: 11, color: "var(--text-muted)", lineHeight: 1.7 }}>
+                    Webhook: {config.webhookUrl}
+                  </div>
+                ) : null}
 
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginTop: "auto" }}>
                   <span style={{ fontSize: 11, color: config.enabled ? "var(--accent)" : "var(--text-muted)", fontWeight: 700 }}>
@@ -476,7 +921,30 @@ function eventBadgeStyle(status: string) {
   };
 }
 
+function buildStatusChipStyle(color: string) {
+  return {
+    padding: "3px 8px",
+    borderRadius: 999,
+    border: `1px solid ${color}33`,
+    background: `${color}1f`,
+    color,
+    fontSize: 10,
+    fontWeight: 700,
+  };
+}
+
+const inlineTagStyle = {
+  padding: "4px 8px",
+  borderRadius: 999,
+  border: "1px solid rgba(255,255,255,0.08)",
+  background: "rgba(255,255,255,0.04)",
+  color: "var(--text-muted)",
+  fontSize: 11,
+} as const;
+
 function getEventTypeLabel(eventType: BusinessOperationRecord["eventType"]) {
+  if (eventType === "connector") return "连接器健康";
+  if (eventType === "message") return "消息事件";
   if (eventType === "publish") return "发布回写";
   if (eventType === "governance") return "渠道治理";
   if (eventType === "desktop") return "桌面动作";

@@ -805,6 +805,18 @@ function getOperationLabel(operation: BusinessOperationRecord) {
     return "Workflow 处理中";
   }
 
+  if (operation.eventType === "connector") {
+    if (operation.status === "failed") return "连接器异常";
+    if (operation.status === "completed") return "连接器已同步";
+    return "连接器处理中";
+  }
+
+  if (operation.eventType === "message") {
+    if (operation.status === "failed") return "消息失败";
+    if (operation.status === "completed" || operation.status === "sent") return "消息已回写";
+    return "消息处理中";
+  }
+
   if (operation.eventType === "publish") {
     if (operation.status === "completed") return "已回写发布";
     if (operation.status === "failed") return "发布失败";

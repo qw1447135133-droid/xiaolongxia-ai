@@ -1,6 +1,7 @@
 "use client";
 
 import { sendWs } from "@/hooks/useWebSocket";
+import { syncRuntimeSettings } from "@/lib/runtime-settings-sync";
 import { useStore } from "@/store";
 import type { ExecutionRun, ExecutionRunSource } from "@/store/types";
 import {
@@ -179,13 +180,7 @@ export function sendExecutionDispatch({
     });
   }
 
-  sendWs({
-    type: "settings_sync",
-    providers: store.providers,
-    agentConfigs: store.agentConfigs,
-    userNickname: store.userNickname,
-    desktopProgramSettings: store.desktopProgramSettings,
-  });
+  void syncRuntimeSettings();
 
   const ok = sendWs({
     type: "dispatch",

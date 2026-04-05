@@ -6,7 +6,7 @@ import { randomId } from "@/lib/utils";
 import { resolveBackendUrl } from "@/lib/backend-url";
 import { getSemanticMemoryProviderStatus } from "@/lib/semantic-memory";
 import { buildKnowledgeDocumentSnippet } from "@/lib/workspace-memory";
-import { sendWs } from "@/hooks/useWebSocket";
+import { syncRuntimeSettings } from "@/lib/runtime-settings-sync";
 import { useStore } from "@/store";
 import {
   AGENT_META,
@@ -1946,22 +1946,7 @@ function TestButton({ apiKey, baseUrl, testModel: initialModel }: { apiKey: stri
 }
 
 async function syncToServer() {
-  const { providers, agentConfigs, userNickname, desktopProgramSettings } = useStore.getState();
-
-  try {
-    if (sendWs({ type: "settings_sync", providers, agentConfigs, userNickname, desktopProgramSettings })) {
-      return;
-    }
-
-    const url = await resolveBackendUrl("/api/settings");
-    await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ providers, agentConfigs, userNickname, desktopProgramSettings }),
-    });
-  } catch (error) {
-    console.error("Failed to sync settings:", error);
-  }
+  await syncRuntimeSettings();
 }
 
 const labelStyle: CSSProperties = {

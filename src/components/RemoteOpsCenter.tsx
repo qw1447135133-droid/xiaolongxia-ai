@@ -20,7 +20,6 @@ import {
 import {
   filterByProjectScope,
   getRunProjectScopeKey,
-  getSessionProjectLabel,
   getSessionProjectScope,
 } from "@/lib/project-context";
 import { getTeamOperatingTemplate, TEAM_OPERATING_SURFACES, type AutomationMode, type ControlCenterSectionId, PLATFORM_DEFINITIONS } from "@/store/types";
@@ -65,7 +64,6 @@ export function RemoteOpsCenter() {
   const auditSectionRef = useRef<HTMLDivElement | null>(null);
   const pendingAuditFocusRef = useRef<AuditFocusRequest | null>(null);
 
-  const providers = useStore(s => s.providers);
   const platformConfigs = useStore(s => s.platformConfigs);
   const workflowRuns = useStore(s => s.workflowRuns);
   const executionRuns = useStore(s => s.executionRuns);
@@ -256,14 +254,6 @@ export function RemoteOpsCenter() {
   const completedRuns = recentProjectRuns.filter(run => run.status === "completed").length;
   const failedRuns = recentProjectRuns.filter(run => run.status === "failed").length;
   const activeRuns = recentProjectRuns.filter(run => run.status === "analyzing" || run.status === "running").length;
-  const remoteReadinessScore = [
-    providers.length > 0,
-    enabledPlatforms.length > 0,
-    enabledScheduledTasks.length > 0,
-    recentProjectRuns.length > 0,
-    verificationReadyRuns > 0,
-  ].filter(Boolean).length;
-  const remoteReadinessPercent = Math.round((remoteReadinessScore / 5) * 100);
   const businessAutomationQueue = useMemo(
     () =>
       buildBusinessAutomationQueue({
@@ -633,19 +623,6 @@ export function RemoteOpsCenter() {
 
   return (
     <div className="control-center">
-      <div className="control-center__hero">
-        <div className="control-center__eyebrow">Remote Ops</div>
-        <div className="control-center__hero-title">
-          当前更像“可进化中的数字员工工作台”，还不是完全合格的远程运营平台
-        </div>
-        <div className="control-center__hero-copy">
-          它已经具备远程接入、任务派发、执行追踪、项目记忆和监督面板的骨架，但离“手机上放心托管一群数字员工自动跑业务”还差最后几层系统能力。
-        </div>
-        <div className="control-center__copy" style={{ marginTop: 10 }}>
-          当前项目: {activeSession ? getSessionProjectLabel(activeSession) : "General"} · 远程运营就绪度 {remoteReadinessPercent}%
-        </div>
-      </div>
-
       <LaunchReadinessPanel compact onSelectSection={setActiveControlCenterSection} />
 
       {activeTemplate && remoteRecommendation ? (

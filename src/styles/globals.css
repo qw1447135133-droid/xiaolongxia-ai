@@ -3967,6 +3967,11 @@ body::after {
 }
 
 .desktop-workspace-shell__alert {
+  position: fixed;
+  top: 86px;
+  right: 24px;
+  z-index: 60;
+  width: min(520px, calc(100vw - 48px));
   border: 1px solid rgba(180, 83, 9, 0.16);
   border-radius: 22px;
   padding: 16px 18px;
@@ -4402,6 +4407,11 @@ body.runtime-electron .desktop-workspace-shell__alert p {
   .desktop-workspace-shell__layout.is-sidebar-collapsed {
     grid-template-columns: 1fr;
     padding: 14px;
+  }
+
+  .desktop-workspace-shell__alert {
+    position: static;
+    width: 100%;
   }
 }
 
@@ -5177,6 +5187,9 @@ body.runtime-electron .desktop-workspace-shell__rail-prompt:hover {
   margin-top: 10px;
   font-size: 13px;
   line-height: 1.8;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
   color: var(--text-muted);
 }
 
@@ -5215,6 +5228,10 @@ body.runtime-electron .desktop-workspace-shell__rail-prompt:hover {
 .control-center__panel-title {
   font-size: 14px;
   font-weight: 700;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
   color: var(--text);
 }
 

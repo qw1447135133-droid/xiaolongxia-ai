@@ -89,11 +89,16 @@ function openControlCenterSection(section: ControlCenterSectionId) {
 
 export default function App() {
   useWebSocket();
+  const [isClientReady, setIsClientReady] = useState(false);
   const runtimeTarget = useRuntimeTarget();
   const shouldRenderDesktopWorkspace = runtimeTarget === "electron";
   const locale = useStore(s => s.locale);
   const navItems = useMemo(() => getPrimaryNavItems(locale), [locale]);
   const uiText = useMemo(() => getUiText(locale), [locale]);
+
+  useEffect(() => {
+    setIsClientReady(true);
+  }, []);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -270,6 +275,18 @@ export default function App() {
     }
     setTab("settings");
   };
+
+  if (!isClientReady) {
+    return (
+      <div
+        suppressHydrationWarning
+        style={{
+          minHeight: "100vh",
+          background: "#f6f8fb",
+        }}
+      />
+    );
+  }
 
   if (shouldRenderDesktopWorkspace) {
     return <DesktopWorkspaceApp />;
@@ -606,7 +623,7 @@ function DesktopWorkspaceApp() {
         ) : null}
 
         <main className="desktop-workspace-shell__main">
-          {activeTab !== "tasks" && activeTab !== "dispatch" ? (
+          {activeTab !== "tasks" && activeTab !== "dispatch" && activeTab !== "settings" ? (
             <section className="desktop-workspace-shell__hero">
             <div>
               <div className="desktop-workspace-shell__hero-eyebrow">{activeNav.eyebrow}</div>
@@ -619,18 +636,6 @@ function DesktopWorkspaceApp() {
                   ja: "デスクトップでは安定した描画を優先しつつ、チャット・ワークスペース・制御面を一つの流れにまとめます。",
                 })}
               </p>
-              <div className="desktop-workspace-shell__hero-actions">
-                {activeTab !== "meeting" && (
-                  <>
-                    <button type="button" className="desktop-workspace-shell__hero-action is-primary" onClick={() => setTab("tasks")}>
-                      {uiText.common.backToChat}
-                    </button>
-                    <button type="button" className="desktop-workspace-shell__hero-action" onClick={() => setTab("settings")}>
-                      {uiText.common.openControlCenter}
-                    </button>
-                  </>
-                )}
-              </div>
             </div>
             <div className="desktop-workspace-shell__hero-meta">
               <div className="desktop-workspace-shell__hero-meta-card">
@@ -645,7 +650,7 @@ function DesktopWorkspaceApp() {
             </section>
           ) : null}
 
-          {offline || desktopRuntimeTone.tone !== "ready" ? (
+          {(offline || desktopRuntimeTone.tone !== "ready") && activeTab !== "settings" ? (
             <section className="desktop-workspace-shell__alert">
               <div>
                 <strong>{offline ? uiText.common.pipelineRecoveryTitle : uiText.common.desktopCapabilityTitle}</strong>
@@ -1023,18 +1028,6 @@ function DashboardTab({ onOpenTab }: { onOpenTab: (tab: AppTab) => void }) {
         <div className="ios-home__main ios-home__desktop-main">
           <section className="ios-home__hero">
             <div className="ios-home__hero-heading">
-              <div className="ios-home__hero-title-group">
-                <div className="ios-home__eyebrow">{uiText.dashboard.eyebrow}</div>
-                <h1 className="ios-home__title">{uiText.dashboard.title}</h1>
-                <p className="ios-home__copy">
-                  {pickLocaleText(locale, {
-                    "zh-CN": "首页现在只保留值守中最关键的状态：谁在工作、当前主任务、连接是否健康。",
-                    "zh-TW": "首頁現在只保留值守中最關鍵的狀態：誰在工作、目前主任務、連接是否健康。",
-                    en: "Home now keeps only the critical watch data: who is working, the current priority task, and whether the stack is healthy.",
-                    ja: "ホームには監視で本当に重要な状態だけを残しました。誰が動いているか、最優先タスクは何か、接続が健全かです。",
-                  })}
-                </p>
-              </div>
               <div className="ios-home__hero-meta">
                 <span className="ios-home__hero-meta-pill">
                   {uiText.common.currentProject}: {activeSession ? getSessionProjectLabel(activeSession) : uiText.common.generalProject}

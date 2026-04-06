@@ -21,7 +21,7 @@ export function PresetTasksPanel({ onSelectTask }: PresetTasksPanelProps) {
     <div className="preset-tasks">
       <div className="preset-tasks__header">
         <span className="preset-tasks__emoji">🎬</span>
-        <span>创作人设</span>
+        <span>短剧题材</span>
       </div>
 
       <div className="preset-tasks__filters">
@@ -65,7 +65,7 @@ function PresetTaskCard({ task, onClick }: { task: PresetTask; onClick: () => vo
         <span className="preset-tasks__card-title">{task.name}</span>
       </div>
       <div className="preset-tasks__card-desc">{task.description}</div>
-      <div className="preset-tasks__card-category">{CATEGORY_LABELS[task.category]}</div>
+      <div className="preset-tasks__card-category">{task.audience} · {CATEGORY_LABELS[task.category]}</div>
     </button>
   );
 }

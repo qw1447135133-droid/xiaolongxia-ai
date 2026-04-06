@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useStore } from "@/store";
 import { filterByProjectScope, getRunProjectScopeKey, getSessionProjectLabel } from "@/lib/project-context";
 import { getTeamOperatingTemplate, TEAM_OPERATING_SURFACES } from "@/store/types";
@@ -17,6 +17,11 @@ import { RemoteOpsCenter } from "./RemoteOpsCenter";
 import { SettingsPanel } from "./SettingsPanel";
 import { SkillsCenter } from "./SkillsCenter";
 import { WorkflowCenter } from "./WorkflowCenter";
+
+function truncateText(value: string, maxLength: number): string {
+  if (value.length <= maxLength) return value;
+  return `${value.slice(0, maxLength).trimEnd()}...`;
+}
 
 function getControlCenterSections(locale: UiLocale): Array<{ id: ControlCenterSectionId; label: string; hint: string }> {
   return [
@@ -42,12 +47,12 @@ function getControlCenterSections(locale: UiLocale): Array<{ id: ControlCenterSe
     },
     {
       id: "entities",
-      label: pickLocaleText(locale, { "zh-CN": "业务实体", "zh-TW": "業務實體", en: "Business Entities", ja: "業務エンティティ" }),
+      label: pickLocaleText(locale, { "zh-CN": "业务与渠道", "zh-TW": "業務與渠道", en: "Business & Channels", ja: "業務とチャネル" }),
       hint: pickLocaleText(locale, {
-        "zh-CN": "客户、线索、工单、内容任务、会话",
-        "zh-TW": "客戶、線索、工單、內容任務、會話",
-        en: "Customers, leads, tickets, content tasks, sessions",
-        ja: "顧客、リード、チケット、コンテンツ、会話",
+        "zh-CN": "客户、线索、工单、内容任务与渠道会话",
+        "zh-TW": "客戶、線索、工單、內容任務與渠道會話",
+        en: "Customers, leads, tickets, content tasks, and channels",
+        ja: "顧客、リード、チケット、コンテンツ、チャネル会話",
       }),
     },
     {
@@ -58,16 +63,6 @@ function getControlCenterSections(locale: UiLocale): Array<{ id: ControlCenterSe
         "zh-TW": "數位員工值守狀態與缺口",
         en: "Digital workforce readiness and gaps",
         ja: "デジタル社員の監督状態と不足",
-      }),
-    },
-    {
-      id: "execution",
-      label: pickLocaleText(locale, { "zh-CN": "执行日志", "zh-TW": "執行日誌", en: "Execution Log", ja: "実行ログ" }),
-      hint: pickLocaleText(locale, {
-        "zh-CN": "查看运行轨迹、失败与恢复",
-        "zh-TW": "查看運行軌跡、失敗與恢復",
-        en: "Trace runs, failures, and recovery",
-        ja: "実行履歴、失敗、復旧を確認",
       }),
     },
     {
@@ -91,16 +86,6 @@ function getControlCenterSections(locale: UiLocale): Array<{ id: ControlCenterSe
       }),
     },
     {
-      id: "api-providers",
-      label: pickLocaleText(locale, { "zh-CN": "API 设置", "zh-TW": "API 設定", en: "API Settings", ja: "API 設定" }),
-      hint: pickLocaleText(locale, {
-        "zh-CN": "管理模型供应商、密钥与接口地址",
-        "zh-TW": "管理模型供應商、密鑰與介面地址",
-        en: "Manage providers, API keys, and base URLs",
-        ja: "プロバイダー、API キー、URL を管理",
-      }),
-    },
-    {
       id: "desktop",
       label: pickLocaleText(locale, { "zh-CN": "桌面应用", "zh-TW": "桌面應用", en: "Desktop Apps", ja: "デスクトップアプリ" }),
       hint: pickLocaleText(locale, {
@@ -108,16 +93,6 @@ function getControlCenterSections(locale: UiLocale): Array<{ id: ControlCenterSe
         "zh-TW": "啟動本機程式與原生工具",
         en: "Launch local programs and native tools",
         ja: "ローカルアプリとネイティブツールを起動",
-      }),
-    },
-    {
-      id: "workspace",
-      label: pickLocaleText(locale, { "zh-CN": "工作区", "zh-TW": "工作區", en: "Workspace", ja: "ワークスペース" }),
-      hint: pickLocaleText(locale, {
-        "zh-CN": "主题、侧栏与快捷方式",
-        "zh-TW": "主題、側欄與快捷方式",
-        en: "Theme, sidebars, and shortcuts",
-        ja: "テーマ、サイドバー、ショートカット",
       }),
     },
     {
@@ -151,23 +126,13 @@ function getControlCenterSections(locale: UiLocale): Array<{ id: ControlCenterSe
       }),
     },
     {
-      id: "channels",
-      label: pickLocaleText(locale, { "zh-CN": "渠道中心", "zh-TW": "渠道中心", en: "Channels Center", ja: "チャネルセンター" }),
-      hint: pickLocaleText(locale, {
-        "zh-CN": "桥接式平台与消息入口概览",
-        "zh-TW": "橋接式平台與消息入口概覽",
-        en: "Bridge-style platform overview",
-        ja: "ブリッジ型プラットフォーム概要",
-      }),
-    },
-    {
       id: "settings",
-      label: pickLocaleText(locale, { "zh-CN": "详细设置", "zh-TW": "詳細設定", en: "Detailed Settings", ja: "詳細設定" }),
+      label: pickLocaleText(locale, { "zh-CN": "设置", "zh-TW": "設定", en: "Settings", ja: "設定" }),
       hint: pickLocaleText(locale, {
-        "zh-CN": "Agents、模型与平台参数",
-        "zh-TW": "Agents、模型與平台參數",
-        en: "Agents, models, and platforms",
-        ja: "Agents、モデル、プラットフォーム設定",
+        "zh-CN": "API 提供方与工作区偏好",
+        "zh-TW": "API 供應商與工作區偏好",
+        en: "API providers and workspace preferences",
+        ja: "API プロバイダーとワークスペース設定",
       }),
     },
     {
@@ -188,6 +153,7 @@ export function ControlCenter() {
   const activeTeamOperatingTemplateId = useStore(s => s.activeTeamOperatingTemplateId);
   const section = useStore(s => s.activeControlCenterSectionId);
   const setActiveControlCenterSection = useStore(s => s.setActiveControlCenterSection);
+  const [entitiesSubTab, setEntitiesSubTab] = useState<"entities" | "channels">("entities");
   const activeTemplate = activeTeamOperatingTemplateId
     ? getTeamOperatingTemplate(activeTeamOperatingTemplateId)
     : null;
@@ -206,6 +172,29 @@ export function ControlCenter() {
     ];
   }, [activeSurface, locale]);
   const activeSectionMeta = sections.find(item => item.id === section) ?? sections[0];
+
+  useEffect(() => {
+    if (section === "api-providers" || section === "workspace") {
+      setActiveControlCenterSection("settings");
+    }
+  }, [section, setActiveControlCenterSection]);
+
+  useEffect(() => {
+    if (section === "execution") {
+      setActiveControlCenterSection("overview");
+    }
+  }, [section, setActiveControlCenterSection]);
+
+  useEffect(() => {
+    if (section === "channels") {
+      setEntitiesSubTab("channels");
+      setActiveControlCenterSection("entities");
+      return;
+    }
+    if (section === "entities") {
+      setEntitiesSubTab("entities");
+    }
+  }, [section, setActiveControlCenterSection]);
 
   return (
     <div className="settings-shell">
@@ -265,27 +254,95 @@ export function ControlCenter() {
 
       <div className="settings-shell__content">
         {section === "overview" && (
-          <ControlOverview
-            activeTemplateId={activeTeamOperatingTemplateId}
-            onSelectSection={setActiveControlCenterSection}
-          />
+          <>
+            <ControlOverview
+              activeTemplateId={activeTeamOperatingTemplateId}
+              onSelectSection={setActiveControlCenterSection}
+            />
+            <ExecutionCenter />
+          </>
         )}
         {section === "readiness" && <ReadinessCenter onSelectSection={setActiveControlCenterSection} />}
-        {section === "entities" && <BusinessEntitiesCenter />}
+        {section === "entities" && <EntitiesChannelsCenter activeTab={entitiesSubTab} onTabChange={setEntitiesSubTab} />}
         {section === "remote" && <RemoteOpsCenter />}
-        {section === "execution" && <ExecutionCenter />}
         {section === "workflow" && <WorkflowCenter />}
         {section === "agent-models" && <SettingsPanel initialSection="agents" allowedSections={["agents"]} />}
-        {section === "api-providers" && <SettingsPanel initialSection="providers" allowedSections={["providers"]} />}
         {section === "desktop" && <NativeAppsCenter />}
-        {section === "workspace" && <WorkspacePreferences />}
         {section === "skills" && <SkillsCenter />}
         {section === "plugins" && <PluginsCenter />}
         {section === "artifacts" && <ArtifactsCenter />}
-        {section === "channels" && <ChannelsCenter />}
-        {section === "settings" && <SettingsPanel />}
+        {section === "settings" && <UnifiedSettingsCenter />}
         {section === "about" && <AboutControlCenter />}
       </div>
+    </div>
+  );
+}
+
+function UnifiedSettingsCenter() {
+  const locale = useStore(s => s.locale);
+  const [activeTab, setActiveTab] = useState<"providers" | "workspace">("providers");
+
+  return (
+    <div className="control-center">
+      <div className="control-center__quick-actions" style={{ marginTop: 0 }}>
+        <button
+          type="button"
+          className="btn-ghost"
+          onClick={() => setActiveTab("providers")}
+          style={activeTab === "providers" ? { borderColor: "rgba(var(--accent-rgb), 0.24)", background: "rgba(var(--accent-rgb), 0.1)", color: "var(--accent)" } : undefined}
+        >
+          {pickLocaleText(locale, { "zh-CN": "API 设置", "zh-TW": "API 設定", en: "API Settings", ja: "API 設定" })}
+        </button>
+        <button
+          type="button"
+          className="btn-ghost"
+          onClick={() => setActiveTab("workspace")}
+          style={activeTab === "workspace" ? { borderColor: "rgba(var(--accent-rgb), 0.24)", background: "rgba(var(--accent-rgb), 0.1)", color: "var(--accent)" } : undefined}
+        >
+          {pickLocaleText(locale, { "zh-CN": "工作区", "zh-TW": "工作區", en: "Workspace", ja: "ワークスペース" })}
+        </button>
+      </div>
+
+      {activeTab === "providers" ? (
+        <SettingsPanel initialSection="providers" allowedSections={["providers"]} />
+      ) : (
+        <WorkspacePreferences />
+      )}
+    </div>
+  );
+}
+
+function EntitiesChannelsCenter({
+  activeTab,
+  onTabChange,
+}: {
+  activeTab: "entities" | "channels";
+  onTabChange: (tab: "entities" | "channels") => void;
+}) {
+  const locale = useStore(s => s.locale);
+
+  return (
+    <div style={{ display: "grid", gap: 12 }}>
+      <div className="control-center__quick-actions" style={{ marginTop: 0 }}>
+        <button
+          type="button"
+          className="btn-ghost"
+          onClick={() => onTabChange("entities")}
+          style={activeTab === "entities" ? { borderColor: "rgba(var(--accent-rgb), 0.24)", background: "rgba(var(--accent-rgb), 0.1)", color: "var(--accent)" } : undefined}
+        >
+          {pickLocaleText(locale, { "zh-CN": "业务实体", "zh-TW": "業務實體", en: "Business Entities", ja: "業務エンティティ" })}
+        </button>
+        <button
+          type="button"
+          className="btn-ghost"
+          onClick={() => onTabChange("channels")}
+          style={activeTab === "channels" ? { borderColor: "rgba(var(--accent-rgb), 0.24)", background: "rgba(var(--accent-rgb), 0.1)", color: "var(--accent)" } : undefined}
+        >
+          {pickLocaleText(locale, { "zh-CN": "渠道中心", "zh-TW": "渠道中心", en: "Channels Center", ja: "チャネルセンター" })}
+        </button>
+      </div>
+
+      {activeTab === "entities" ? <BusinessEntitiesCenter /> : <ChannelsCenter />}
     </div>
   );
 }
@@ -429,36 +486,6 @@ function ControlOverview({
 
   return (
     <div className="control-center">
-      <div className="control-center__hero">
-        <div className="control-center__eyebrow">
-          {pickLocaleText(locale, { "zh-CN": "总览", "zh-TW": "總覽", en: "Overview", ja: "概要" })}
-        </div>
-        <div className="control-center__hero-title">
-          {pickLocaleText(locale, {
-            "zh-CN": "这里只保留需要人工判断和接管的事项",
-            "zh-TW": "這裡只保留需要人工判斷與接管的事項",
-            en: "Only items that need human judgment or takeover stay here",
-            ja: "ここには人手判断や引き継ぎが必要な項目だけを残します",
-          })}
-        </div>
-        <div className="control-center__hero-copy">
-          {pickLocaleText(locale, {
-            "zh-CN": "自动运行中的任务和内部策略不再堆在这里，主面板只展示待审批、待恢复、待回复和桌面接管。",
-            "zh-TW": "自動運行中的任務和內部策略不再堆在這裡，主面板只顯示待審批、待恢復、待回覆和桌面接管。",
-            en: "Auto-running tasks and internal strategy details are hidden from this surface. The main panel only shows approvals, recovery, replies, and desktop takeover.",
-            ja: "自動実行中のタスクや内部戦略はここから外し、主面には承認・復旧・返信・デスクトップ引き継ぎだけを表示します。",
-          })}
-        </div>
-        <div className="control-center__copy" style={{ marginTop: 10 }}>
-          {pickLocaleText(locale, {
-            "zh-CN": "当前项目范围",
-            "zh-TW": "當前專案範圍",
-            en: "Current project scope",
-            ja: "現在のプロジェクト範囲",
-          })}: {activeSession ? getSessionProjectLabel(activeSession) : uiText.common.generalProject}
-        </div>
-      </div>
-
       <div className="control-center__stats">
         {[
           { label: pickLocaleText(locale, { "zh-CN": "待审批", "zh-TW": "待審批", en: "Pending Approvals", ja: "承認待ち" }), value: pendingApprovals, color: pendingApprovals > 0 ? "var(--warning)" : "var(--success)" },
@@ -486,8 +513,10 @@ function ControlOverview({
               {manualFocusCards.map(card => (
                 <article key={card.id} className="control-center__approval-card">
                   <div className="control-center__action-eyebrow">{card.eyebrow}</div>
-                  <div className="control-center__panel-title" style={{ fontSize: 16 }}>{card.title}</div>
-                  <div className="control-center__copy">{card.copy}</div>
+                  <div className="control-center__panel-title" style={{ fontSize: 16 }}>
+                    {truncateText(card.title, 72)}
+                  </div>
+                  <div className="control-center__copy">{truncateText(card.copy, 180)}</div>
                   <div className="control-center__quick-actions">
                     <button type="button" className="btn-ghost" onClick={() => onSelectSection(card.section)}>
                       {card.actionLabel}

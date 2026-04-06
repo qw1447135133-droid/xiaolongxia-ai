@@ -172,9 +172,13 @@
     "feishu": {
       "enabled": false,
       "fields": {},
-      "status": "idle",
-      "detail": "当前未启用该连接器。",
-      "healthScore": 0
+      "status": "connected",
+      "detail": "渠道会话已人工标记为已处理。",
+      "healthScore": 100,
+      "pendingEvents": 0,
+      "lastEventAt": 1775471034657,
+      "accountLabel": "Feishu App",
+      "lastCheckedAt": 1775471034657
     },
     "wecom": {
       "enabled": false,

@@ -400,6 +400,9 @@ export function ExecutionCenter({ compact = false }: { compact?: boolean }) {
                   padding: 16,
                   display: "grid",
                   gap: 12,
+                  lineHeight: 1.6,
+                  overflowWrap: "anywhere",
+                  wordBreak: "break-word",
                   borderColor: isActive ? `${tone.color}55` : "var(--border)",
                   background: isActive
                     ? `linear-gradient(180deg, ${tone.color}18, rgba(255,255,255,0.03) 72%)`
@@ -407,8 +410,10 @@ export function ExecutionCenter({ compact = false }: { compact?: boolean }) {
                 }}
               >
                 <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
-                  <div style={{ minWidth: 0 }}>
-                    <div style={{ fontSize: 15, fontWeight: 700, lineHeight: 1.35 }}>{run.instruction}</div>
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div style={{ fontSize: 15, fontWeight: 700, lineHeight: 1.5, whiteSpace: "pre-wrap", overflowWrap: "anywhere", wordBreak: "break-word" }}>
+                      {run.instruction}
+                    </div>
                     <div style={{ marginTop: 6, fontSize: 11, color: "var(--text-muted)" }}>
                       {formatTimestamp(run.createdAt, locale)} · {pickLocaleText(locale, { "zh-CN": "更新于", "zh-TW": "更新於", en: "Updated", ja: "更新" })} {timeAgo(run.updatedAt, locale)}
                     </div>

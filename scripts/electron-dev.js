@@ -82,6 +82,51 @@ async function waitFor(check, label, timeoutMs = 30000, intervalMs = 500) {
   throw new Error(`${label} did not become ready within ${timeoutMs}ms.`);
 }
 
+function waitForChildExit(child, label) {
+  return new Promise((_, reject) => {
+    child.once("exit", code => {
+      if (shuttingDown) {
+        return;
+      }
+      reject(new Error(`${label} exited before becoming ready (code ${code ?? "unknown"}).`));
+    });
+    child.once("error", error => {
+      reject(error instanceof Error ? error : new Error(String(error)));
+    });
+  });
+}
+
+function isElectronRouteReady(port, timeoutMs = 3000) {
+  return new Promise(resolve => {
+    const request = http.get(
+      {
+        hostname: "127.0.0.1",
+        port,
+        path: "/electron?desktop-client=electron",
+        timeout: timeoutMs,
+      },
+      response => {
+        response.resume();
+        resolve(true);
+      },
+    );
+
+    request.once("timeout", () => {
+      request.destroy();
+      resolve(false);
+    });
+
+    request.once("error", () => resolve(false));
+  });
+}
+
+async function waitForReadyOrChildExit(child, check, label, timeoutMs = 60000, intervalMs = 500) {
+  await Promise.race([
+    waitFor(check, label, timeoutMs, intervalMs),
+    waitForChildExit(child, label),
+  ]);
+}
+
 function spawnManaged(name, command, args, envOverrides = {}) {
   log(name, `starting ${command} ${args.join(" ")}`.trim());
   const useShell = process.platform === "win32" && command.toLowerCase().endsWith(".cmd");
@@ -233,6 +278,85 @@ async function cleanRepoProcesses() {
   await new Promise(resolve => setTimeout(resolve, 1200));
 }
 
+async function cleanRepoElectronProcesses() {
+  if (process.platform !== "win32") {
+    return;
+  }
+
+  const escapedRoot = projectRoot.replace(/'/g, "''");
+  const escapedElectronBinary = path.join(projectRoot, "node_modules", "electron", "dist", "electron.exe").replace(/'/g, "''");
+  const command = [
+    `$ErrorActionPreference = 'SilentlyContinue'`,
+    `$repoRoot = '${escapedRoot}'`,
+    `$electronBinary = '${escapedElectronBinary}'`,
+    `$currentPid = ${process.pid}`,
+    `$targets = Get-CimInstance Win32_Process | Where-Object {`,
+    `  $_.ProcessId -ne $currentPid -and`,
+    `  $_.Name -eq 'electron.exe' -and (`,
+    `    $_.CommandLine -like "*$repoRoot*" -or`,
+    `    $_.ExecutablePath -eq $electronBinary`,
+    `  )`,
+    `}`,
+    `foreach ($target in $targets) {`,
+    `  try {`,
+    `    Stop-Process -Id $target.ProcessId -Force -ErrorAction Stop`,
+    `    Write-Output ("stopped " + $target.Name + " #" + $target.ProcessId)`,
+    `  } catch {}`,
+    `}`,
+    `exit 0`,
+  ].join("\n");
+
+  const output = await execForText("powershell", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command]);
+  const lines = output
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(Boolean);
+
+  for (const line of lines) {
+    log("clean", line);
+  }
+
+  if (lines.length > 0) {
+    await new Promise(resolve => setTimeout(resolve, 500));
+  }
+}
+
+async function stopPortOwnerProcess(port, label = `port ${port}`) {
+  if (process.platform !== "win32") {
+    return false;
+  }
+
+  const command = [
+    `$ErrorActionPreference = 'SilentlyContinue'`,
+    `$connection = Get-NetTCPConnection -LocalPort ${port} -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1`,
+    `if (-not $connection) { exit 0 }`,
+    `$process = Get-CimInstance Win32_Process -Filter ("ProcessId = " + $connection.OwningProcess)`,
+    `if (-not $process) { exit 0 }`,
+    `try {`,
+    `  Stop-Process -Id $process.ProcessId -Force -ErrorAction Stop`,
+    `  Write-Output ("stopped " + $process.Name + " #" + $process.ProcessId)`,
+    `} catch {}`,
+    `exit 0`,
+  ].join("\n");
+
+  const output = await execForText("powershell", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command]);
+  const lines = output
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(Boolean);
+
+  for (const line of lines) {
+    log("clean", `${label}: ${line}`);
+  }
+
+  if (lines.length > 0) {
+    await new Promise(resolve => setTimeout(resolve, 800));
+    return true;
+  }
+
+  return false;
+}
+
 function cleanNextArtifacts() {
   const nextDir = path.join(projectRoot, ".next");
 
@@ -255,17 +379,25 @@ async function ensureNextDev() {
     const ownedByRepo = isRepoOwnedCommandLine(ownerCommandLine);
 
     if (ownedByRepo) {
-      await waitFor(() => isHttpReady(nextPort), "Next dev server");
-      log("Next", `reusing existing repo dev server on http://localhost:${nextPort}`);
-      return { reused: true, port: nextPort };
-    }
+      const healthy = await isHttpReady(nextPort, 1500);
+      const electronRouteReady = healthy && await isElectronRouteReady(nextPort, 5000);
+      if (healthy && electronRouteReady) {
+        log("Next", `reusing existing repo dev server on http://localhost:${nextPort}`);
+        return { reused: true, port: nextPort };
+      }
 
-    nextPort = await findAvailablePort(Math.max(preferredNextPort + 2, wsPort + 1));
-    log("Next", `port ${preferredNextPort} is occupied by another project, switching to http://localhost:${nextPort}`);
+      log("Next", `found stale repo dev server on http://localhost:${nextPort}; restarting it`);
+      await stopPortOwnerProcess(nextPort, "Next");
+    }
+    if (!ownedByRepo) {
+      nextPort = await findAvailablePort(Math.max(preferredNextPort + 2, wsPort + 1));
+      log("Next", `port ${preferredNextPort} is occupied by another project, switching to http://localhost:${nextPort}`);
+    }
   }
 
   const child = spawnManaged("Next", getNextBin(), ["dev", "-p", String(nextPort)]);
-  await waitFor(() => isHttpReady(nextPort), "Next dev server");
+  await waitForReadyOrChildExit(child, () => isHttpReady(nextPort), "Next dev server");
+  await waitForReadyOrChildExit(child, () => isElectronRouteReady(nextPort), "Electron route");
   log("Next", `ready on http://localhost:${nextPort}`);
   return { reused: false, child, port: nextPort };
 }
@@ -298,6 +430,8 @@ async function main() {
   if (cleanMode) {
     await cleanRepoProcesses();
     cleanNextArtifacts();
+  } else {
+    await cleanRepoElectronProcesses();
   }
 
   await ensureWsServer();

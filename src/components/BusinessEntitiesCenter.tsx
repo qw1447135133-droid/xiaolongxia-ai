@@ -16,20 +16,11 @@ import {
   scoreTicket,
   type QuantDecision,
 } from "@/lib/business-quantification";
-import type { BusinessContentFormat, BusinessEntityType, BusinessOperationRecord } from "@/types/business-entities";
+import type { BusinessEntityType, BusinessOperationRecord } from "@/types/business-entities";
 import type { ControlCenterSectionId } from "@/store/types";
 
 export function BusinessEntitiesCenter() {
   const contentTaskRefs = useRef<Record<string, HTMLElement | null>>({});
-  const [creatorType, setCreatorType] = useState<"customer" | "lead" | "ticket" | "content" | "session">("customer");
-  const [primaryText, setPrimaryText] = useState("");
-  const [detailText, setDetailText] = useState("");
-  const [contentFormat, setContentFormat] = useState<BusinessContentFormat>("post");
-  const [contentGoal, setContentGoal] = useState("");
-  const [publishTargetsText, setPublishTargetsText] = useState("blog:官网博客");
-  const [selectedCustomerId, setSelectedCustomerId] = useState("");
-  const [selectedChannelSessionId, setSelectedChannelSessionId] = useState("");
-  const [selectedLeadId, setSelectedLeadId] = useState("");
 
   const chatSessions = useStore(s => s.chatSessions);
   const activeSessionId = useStore(s => s.activeSessionId);
@@ -39,11 +30,6 @@ export function BusinessEntitiesCenter() {
   const businessContentTasks = useStore(s => s.businessContentTasks);
   const businessChannelSessions = useStore(s => s.businessChannelSessions);
   const businessOperationLogs = useStore(s => s.businessOperationLogs);
-  const createBusinessCustomer = useStore(s => s.createBusinessCustomer);
-  const createBusinessLead = useStore(s => s.createBusinessLead);
-  const createBusinessTicket = useStore(s => s.createBusinessTicket);
-  const createBusinessContentTask = useStore(s => s.createBusinessContentTask);
-  const createBusinessChannelSession = useStore(s => s.createBusinessChannelSession);
   const advanceBusinessLeadStage = useStore(s => s.advanceBusinessLeadStage);
   const advanceBusinessTicketStatus = useStore(s => s.advanceBusinessTicketStatus);
   const advanceBusinessContentTaskStatus = useStore(s => s.advanceBusinessContentTaskStatus);
@@ -58,6 +44,7 @@ export function BusinessEntitiesCenter() {
   const focusedBusinessContentTaskId = useStore(s => s.focusedBusinessContentTaskId);
   const focusBusinessContentTask = useStore(s => s.focusBusinessContentTask);
   const [highlightedContentTaskId, setHighlightedContentTaskId] = useState<string | null>(null);
+  const [expandedEntityCards, setExpandedEntityCards] = useState<Record<string, boolean>>({});
 
   const openControlCenterSection = (section: ControlCenterSectionId) => {
     setActiveControlCenterSection(section);
@@ -80,6 +67,13 @@ export function BusinessEntitiesCenter() {
     window.setTimeout(() => {
       setHighlightedContentTaskId(current => (current === contentTaskId ? null : current));
     }, 2200);
+  };
+
+  const toggleEntityCard = (entityKey: string) => {
+    setExpandedEntityCards(current => ({
+      ...current,
+      [entityKey]: !current[entityKey],
+    }));
   };
 
   const activeSession = useMemo(
@@ -172,84 +166,6 @@ export function BusinessEntitiesCenter() {
     };
   }, [channelSessionMap, customerMap, leadMap, scopedChannelSessions, scopedContentTasks, scopedCustomers, scopedLeads, scopedTickets]);
 
-  const resetCreator = () => {
-    setPrimaryText("");
-    setDetailText("");
-    setContentFormat("post");
-    setContentGoal("");
-    setPublishTargetsText("blog:官网博客");
-    setSelectedCustomerId("");
-    setSelectedChannelSessionId("");
-    setSelectedLeadId("");
-  };
-
-  const submitCreate = () => {
-    const title = primaryText.trim();
-    const detail = detailText.trim();
-    if (!title) return;
-
-    if (creatorType === "customer") {
-      createBusinessCustomer({
-        name: title,
-        tier: "prospect",
-        primaryChannel: "web",
-        company: "",
-        summary: detail || "待补充客户摘要",
-      });
-    }
-
-    if (creatorType === "lead") {
-      createBusinessLead({
-        title,
-        customerId: selectedCustomerId || null,
-        source: "manual",
-        stage: "new",
-        score: 50,
-        nextAction: detail || "待补充下一步动作",
-      });
-    }
-
-    if (creatorType === "ticket") {
-      createBusinessTicket({
-        subject: title,
-        customerId: selectedCustomerId || null,
-        channelSessionId: selectedChannelSessionId || null,
-        status: "new",
-        priority: "normal",
-        summary: detail || "待补充工单摘要",
-      });
-    }
-
-    if (creatorType === "content") {
-      const parsedTargets = parsePublishTargets(publishTargetsText);
-      createBusinessContentTask({
-        title,
-        customerId: selectedCustomerId || null,
-        leadId: selectedLeadId || null,
-        channel: "blog",
-        format: contentFormat,
-        goal: contentGoal.trim() || detail || "待补充内容目标",
-        publishTargets: parsedTargets.length > 0 ? parsedTargets : [{ channel: "blog", accountLabel: "官网博客" }],
-        status: "draft",
-        priority: "normal",
-        brief: detail || "待补充内容任务说明",
-      });
-    }
-
-    if (creatorType === "session") {
-      createBusinessChannelSession({
-        title,
-        customerId: selectedCustomerId || null,
-        channel: "web",
-        externalRef: `manual:${Date.now()}`,
-        status: "open",
-        summary: detail || "待补充渠道会话摘要",
-      });
-    }
-
-    resetCreator();
-  };
-
   return (
     <div className="control-center">
       <div className="control-center__hero">
@@ -274,152 +190,6 @@ export function BusinessEntitiesCenter() {
         </button>
       </div>
 
-      <div className="control-center__panel">
-        <div className="control-center__panel-title">快速创建实体</div>
-        <div className="control-center__mode-list">
-          <div className="control-center__theme-list">
-            {([
-              ["customer", "客户"],
-              ["lead", "线索"],
-              ["ticket", "工单"],
-              ["content", "内容任务"],
-              ["session", "渠道会话"],
-            ] as const).map(([type, label]) => (
-              <button
-                key={type}
-                type="button"
-                className={`btn-ghost control-center__theme-option ${creatorType === type ? "is-active" : ""}`}
-                onClick={() => setCreatorType(type)}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-
-          <div className="scheduled-form__field">
-            <label className="scheduled-form__label">
-              {creatorType === "customer" ? "名称" : creatorType === "ticket" ? "主题" : "标题"}
-            </label>
-            <input
-              className="input scheduled-form__input"
-              value={primaryText}
-              onChange={event => setPrimaryText(event.target.value)}
-              placeholder="输入主要标题"
-            />
-          </div>
-
-          <div className="scheduled-form__field">
-            <label className="scheduled-form__label">摘要 / 下一步 / Brief</label>
-            <textarea
-              className="input scheduled-form__textarea"
-              value={detailText}
-              onChange={event => setDetailText(event.target.value)}
-              placeholder="输入补充说明"
-            />
-          </div>
-
-          {creatorType !== "customer" && (
-            <div className="scheduled-form__field">
-              <label className="scheduled-form__label">关联客户</label>
-              <select
-                className="input scheduled-form__input"
-                value={selectedCustomerId}
-                onChange={event => setSelectedCustomerId(event.target.value)}
-              >
-                <option value="">暂不关联</option>
-                {scopedCustomers.map(customer => (
-                  <option key={customer.id} value={customer.id}>
-                    {customer.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
-
-          {creatorType === "ticket" && (
-            <div className="scheduled-form__field">
-              <label className="scheduled-form__label">关联渠道会话</label>
-              <select
-                className="input scheduled-form__input"
-                value={selectedChannelSessionId}
-                onChange={event => setSelectedChannelSessionId(event.target.value)}
-              >
-                <option value="">暂不关联</option>
-                {scopedChannelSessions.map(session => (
-                  <option key={session.id} value={session.id}>
-                    {session.title}
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
-
-          {creatorType === "content" && (
-            <>
-              <div className="scheduled-form__field">
-                <label className="scheduled-form__label">关联线索</label>
-                <select
-                  className="input scheduled-form__input"
-                  value={selectedLeadId}
-                  onChange={event => setSelectedLeadId(event.target.value)}
-                >
-                  <option value="">暂不关联</option>
-                  {scopedLeads.map(lead => (
-                    <option key={lead.id} value={lead.id}>
-                      {lead.title}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="scheduled-form__field">
-                <label className="scheduled-form__label">内容形式</label>
-                <select
-                  className="input scheduled-form__input"
-                  value={contentFormat}
-                  onChange={event => setContentFormat(event.target.value as BusinessContentFormat)}
-                >
-                  {(["post", "thread", "article", "script", "campaign"] as const).map(format => (
-                    <option key={format} value={format}>
-                      {format}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="scheduled-form__field">
-                <label className="scheduled-form__label">内容目标</label>
-                <textarea
-                  className="input scheduled-form__textarea"
-                  value={contentGoal}
-                  onChange={event => setContentGoal(event.target.value)}
-                  placeholder="例如：生成一版可转销售线索的产品介绍内容"
-                />
-              </div>
-
-              <div className="scheduled-form__field">
-                <label className="scheduled-form__label">发布目标</label>
-                <textarea
-                  className="input scheduled-form__textarea"
-                  value={publishTargetsText}
-                  onChange={event => setPublishTargetsText(event.target.value)}
-                  placeholder={"每行一个目标，例如：\nblog:官网博客\nx:品牌账号"}
-                />
-              </div>
-            </>
-          )}
-
-          <div className="scheduled-form__actions">
-            <button type="button" className="btn-ghost scheduled-form__button" onClick={resetCreator}>
-              清空
-            </button>
-            <button type="button" className="btn-primary scheduled-form__button" onClick={submitCreate}>
-              创建实体
-            </button>
-          </div>
-        </div>
-      </div>
-
       <div className="control-center__stats">
         <EntityMetric label={BUSINESS_ENTITY_LABELS.customers} value={scopedCustomers.length} accent="var(--accent)" />
         <EntityMetric label={BUSINESS_ENTITY_LABELS.leads} value={scopedLeads.length} accent="#60a5fa" />
@@ -438,23 +208,34 @@ export function BusinessEntitiesCenter() {
           items={scopedCustomers.map(customer => {
             const decision = scoreCustomerHealth(customer);
             const latestOperation = latestOperationByEntity[`customer:${customer.id}`];
+            const cardKey = `customer:${customer.id}`;
+            const expanded = Boolean(expandedEntityCards[cardKey]);
             return (
               <article key={customer.id} className="control-center__entity-card">
                 <div className="control-center__entity-head">
                   <strong>{customer.name}</strong>
                   <span className="control-center__entity-pill">{customer.tier}</span>
                 </div>
-                <DecisionStrip decision={decision} />
+                <DecisionStrip decision={decision} showSummary={expanded} />
                 <div className="control-center__copy">{customer.summary}</div>
-                <div className="control-center__entity-meta">
-                  <span>渠道 {customer.primaryChannel}</span>
-                  <span>{customer.company ?? "独立客户"}</span>
+                <div className="control-center__quick-actions">
+                  <button type="button" className="btn-ghost" onClick={() => toggleEntityCard(cardKey)}>
+                    {expanded ? "收起详情" : "展开详情"}
+                  </button>
                 </div>
-                <EntityAuditSummary
-                  operation={latestOperation}
-                  onOpenRemoteOps={() => openControlCenterSection("remote")}
-                  onOpenExecution={latestOperation?.executionRunId ? () => focusExecutionRun(latestOperation.executionRunId) : undefined}
-                />
+                {expanded ? (
+                  <>
+                    <div className="control-center__entity-meta">
+                      <span>渠道 {customer.primaryChannel}</span>
+                      <span>{customer.company ?? "独立客户"}</span>
+                    </div>
+                    <EntityAuditSummary
+                      operation={latestOperation}
+                      onOpenRemoteOps={() => openControlCenterSection("remote")}
+                      onOpenExecution={latestOperation?.executionRunId ? () => focusExecutionRun(latestOperation.executionRunId) : undefined}
+                    />
+                  </>
+                ) : null}
               </article>
             );
           })}
@@ -466,30 +247,41 @@ export function BusinessEntitiesCenter() {
           items={scopedLeads.map(lead => {
             const decision = scoreLead(lead, lead.customerId ? customerMap[lead.customerId] ?? null : null);
             const latestOperation = latestOperationByEntity[`lead:${lead.id}`];
+            const cardKey = `lead:${lead.id}`;
+            const expanded = Boolean(expandedEntityCards[cardKey]);
             return (
               <article key={lead.id} className="control-center__entity-card">
                 <div className="control-center__entity-head">
                   <strong>{lead.title}</strong>
                   <span className="control-center__entity-pill">{lead.stage}</span>
                 </div>
-                <DecisionStrip decision={decision} />
+                <DecisionStrip decision={decision} showSummary={expanded} />
                 <div className="control-center__copy">
                   客户: {lead.customerId ? customerNameMap[lead.customerId] ?? "未关联" : "未关联"} · 原始分数 {lead.score}
                 </div>
-                <div className="control-center__entity-meta">
-                  <span>来源 {lead.source}</span>
-                  <span>{lead.nextAction}</span>
-                </div>
                 <div className="control-center__quick-actions">
-                  <button type="button" className="btn-ghost" onClick={() => advanceBusinessLeadStage(lead.id)}>
-                    推进阶段
+                  <button type="button" className="btn-ghost" onClick={() => toggleEntityCard(cardKey)}>
+                    {expanded ? "收起详情" : "展开详情"}
                   </button>
                 </div>
-                <EntityAuditSummary
-                  operation={latestOperation}
-                  onOpenRemoteOps={() => openControlCenterSection("remote")}
-                  onOpenExecution={latestOperation?.executionRunId ? () => focusExecutionRun(latestOperation.executionRunId) : undefined}
-                />
+                {expanded ? (
+                  <>
+                    <div className="control-center__entity-meta">
+                      <span>来源 {lead.source}</span>
+                      <span>{lead.nextAction}</span>
+                    </div>
+                    <div className="control-center__quick-actions">
+                      <button type="button" className="btn-ghost" onClick={() => advanceBusinessLeadStage(lead.id)}>
+                        推进阶段
+                      </button>
+                    </div>
+                    <EntityAuditSummary
+                      operation={latestOperation}
+                      onOpenRemoteOps={() => openControlCenterSection("remote")}
+                      onOpenExecution={latestOperation?.executionRunId ? () => focusExecutionRun(latestOperation.executionRunId) : undefined}
+                    />
+                  </>
+                ) : null}
               </article>
             );
           })}
@@ -505,6 +297,8 @@ export function BusinessEntitiesCenter() {
               ticket.channelSessionId ? channelSessionMap[ticket.channelSessionId] ?? null : null,
             );
             const latestOperation = latestOperationByEntity[`ticket:${ticket.id}`];
+            const cardKey = `ticket:${ticket.id}`;
+            const expanded = Boolean(expandedEntityCards[cardKey]);
             return (
               <article key={ticket.id} className="control-center__entity-card">
                 <div className="control-center__entity-head">
@@ -513,22 +307,31 @@ export function BusinessEntitiesCenter() {
                     {ticket.priority}
                   </span>
                 </div>
-                <DecisionStrip decision={decision} />
+                <DecisionStrip decision={decision} showSummary={expanded} />
                 <div className="control-center__copy">{ticket.summary}</div>
-                <div className="control-center__entity-meta">
-                  <span>状态 {ticket.status}</span>
-                  <span>客户 {ticket.customerId ? customerNameMap[ticket.customerId] ?? "未关联" : "未关联"}</span>
-                </div>
                 <div className="control-center__quick-actions">
-                  <button type="button" className="btn-ghost" onClick={() => advanceBusinessTicketStatus(ticket.id)}>
-                    推进状态
+                  <button type="button" className="btn-ghost" onClick={() => toggleEntityCard(cardKey)}>
+                    {expanded ? "收起详情" : "展开详情"}
                   </button>
                 </div>
-                <EntityAuditSummary
-                  operation={latestOperation}
-                  onOpenRemoteOps={() => openControlCenterSection("remote")}
-                  onOpenExecution={latestOperation?.executionRunId ? () => focusExecutionRun(latestOperation.executionRunId) : undefined}
-                />
+                {expanded ? (
+                  <>
+                    <div className="control-center__entity-meta">
+                      <span>状态 {ticket.status}</span>
+                      <span>客户 {ticket.customerId ? customerNameMap[ticket.customerId] ?? "未关联" : "未关联"}</span>
+                    </div>
+                    <div className="control-center__quick-actions">
+                      <button type="button" className="btn-ghost" onClick={() => advanceBusinessTicketStatus(ticket.id)}>
+                        推进状态
+                      </button>
+                    </div>
+                    <EntityAuditSummary
+                      operation={latestOperation}
+                      onOpenRemoteOps={() => openControlCenterSection("remote")}
+                      onOpenExecution={latestOperation?.executionRunId ? () => focusExecutionRun(latestOperation.executionRunId) : undefined}
+                    />
+                  </>
+                ) : null}
               </article>
             );
           })}
@@ -544,6 +347,8 @@ export function BusinessEntitiesCenter() {
               task.leadId ? leadMap[task.leadId] ?? null : null,
             );
             const latestOperation = latestOperationByEntity[`contentTask:${task.id}`];
+            const cardKey = `contentTask:${task.id}`;
+            const expanded = Boolean(expandedEntityCards[cardKey]);
             return (
               <article
                 key={task.id}
@@ -563,88 +368,97 @@ export function BusinessEntitiesCenter() {
                     {task.status}
                   </span>
                 </div>
-                <DecisionStrip decision={decision} />
+                <DecisionStrip decision={decision} showSummary={expanded} />
                 <div className="control-center__copy">{task.brief}</div>
-                <div className="control-center__entity-meta">
-                  <span>{task.format} · {task.channel}</span>
-                  <span>客户 {task.customerId ? customerNameMap[task.customerId] ?? "未关联" : "未关联"}</span>
-                </div>
-                <div className="control-center__entity-note">目标: {task.goal}</div>
-                <div className="control-center__entity-meta">
-                  <span>发布目标 {task.publishTargets.map(target => `${target.channel}:${target.accountLabel}`).join(" / ") || "未设置"}</span>
-                  <span>{task.scheduledFor ? `排期 ${new Date(task.scheduledFor).toLocaleString("zh-CN", { hour12: false })}` : "未排期"}</span>
-                </div>
-                {task.latestDraftSummary ? (
-                  <div className="control-center__entity-note">最近草稿: {task.latestDraftSummary}</div>
-                ) : null}
-                {task.latestPostmortemSummary ? (
-                  <div className="control-center__entity-note">最近复盘: {task.latestPostmortemSummary}</div>
-                ) : null}
-                {task.nextCycleRecommendation ? (
-                  <div className="control-center__entity-note">下一轮建议: {getNextCycleLabel(task.nextCycleRecommendation)}</div>
-                ) : null}
-                {task.recommendedPrimaryChannel || task.riskyChannels.length > 0 ? (
-                  <div className="control-center__entity-note">
-                    渠道策略: 主发 {task.recommendedPrimaryChannel ?? task.channel}
-                    {task.riskyChannels.length > 0 ? ` · 风险 ${task.riskyChannels.join(" / ")}` : " · 暂无高风险渠道"}
-                  </div>
-                ) : null}
-                {task.channelGovernance.length > 0 ? (
-                  <div className="control-center__entity-note">
-                    渠道表现: {task.channelGovernance.slice(0, 3).map(item =>
-                      `${item.channel} ${item.completed}/${item.failed} ${getChannelGovernanceLabel(item.recommendation)}`,
-                    ).join(" / ")}
-                  </div>
-                ) : null}
-                {task.publishedLinks.length > 0 ? (
-                  <div className="control-center__entity-note">已发布链接: {task.publishedLinks.join(" / ")}</div>
-                ) : null}
-                {task.publishedResults.length > 0 ? (
-                  <div className="control-center__entity-note">
-                    发布结果: {task.publishedResults.slice(0, 2).map(result =>
-                      `${result.channel}:${result.accountLabel} · ${result.status}${result.externalId ? ` · ${result.externalId}` : ""}${result.link ? ` · ${result.link}` : ""}`,
-                    ).join(" / ")}
-                  </div>
-                ) : null}
-                <div className="control-center__entity-meta">
-                  <span>{task.lastWorkflowRunId ? `Workflow ${task.lastWorkflowRunId}` : "暂无 workflow"}</span>
-                  <span>{task.lastExecutionRunId ? `Execution ${task.lastExecutionRunId}` : "暂无 execution"}</span>
-                </div>
                 <div className="control-center__quick-actions">
-                  <button type="button" className="btn-ghost" onClick={() => advanceBusinessContentTaskStatus(task.id)}>
-                    手动推进状态
+                  <button type="button" className="btn-ghost" onClick={() => toggleEntityCard(cardKey)}>
+                    {expanded ? "收起详情" : "展开详情"}
                   </button>
-                  <button
-                    type="button"
-                    className="btn-ghost"
-                    onClick={() => {
-                      const workflowRunId = queueContentTaskWorkflowRun(task.id);
-                      if (!workflowRunId) return;
-                      openControlCenterSection("workflow");
-                    }}
-                  >
-                    {task.lastWorkflowRunId ? "继续 workflow" : "创建 workflow"}
-                  </button>
-                  {task.channelGovernance.length > 0 ? (
-                    <button
-                      type="button"
-                      className="btn-ghost"
-                      onClick={() => applyContentChannelGovernance({ contentTaskId: task.id })}
-                    >
-                      应用渠道治理
-                    </button>
-                  ) : null}
-                  {task.lastExecutionRunId ? (
-                    <button type="button" className="btn-ghost" onClick={() => focusExecutionRun(task.lastExecutionRunId)}>
-                      查看执行链
-                    </button>
-                  ) : null}
                 </div>
-                <EntityAuditSummary
-                  operation={latestOperation}
-                  onOpenRemoteOps={() => openControlCenterSection("remote")}
-                  onOpenExecution={latestOperation?.executionRunId ? () => focusExecutionRun(latestOperation.executionRunId) : undefined}
-                />
+                {expanded ? (
+                  <>
+                    <div className="control-center__entity-meta">
+                      <span>{task.format} · {task.channel}</span>
+                      <span>客户 {task.customerId ? customerNameMap[task.customerId] ?? "未关联" : "未关联"}</span>
+                    </div>
+                    <div className="control-center__entity-note">目标: {task.goal}</div>
+                    <div className="control-center__entity-meta">
+                      <span>发布目标 {task.publishTargets.map(target => `${target.channel}:${target.accountLabel}`).join(" / ") || "未设置"}</span>
+                      <span>{task.scheduledFor ? `排期 ${new Date(task.scheduledFor).toLocaleString("zh-CN", { hour12: false })}` : "未排期"}</span>
+                    </div>
+                    {task.latestDraftSummary ? (
+                      <div className="control-center__entity-note">最近草稿: {task.latestDraftSummary}</div>
+                    ) : null}
+                    {task.latestPostmortemSummary ? (
+                      <div className="control-center__entity-note">最近复盘: {task.latestPostmortemSummary}</div>
+                    ) : null}
+                    {task.nextCycleRecommendation ? (
+                      <div className="control-center__entity-note">下一轮建议: {getNextCycleLabel(task.nextCycleRecommendation)}</div>
+                    ) : null}
+                    {task.recommendedPrimaryChannel || task.riskyChannels.length > 0 ? (
+                      <div className="control-center__entity-note">
+                        渠道策略: 主发 {task.recommendedPrimaryChannel ?? task.channel}
+                        {task.riskyChannels.length > 0 ? ` · 风险 ${task.riskyChannels.join(" / ")}` : " · 暂无高风险渠道"}
+                      </div>
+                    ) : null}
+                    {task.channelGovernance.length > 0 ? (
+                      <div className="control-center__entity-note">
+                        渠道表现: {task.channelGovernance.slice(0, 3).map(item =>
+                          `${item.channel} ${item.completed}/${item.failed} ${getChannelGovernanceLabel(item.recommendation)}`,
+                        ).join(" / ")}
+                      </div>
+                    ) : null}
+                    {task.publishedLinks.length > 0 ? (
+                      <div className="control-center__entity-note">已发布链接: {task.publishedLinks.join(" / ")}</div>
+                    ) : null}
+                    {task.publishedResults.length > 0 ? (
+                      <div className="control-center__entity-note">
+                        发布结果: {task.publishedResults.slice(0, 2).map(result =>
+                          `${result.channel}:${result.accountLabel} · ${result.status}${result.externalId ? ` · ${result.externalId}` : ""}${result.link ? ` · ${result.link}` : ""}`,
+                        ).join(" / ")}
+                      </div>
+                    ) : null}
+                    <div className="control-center__entity-meta">
+                      <span>{task.lastWorkflowRunId ? `Workflow ${task.lastWorkflowRunId}` : "暂无 workflow"}</span>
+                      <span>{task.lastExecutionRunId ? `Execution ${task.lastExecutionRunId}` : "暂无 execution"}</span>
+                    </div>
+                    <div className="control-center__quick-actions">
+                      <button type="button" className="btn-ghost" onClick={() => advanceBusinessContentTaskStatus(task.id)}>
+                        手动推进状态
+                      </button>
+                      <button
+                        type="button"
+                        className="btn-ghost"
+                        onClick={() => {
+                          const workflowRunId = queueContentTaskWorkflowRun(task.id);
+                          if (!workflowRunId) return;
+                          openControlCenterSection("workflow");
+                        }}
+                      >
+                        {task.lastWorkflowRunId ? "继续 workflow" : "创建 workflow"}
+                      </button>
+                      {task.channelGovernance.length > 0 ? (
+                        <button
+                          type="button"
+                          className="btn-ghost"
+                          onClick={() => applyContentChannelGovernance({ contentTaskId: task.id })}
+                        >
+                          应用渠道治理
+                        </button>
+                      ) : null}
+                      {task.lastExecutionRunId ? (
+                        <button type="button" className="btn-ghost" onClick={() => focusExecutionRun(task.lastExecutionRunId)}>
+                          查看执行链
+                        </button>
+                      ) : null}
+                    </div>
+                    <EntityAuditSummary
+                      operation={latestOperation}
+                      onOpenRemoteOps={() => openControlCenterSection("remote")}
+                      onOpenExecution={latestOperation?.executionRunId ? () => focusExecutionRun(latestOperation.executionRunId) : undefined}
+                    />
+                  </>
+                ) : null}
               </article>
             );
           })}
@@ -659,33 +473,44 @@ export function BusinessEntitiesCenter() {
               session.customerId ? customerMap[session.customerId] ?? null : null,
             );
             const latestOperation = latestOperationByEntity[`channelSession:${session.id}`];
+            const cardKey = `channelSession:${session.id}`;
+            const expanded = Boolean(expandedEntityCards[cardKey]);
             return (
               <article key={session.id} className="control-center__entity-card">
                 <div className="control-center__entity-head">
                   <strong>{session.title}</strong>
                   <span className="control-center__entity-pill">{session.status}</span>
                 </div>
-                <DecisionStrip decision={decision} />
+                <DecisionStrip decision={decision} showSummary={expanded} />
                 <div className="control-center__copy">{session.summary}</div>
-                <div className="control-center__entity-meta">
-                  <span>渠道 {session.channel}</span>
-                  <span>客户 {session.customerId ? customerNameMap[session.customerId] ?? "未关联" : "未关联"}</span>
-                </div>
-                {(session.lastHandledAt || session.handledBy) ? (
-                  <div className="control-center__entity-note">
-                    最近处理: {session.handledBy ?? "manual"} {session.lastHandledAt ? `· ${new Date(session.lastHandledAt).toLocaleString("zh-CN", { hour12: false })}` : ""}
-                  </div>
-                ) : null}
                 <div className="control-center__quick-actions">
-                  <button type="button" className="btn-ghost" onClick={() => advanceBusinessChannelSessionStatus(session.id)}>
-                    推进状态
+                  <button type="button" className="btn-ghost" onClick={() => toggleEntityCard(cardKey)}>
+                    {expanded ? "收起详情" : "展开详情"}
                   </button>
                 </div>
-                <EntityAuditSummary
-                  operation={latestOperation}
-                  onOpenRemoteOps={() => openControlCenterSection("remote")}
-                  onOpenExecution={latestOperation?.executionRunId ? () => focusExecutionRun(latestOperation.executionRunId) : undefined}
-                />
+                {expanded ? (
+                  <>
+                    <div className="control-center__entity-meta">
+                      <span>渠道 {session.channel}</span>
+                      <span>客户 {session.customerId ? customerNameMap[session.customerId] ?? "未关联" : "未关联"}</span>
+                    </div>
+                    {(session.lastHandledAt || session.handledBy) ? (
+                      <div className="control-center__entity-note">
+                        最近处理: {session.handledBy ?? "manual"} {session.lastHandledAt ? `· ${new Date(session.lastHandledAt).toLocaleString("zh-CN", { hour12: false })}` : ""}
+                      </div>
+                    ) : null}
+                    <div className="control-center__quick-actions">
+                      <button type="button" className="btn-ghost" onClick={() => advanceBusinessChannelSessionStatus(session.id)}>
+                        推进状态
+                      </button>
+                    </div>
+                    <EntityAuditSummary
+                      operation={latestOperation}
+                      onOpenRemoteOps={() => openControlCenterSection("remote")}
+                      onOpenExecution={latestOperation?.executionRunId ? () => focusExecutionRun(latestOperation.executionRunId) : undefined}
+                    />
+                  </>
+                ) : null}
               </article>
             );
           })}
@@ -704,7 +529,7 @@ function EntityMetric({ label, value, accent }: { label: string; value: number; 
   );
 }
 
-function DecisionStrip({ decision }: { decision: QuantDecision }) {
+function DecisionStrip({ decision, showSummary = true }: { decision: QuantDecision; showSummary?: boolean }) {
   const tone = getDecisionTone(decision);
   return (
     <div className="control-center__quant-strip">
@@ -715,7 +540,7 @@ function DecisionStrip({ decision }: { decision: QuantDecision }) {
       <span className={`control-center__quant-badge ${decision.humanApprovalRequired ? "is-approval" : "is-auto"}`}>
         {decision.humanApprovalRequired ? "需人工审批" : "可直接推进"}
       </span>
-      <div className="control-center__entity-note">{decision.summary}</div>
+      {showSummary ? <div className="control-center__entity-note">{decision.summary}</div> : null}
     </div>
   );
 }
@@ -846,26 +671,6 @@ function getOperationLabel(operation: BusinessOperationRecord) {
     return "已阻断";
   }
   return "处理中";
-}
-
-function parsePublishTargets(value: string) {
-  return value
-    .split(/\r?\n|,/)
-    .map(item => item.trim())
-    .filter(Boolean)
-    .map(item => {
-      const [channelRaw, ...labelParts] = item.split(":");
-      const channel = channelRaw?.trim();
-      const accountLabel = labelParts.join(":").trim();
-      if (!channel || !accountLabel) return null;
-      if (!["x", "telegram", "line", "feishu", "wecom", "blog"].includes(channel)) return null;
-
-      return {
-        channel: channel as "x" | "telegram" | "line" | "feishu" | "wecom" | "blog",
-        accountLabel,
-      };
-    })
-    .filter((item): item is { channel: "x" | "telegram" | "line" | "feishu" | "wecom" | "blog"; accountLabel: string } => Boolean(item));
 }
 
 function getNextCycleLabel(value: "reuse" | "retry" | "rewrite") {

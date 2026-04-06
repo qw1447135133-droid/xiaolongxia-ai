@@ -79,19 +79,44 @@ function toggleSkill(skills: AgentSkillId[], skillId: AgentSkillId): AgentSkillI
     : [...skills, skillId];
 }
 
-export function SettingsPanel() {
-  const [activeSection, setActiveSection] = useState<"agents" | "providers" | "desktop" | "platforms" | "semantic">("agents");
+type SettingsSectionId = "agents" | "providers" | "desktop" | "platforms" | "semantic";
+
+export function SettingsPanel({
+  initialSection = "agents",
+  allowedSections,
+}: {
+  initialSection?: SettingsSectionId;
+  allowedSections?: SettingsSectionId[];
+}) {
+  const [activeSection, setActiveSection] = useState<SettingsSectionId>(initialSection);
+  const visibleSections = useMemo(
+    () => ([
+      { id: "agents", label: "Agent 设置" },
+      { id: "providers", label: "模型供应商" },
+      { id: "desktop", label: "本机程序" },
+      { id: "semantic", label: "语义记忆" },
+      { id: "platforms", label: "消息平台" },
+    ] as const).filter(section => !allowedSections || allowedSections.includes(section.id)),
+    [allowedSections],
+  );
+
+  useEffect(() => {
+    setActiveSection(initialSection);
+  }, [initialSection]);
+
+  useEffect(() => {
+    if (!visibleSections.some(section => section.id === activeSection)) {
+      setActiveSection(visibleSections[0]?.id ?? "agents");
+    }
+  }, [activeSection, visibleSections]);
+
+  const showSidebar = visibleSections.length > 1;
 
   return (
     <div style={{ display: "flex", gap: 0, height: "100%", overflow: "hidden" }}>
-      <div style={{ width: 156, flexShrink: 0, borderRight: "1px solid var(--border)", padding: "8px 0" }}>
-        {([
-          { id: "agents", label: "Agent 设置" },
-          { id: "providers", label: "模型供应商" },
-          { id: "desktop", label: "本机程序" },
-          { id: "semantic", label: "语义记忆" },
-          { id: "platforms", label: "消息平台" },
-        ] as const).map(section => (
+      {showSidebar ? (
+        <div style={{ width: 156, flexShrink: 0, borderRight: "1px solid var(--border)", padding: "8px 0" }}>
+          {visibleSections.map(section => (
           <button
             key={section.id}
             onClick={() => setActiveSection(section.id)}
@@ -111,8 +136,9 @@ export function SettingsPanel() {
           >
             {section.label}
           </button>
-        ))}
-      </div>
+          ))}
+        </div>
+      ) : null}
 
       <div style={{ flex: 1, overflowY: "auto", padding: 16 }}>
         {activeSection === "agents" && <AgentsSection />}

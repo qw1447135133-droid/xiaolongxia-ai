@@ -1,94 +1,67 @@
 {
-  "providers": [
-    {
-      "id": "aliyun-coding-tk54h5oz",
-      "name": "阿里云百炼 Coding Plan",
-      "apiKey": "sk-sp-01bfaf67d87b4deeb687f3e7826e6b89",
-      "baseUrl": "https://coding.dashscope.aliyuncs.com/v1"
-    }
-  ],
+  "providers": [],
   "agentConfigs": {
     "orchestrator": {
       "id": "orchestrator",
       "name": "虾总管",
       "emoji": "🦞",
       "personality": "你是跨境电商 AI 团队的总调度员，负责任务拆解和团队协调。",
-      "model": "kimi-k2.5",
-      "providerId": "aliyun-coding-tk54h5oz",
-      "skills": [
-        "frontend",
-        "doc_excel"
-      ]
+      "model": "",
+      "providerId": "",
+      "skills": []
     },
     "explorer": {
       "id": "explorer",
       "name": "探海龙虾",
-      "emoji": "🔍",
-      "personality": "你是跨境电商选品专家，专注竞品分析、选品趋势研究和市场数据分析。提供具体可操作的洞察。",
-      "model": "MiniMax-M2.5",
-      "providerId": "aliyun-coding-tk54h5oz",
-      "skills": [
-        "doc_excel",
-        "screenshot"
-      ]
+      "emoji": "🔎",
+      "personality": "你是跨境电商选品专家，专注竞品分析、选品趋势研究和市场数据分析，提供具体可执行的洞察。",
+      "model": "",
+      "providerId": "",
+      "skills": []
     },
     "writer": {
       "id": "writer",
       "name": "执笔龙虾",
       "emoji": "✍️",
-      "personality": "你是跨境电商文案专家，专注多语种文案创作、SEO 优化标题和商品详情页撰写。输出高转化率文案。",
-      "model": "qwen3.5-plus",
-      "providerId": "aliyun-coding-dgy4q9pc",
-      "skills": [
-        "doc_word",
-        "doc_ppt"
-      ]
+      "personality": "你是跨境电商文案专家，专注多语种文案创作、SEO 标题优化和商品详情页撰写，输出高转化率文案。",
+      "model": "",
+      "providerId": "",
+      "skills": []
     },
     "designer": {
       "id": "designer",
       "name": "幻影龙虾",
       "emoji": "🎨",
       "personality": "你是电商视觉设计专家。当需要生成图片时，请先输出一段英文图片生成提示词（以 [IMAGE_PROMPT] 开头），然后再输出设计方案说明。",
-      "model": "qwen3.5-plus",
-      "providerId": "aliyun-coding-dgy4q9pc",
-      "skills": [
-        "frontend",
-        "image_edit",
-        "screenshot"
-      ]
+      "model": "",
+      "providerId": "",
+      "skills": []
     },
     "performer": {
       "id": "performer",
       "name": "戏精龙虾",
-      "emoji": "🎬",
+      "emoji": "🎭",
       "personality": "你是短视频内容专家，专注数字人视频脚本、TikTok/抖音内容策略和多平台矩阵发布计划。",
-      "model": "kimi-k2.5",
-      "providerId": "aliyun-coding-dgy4q9pc",
-      "skills": [
-        "doc_ppt"
-      ]
+      "model": "",
+      "providerId": "",
+      "skills": []
     },
     "greeter": {
       "id": "greeter",
       "name": "迎客龙虾",
       "emoji": "💬",
-      "personality": "你是多语种客服专家，专注客服话术、评论回复模板和买家互动策略。保持友好专业语气。",
-      "model": "MiniMax-M2.5",
-      "providerId": "aliyun-coding-dgy4q9pc",
-      "skills": [
-        "doc_word"
-      ]
+      "personality": "你是多语种客服专家，专注客服话术、评论回复模板和买家互动策略，保持友好专业语气。",
+      "model": "",
+      "providerId": "",
+      "skills": []
     }
   },
   "platformConfigs": {
     "telegram": {
-      "enabled": true,
-      "fields": {
-        "botToken": "8246778735:AAGUnsxj_O_p1w7GLnQrsoOZ8tlc1Ru2ucc",
-        "proxy": "http://127.0.0.1:9974"
-      },
+      "enabled": false,
+      "fields": {},
       "status": "connected",
-      "detail": "连接器已启动，可直接接收和发送消息。",
+      "detail": "连接器已自动恢复，可直接接收和发送消息。",
       "healthScore": 100,
       "lastDebugAction": "simulate_inbound",
       "lastDebugOk": true,
@@ -161,7 +134,7 @@
           "at": 1775390680076
         }
       ],
-      "lastCheckedAt": 1775417238878,
+      "lastCheckedAt": 1775458705344,
       "pendingEvents": 1,
       "lastEventAt": 1775390681335,
       "lastInboundAt": 1775390680076,
@@ -187,7 +160,7 @@
           "retryCount": 1
         }
       ],
-      "lastSyncedAt": 1775417238878
+      "lastSyncedAt": 1775458705344
     },
     "line": {
       "enabled": false,
@@ -211,7 +184,7 @@
       "healthScore": 0
     }
   },
-  "userNickname": "老板",
+  "userNickname": "您",
   "desktopProgramSettings": {
     "enabled": true,
     "whitelistMode": false,

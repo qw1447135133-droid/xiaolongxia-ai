@@ -1697,10 +1697,11 @@ body::after {
   height: 100%;
   min-height: 0;
   display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr) auto;
   align-content: stretch;
   border-radius: 26px;
   padding: 20px;
+  gap: 12px;
 }
 
 .meeting-shell__head,
@@ -3659,6 +3660,12 @@ body::after {
   box-shadow: 0 14px 28px rgba(15, 23, 42, 0.04);
 }
 
+.desktop-workspace-shell > .workspace-statusbar {
+  border-top: 1px solid var(--desktop-shell-border);
+  background: rgba(255, 255, 255, 0.96);
+  backdrop-filter: none;
+}
+
 .desktop-workspace-shell__topbar-left,
 .desktop-workspace-shell__topbar-right {
   display: flex;
@@ -4955,7 +4962,14 @@ body.runtime-electron .desktop-workspace-shell__rail-prompt:hover {
   border: 1px solid var(--border);
   background: rgba(255,255,255,0.96);
   backdrop-filter: none;
+}
+
+.ios-chat-shell .meeting-shell__stream {
   padding: 16px;
+}
+
+.ios-chat-shell .meeting-shell__composer {
+  padding: 10px 14px;
 }
 
 .ios-chat-shell .card,
@@ -5565,6 +5579,36 @@ body.runtime-electron .desktop-workspace-shell__rail-prompt:hover {
   font-size: 12px;
   font-weight: 700;
   color: var(--text);
+}
+
+.preset-tasks__filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.preset-tasks__filter-btn {
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: transparent;
+  font-size: 11px;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.preset-tasks__filter-btn:hover {
+  border-color: rgba(var(--accent-rgb), 0.3);
+  color: var(--accent);
+}
+
+.preset-tasks__filter-btn.is-active {
+  background: rgba(var(--accent-rgb), 0.12);
+  border-color: rgba(var(--accent-rgb), 0.36);
+  color: var(--accent);
+  font-weight: 600;
 }
 
 .preset-panel__grid,

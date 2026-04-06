@@ -13,6 +13,9 @@ export type ControlCenterSectionId =
   | "entities"
   | "remote"
   | "execution"
+  | "workflow"
+  | "agent-models"
+  | "api-providers"
   | "desktop"
   | "workspace"
   | "skills"
@@ -372,7 +375,6 @@ export const PROVIDER_PRESETS: Omit<ModelProvider, "apiKey">[] = [
   { id: "openai", name: "OpenAI", baseUrl: "https://api.openai.com/v1" },
   { id: "siliconflow", name: "SiliconFlow", baseUrl: "https://api.siliconflow.cn/v1" },
   { id: "deepseek", name: "DeepSeek", baseUrl: "https://api.deepseek.com/v1" },
-  { id: "aliyun", name: "阿里云百炼", baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1" },
   { id: "aliyun-coding", name: "阿里云百炼 Coding Plan", baseUrl: "https://coding.dashscope.aliyuncs.com/v1" },
   { id: "4sapi", name: "4sAPI", baseUrl: "https://api.4sapi.com/v1" },
   { id: "custom", name: "自定义", baseUrl: "" },
@@ -404,16 +406,6 @@ export const PROVIDER_MODELS: Record<string, string[]> = {
   deepseek: [
     "deepseek-chat",
     "deepseek-reasoner",
-  ],
-  aliyun: [
-    "qwen3.5-plus",
-    "qwen3-max-2026-01-23",
-    "qwen3-coder-next",
-    "qwen3-coder-plus",
-    "glm-5",
-    "glm-4.7",
-    "kimi-k2.5",
-    "MiniMax-M2.5",
   ],
   "aliyun-coding": [
     "qwen3.5-plus",
@@ -454,11 +446,6 @@ const PROVIDER_MODEL_PRESETS: Record<string, Record<ModelPresetTier, string>> = 
     reasoning: "deepseek-reasoner",
     balanced: "deepseek-chat",
     budget: "deepseek-chat",
-  },
-  aliyun: {
-    reasoning: "qwen3-max-2026-01-23",
-    balanced: "qwen3.5-plus",
-    budget: "glm-4.7",
   },
   "aliyun-coding": {
     reasoning: "qwen3-coder-next",

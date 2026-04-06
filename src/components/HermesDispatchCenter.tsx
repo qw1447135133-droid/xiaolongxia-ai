@@ -124,7 +124,7 @@ function badgeStyle(color: string): CSSProperties {
   };
 }
 
-export function HermesDispatchCenter() {
+export function HermesDispatchCenter({ compact = false }: { compact?: boolean } = {}) {
   const hermesDispatchSettings = useStore(state => state.hermesDispatchSettings);
   const replaceHermesDispatchSettings = useStore(state => state.replaceHermesDispatchSettings);
   const profileImportRef = useRef<HTMLInputElement | null>(null);
@@ -199,6 +199,10 @@ export function HermesDispatchCenter() {
 
   const missingCommands = commandList.filter(([, item]) => !item.available).map(([name]) => name);
   const plannerReady = availability.planner?.available ?? false;
+  const activeRunsCount = runs.filter(run => run.status === "queued" || run.status === "running").length;
+  const failedRunsCount = runs.filter(run => run.status === "failed").length;
+  const completedRunsCount = runs.filter(run => run.status === "completed").length;
+  const latestRun = runs[0] ?? null;
 
   const persistHermesDispatchSettings = async (nextSettings: HermesDispatchSettings) => {
     replaceHermesDispatchSettings(nextSettings);
@@ -407,6 +411,152 @@ export function HermesDispatchCenter() {
     setRequestNotice(`已删除槽位 ${selectedProfile.label}。`);
     await persistHermesDispatchSettings(nextSettings);
   };
+
+  if (compact) {
+    return (
+      <div className="hermes-dispatch-center" style={{ display: "grid", gap: 16 }}>
+        <section className="card" style={{ padding: 16, display: "grid", gap: 8 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+            <div style={{ display: "grid", gap: 4 }}>
+              <div style={{ fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--text-muted)" }}>
+                Hermes Automation
+              </div>
+              <div style={{ fontSize: 22, lineHeight: 1.2, fontWeight: 700 }}>
+                自动调度总览
+              </div>
+            </div>
+            <span style={badgeStyle(activeRunsCount > 0 ? "#fbbf24" : plannerReady ? "#86efac" : "#fda4af")}>
+              {activeRunsCount > 0 ? `运行中 ${activeRunsCount}` : plannerReady ? "自动调度已就绪" : "等待调度环境"}
+            </span>
+          </div>
+        </section>
+
+        {(requestError || requestNotice || missingCommands.length > 0) ? (
+          <section className="card" style={{ padding: 14, display: "grid", gap: 10 }}>
+            {requestError ? (
+              <div style={warningCardStyle("#fda4af")}>{requestError}</div>
+            ) : null}
+            {!requestError && requestNotice ? (
+              <div style={warningCardStyle("#7dd3fc")}>{requestNotice}</div>
+            ) : null}
+            {missingCommands.length > 0 ? (
+              <div style={warningCardStyle("#fbbf24")}>
+                调度环境缺少 {missingCommands.join("、")}，当前只保留监控视图。
+              </div>
+            ) : null}
+          </section>
+        ) : null}
+
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(300px, 0.8fr) minmax(420px, 1.2fr)", gap: 16 }}>
+          <section className="card" style={{ padding: 16, display: "grid", gap: 12 }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+              <div>
+                <div style={{ fontSize: 16, fontWeight: 700 }}>调度进程</div>
+              </div>
+              <span style={badgeStyle(activeRunsCount > 0 ? "#fbbf24" : "#7dd3fc")}>
+                {activeRunsCount > 0 ? `自动处理中 ${activeRunsCount}` : "当前空闲"}
+              </span>
+            </div>
+            {runs.length === 0 ? (
+              <div style={emptyPanelStyle}>当前还没有调度记录。新的批次开始后，这里会自动显示最近进程。</div>
+            ) : (
+              <div style={{ display: "grid", gap: 10, maxHeight: 420, overflowY: "auto" }}>
+                {runs.slice(0, 8).map(run => {
+                  const tone = RUN_STATUS_TONE[run.status];
+                  const isActive = run.id === selectedRunId;
+                  return (
+                    <button
+                      key={run.id}
+                      type="button"
+                      className="card"
+                      onClick={() => setSelectedRunId(run.id)}
+                      style={{
+                        textAlign: "left",
+                        padding: 14,
+                        display: "grid",
+                        gap: 8,
+                        borderColor: isActive ? `${tone.color}55` : "var(--border)",
+                        background: isActive ? `${tone.color}12` : "rgba(255,255,255,0.03)",
+                      }}
+                    >
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+                        <strong style={{ fontSize: 13 }}>{run.instruction || "样例计划演示"}</strong>
+                        <span style={badgeStyle(tone.color)}>{tone.label}</span>
+                      </div>
+                      <div style={{ fontSize: 11, color: "var(--text-muted)" }}>
+                        {formatTime(run.updatedAt)}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </section>
+
+          <section className="card" style={{ padding: 16, display: "grid", gap: 14 }}>
+            <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+              <div>
+                <div style={{ fontSize: 16, fontWeight: 700 }}>
+                  {selectedRun?.instruction || "等待新的调度批次"}
+                </div>
+              </div>
+              {selectedRun ? (
+                <span style={badgeStyle(RUN_STATUS_TONE[selectedRun.status].color)}>
+                  {RUN_STATUS_TONE[selectedRun.status].label}
+                </span>
+              ) : null}
+            </div>
+
+            {!selectedRun ? (
+              <div style={emptyPanelStyle}>选中左侧批次后，这里只显示当前进度和关键日志。</div>
+            ) : (
+              <>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 10 }}>
+                  <TraceStat label="状态" value={RUN_STATUS_TONE[selectedRun.status].label} />
+                  <TraceStat label="任务数" value={String(selectedRun.plan?.tasks?.length ?? 0)} />
+                  <TraceStat label="更新时间" value={formatTime(selectedRun.updatedAt)} />
+                </div>
+
+                <div style={{ ...warningCardStyle(selectedRun.status === "failed" ? "#fda4af" : selectedRun.status === "running" ? "#fbbf24" : "#7dd3fc"), fontSize: 13 }}>
+                  {selectedRun.status === "running" && "系统正在自动拆解与分发任务，当前窗口只保留监控视图。"}
+                  {selectedRun.status === "queued" && "任务已经进入队列，等待 planner 开始处理。"}
+                  {selectedRun.status === "planned" && "已生成执行计划，等待后续执行或人工确认。"}
+                  {selectedRun.status === "completed" && "本轮调度已完成，可以查看执行摘要与日志。"}
+                  {selectedRun.status === "failed" && "本轮调度已失败，优先查看错误摘要，再决定是否展开高级调度处理。"}
+                </div>
+
+                {selectedRun.error ? (
+                  <div style={warningCardStyle("#fda4af")}>{selectedRun.error}</div>
+                ) : null}
+
+                {selectedRun.plan?.summary ? (
+                  <div
+                    style={{
+                      padding: 14,
+                      borderRadius: 14,
+                      border: "1px solid var(--border)",
+                      background: "rgba(255,255,255,0.03)",
+                      display: "grid",
+                      gap: 8,
+                    }}
+                  >
+                    <div style={{ fontSize: 13, lineHeight: 1.75 }}>{selectedRun.plan.summary}</div>
+                  </div>
+                ) : null}
+
+                {(selectedRun.stdoutTail || selectedRun.stderrTail) ? (
+                  <LogPanel
+                    title={selectedRun.stderrTail ? "最近日志 / 错误" : "最近日志"}
+                    value={selectedRun.stderrTail || selectedRun.stdoutTail || "暂无输出"}
+                  />
+                ) : null}
+              </>
+            )}
+          </section>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="hermes-dispatch-center" style={{ display: "grid", gap: 16 }}>

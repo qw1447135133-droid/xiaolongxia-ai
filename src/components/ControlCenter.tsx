@@ -16,6 +16,7 @@ import { PluginsCenter } from "./PluginsCenter";
 import { RemoteOpsCenter } from "./RemoteOpsCenter";
 import { SettingsPanel } from "./SettingsPanel";
 import { SkillsCenter } from "./SkillsCenter";
+import { WorkflowCenter } from "./WorkflowCenter";
 
 function getControlCenterSections(locale: UiLocale): Array<{ id: ControlCenterSectionId; label: string; hint: string }> {
   return [
@@ -67,6 +68,36 @@ function getControlCenterSections(locale: UiLocale): Array<{ id: ControlCenterSe
         "zh-TW": "查看運行軌跡、失敗與恢復",
         en: "Trace runs, failures, and recovery",
         ja: "実行履歴、失敗、復旧を確認",
+      }),
+    },
+    {
+      id: "workflow",
+      label: pickLocaleText(locale, { "zh-CN": "工作流中心", "zh-TW": "工作流中心", en: "Workflow Center", ja: "ワークフローセンター" }),
+      hint: pickLocaleText(locale, {
+        "zh-CN": "复用流程模板与运行队列",
+        "zh-TW": "重用流程模板與運行佇列",
+        en: "Reusable workflow templates and queues",
+        ja: "再利用できるワークフローとキュー",
+      }),
+    },
+    {
+      id: "agent-models",
+      label: pickLocaleText(locale, { "zh-CN": "Agent 模型", "zh-TW": "Agent 模型", en: "Agent Models", ja: "Agent モデル" }),
+      hint: pickLocaleText(locale, {
+        "zh-CN": "调整每个 Agent 的模型、档位与技能",
+        "zh-TW": "調整每個 Agent 的模型、檔位與技能",
+        en: "Adjust each agent's model, tier, and skills",
+        ja: "各 Agent のモデル、ティア、スキルを調整",
+      }),
+    },
+    {
+      id: "api-providers",
+      label: pickLocaleText(locale, { "zh-CN": "API 设置", "zh-TW": "API 設定", en: "API Settings", ja: "API 設定" }),
+      hint: pickLocaleText(locale, {
+        "zh-CN": "管理模型供应商、密钥与接口地址",
+        "zh-TW": "管理模型供應商、密鑰與介面地址",
+        en: "Manage providers, API keys, and base URLs",
+        ja: "プロバイダー、API キー、URL を管理",
       }),
     },
     {
@@ -243,6 +274,9 @@ export function ControlCenter() {
         {section === "entities" && <BusinessEntitiesCenter />}
         {section === "remote" && <RemoteOpsCenter />}
         {section === "execution" && <ExecutionCenter />}
+        {section === "workflow" && <WorkflowCenter />}
+        {section === "agent-models" && <SettingsPanel initialSection="agents" allowedSections={["agents"]} />}
+        {section === "api-providers" && <SettingsPanel initialSection="providers" allowedSections={["providers"]} />}
         {section === "desktop" && <NativeAppsCenter />}
         {section === "workspace" && <WorkspacePreferences />}
         {section === "skills" && <SkillsCenter />}

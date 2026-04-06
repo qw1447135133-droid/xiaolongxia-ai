@@ -62,9 +62,7 @@ function detectElectronRuntime() {
 }
 
 function useRuntimeTarget() {
-  const [runtimeTarget, setRuntimeTarget] = useState<"web" | "electron">(() =>
-    detectElectronRuntime() ? "electron" : "web",
-  );
+  const [runtimeTarget, setRuntimeTarget] = useState<"web" | "electron">("web");
 
   useEffect(() => {
     setRuntimeTarget(detectElectronRuntime() ? "electron" : "web");
@@ -92,9 +90,7 @@ function openControlCenterSection(section: ControlCenterSectionId) {
 export default function App() {
   useWebSocket();
   const runtimeTarget = useRuntimeTarget();
-  const shouldRenderDesktopWorkspace =
-    runtimeTarget === "electron"
-    || (typeof window !== "undefined" && detectElectronRuntime());
+  const shouldRenderDesktopWorkspace = runtimeTarget === "electron";
   const locale = useStore(s => s.locale);
   const navItems = useMemo(() => getPrimaryNavItems(locale), [locale]);
   const uiText = useMemo(() => getUiText(locale), [locale]);
@@ -610,7 +606,7 @@ function DesktopWorkspaceApp() {
         ) : null}
 
         <main className="desktop-workspace-shell__main">
-          {activeTab !== "tasks" ? (
+          {activeTab !== "tasks" && activeTab !== "dispatch" ? (
             <section className="desktop-workspace-shell__hero">
             <div>
               <div className="desktop-workspace-shell__hero-eyebrow">{activeNav.eyebrow}</div>
@@ -624,12 +620,16 @@ function DesktopWorkspaceApp() {
                 })}
               </p>
               <div className="desktop-workspace-shell__hero-actions">
-                <button type="button" className="desktop-workspace-shell__hero-action is-primary" onClick={() => setTab("tasks")}>
-                  {uiText.common.backToChat}
-                </button>
-                <button type="button" className="desktop-workspace-shell__hero-action" onClick={() => setTab("settings")}>
-                  {uiText.common.openControlCenter}
-                </button>
+                {activeTab !== "meeting" && (
+                  <>
+                    <button type="button" className="desktop-workspace-shell__hero-action is-primary" onClick={() => setTab("tasks")}>
+                      {uiText.common.backToChat}
+                    </button>
+                    <button type="button" className="desktop-workspace-shell__hero-action" onClick={() => setTab("settings")}>
+                      {uiText.common.openControlCenter}
+                    </button>
+                  </>
+                )}
               </div>
             </div>
             <div className="desktop-workspace-shell__hero-meta">
@@ -2000,14 +2000,14 @@ function DispatchTab() {
           ja: "ディスパッチ",
         })}</div>
         <div className="ios-feature-page__title">{pickLocaleText(locale, {
-          "zh-CN": "Hermes 规划与外部执行器分发",
-          "zh-TW": "Hermes 規劃與外部執行器分發",
-          en: "Hermes planning and external executor dispatch",
-          ja: "Hermes の計画と外部実行器への配信",
+          "zh-CN": "自动调度总览",
+          "zh-TW": "自動調度總覽",
+          en: "Automation dispatch overview",
+          ja: "自動ディスパッチ概要",
         })}</div>
       </div>
       <div className="ios-feature-page__canvas">
-        <HermesDispatchCenter />
+        <HermesDispatchCenter compact />
       </div>
     </div>
   );
@@ -2498,32 +2498,6 @@ function MeetingTab() {
         })}</div>
       </div>
 
-      <div className="meeting-shell__composer">
-        <input
-          className="input"
-          placeholder={pickLocaleText(locale, {
-            "zh-CN": "输入会议议题，例如：下一版产品首页该怎么改？",
-            "zh-TW": "輸入會議議題，例如：下一版產品首頁該怎麼改？",
-            en: "Enter a meeting topic, e.g. how should the next product homepage change?",
-            ja: "会議テーマを入力してください。例: 次の製品ホームページをどう改善するか？",
-          })}
-          value={topic}
-          onChange={event => setTopic(event.target.value)}
-          onKeyDown={event => event.key === "Enter" && startMeeting()}
-          disabled={meetingActive}
-        />
-        <button
-          type="button"
-          className="btn-primary"
-          onClick={startMeeting}
-          disabled={meetingActive || !topic.trim() || wsStatus !== "connected"}
-        >
-          {meetingActive
-            ? pickLocaleText(locale, { "zh-CN": "讨论中...", "zh-TW": "討論中...", en: "Discussing...", ja: "議論中..." })
-            : pickLocaleText(locale, { "zh-CN": "开始会议", "zh-TW": "開始會議", en: "Start Meeting", ja: "会議を開始" })}
-        </button>
-      </div>
-
       <div ref={scrollRef} className="meeting-shell__stream">
         {meetingSpeeches.length === 0 && !meetingActive && (
           <div className="meeting-shell__empty">{pickLocaleText(locale, {
@@ -2582,6 +2556,32 @@ function MeetingTab() {
           en: "The team is discussing...",
           ja: "チームが議論中です...",
         })}</div>}
+      </div>
+
+      <div className="meeting-shell__composer">
+        <input
+          className="input"
+          placeholder={pickLocaleText(locale, {
+            "zh-CN": "输入会议议题，例如：下一版产品首页该怎么改？",
+            "zh-TW": "輸入會議議題，例如：下一版產品首頁該怎麼改？",
+            en: "Enter a meeting topic, e.g. how should the next product homepage change?",
+            ja: "会議テーマを入力してください。例: 次の製品ホームページをどう改善するか？",
+          })}
+          value={topic}
+          onChange={event => setTopic(event.target.value)}
+          onKeyDown={event => event.key === "Enter" && startMeeting()}
+          disabled={meetingActive}
+        />
+        <button
+          type="button"
+          className="btn-primary"
+          onClick={startMeeting}
+          disabled={meetingActive || !topic.trim() || wsStatus !== "connected"}
+        >
+          {meetingActive
+            ? pickLocaleText(locale, { "zh-CN": "讨论中...", "zh-TW": "討論中...", en: "Discussing...", ja: "議論中..." })
+            : pickLocaleText(locale, { "zh-CN": "开始会议", "zh-TW": "開始會議", en: "Start Meeting", ja: "会議を開始" })}
+        </button>
       </div>
     </section>
   );

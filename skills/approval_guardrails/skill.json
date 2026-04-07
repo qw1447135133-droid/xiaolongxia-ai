@@ -1,0 +1,45 @@
+{
+  "id": "approval_guardrails",
+  "order": 200,
+  "category": "governance",
+  "sourceType": "local",
+  "sourceLabel": "Local Product Skill",
+  "accent": "#ef4444",
+  "icon": "shield",
+  "recommendedAgents": ["orchestrator", "greeter", "explorer"],
+  "tags": ["approval", "risk", "governance", "guardrails"],
+  "locales": {
+    "zh-CN": {
+      "name": "审批护栏",
+      "short": "识别高风险动作并停到人工边界。",
+      "description": "用于判断哪些动作必须审批、哪些内容可以自动继续，以及失败或低置信度时该如何停在人工边界。",
+      "dispatch": "当任务涉及外发、发布、转账、高风险桌面操作或越权动作判断时自动命中。",
+      "typicalTasks": "审批判断、风险提示、阻断条件、人工接管建议。",
+      "outputs": "审批结论、风险等级、阻断原因和下一步建议。"
+    },
+    "zh-TW": {
+      "name": "審批護欄",
+      "short": "識別高風險動作並停到人工邊界。",
+      "description": "用於判斷哪些動作必須審批、哪些內容可以自動繼續，以及失敗或低置信度時該如何停在人工邊界。",
+      "dispatch": "當任務涉及外發、發佈、轉帳、高風險桌面操作或越權動作判斷時自動命中。",
+      "typicalTasks": "審批判斷、風險提示、阻斷條件、人工接管建議。",
+      "outputs": "審批結論、風險等級、阻斷原因與下一步建議。"
+    },
+    "en": {
+      "name": "Approval Guardrails",
+      "short": "Detect risky actions and stop at a human boundary.",
+      "description": "Decides which actions must wait for approval, which can proceed automatically, and how to stop safely when confidence or risk is low.",
+      "dispatch": "Auto-selected for outbound sends, publishing, money movement, risky desktop actions, or privilege-sensitive decisions.",
+      "typicalTasks": "Approval gating, risk prompts, blocking conditions, and manual takeover advice.",
+      "outputs": "Approval decisions, risk levels, stop reasons, and recommended next actions."
+    },
+    "ja": {
+      "name": "承認ガードレール",
+      "short": "高リスク操作を検出し人手境界で停止。",
+      "description": "どの操作が承認必須か、どこまで自動継続できるか、低信頼や失敗時にどのように安全停止するかを判断します。",
+      "dispatch": "外部送信、公開、送金、高リスクなデスクトップ操作、権限判断が必要なとき自動で使われます。",
+      "typicalTasks": "承認判定、リスク通知、停止条件、手動引き継ぎ提案。",
+      "outputs": "承認結論、リスクレベル、停止理由、次アクション提案。"
+    }
+  }
+}

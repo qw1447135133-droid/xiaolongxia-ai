@@ -1,7 +1,6 @@
 import type { AppTab, ControlCenterSectionId } from "@/store/types";
 
 export type DesktopLaunchNavigationTarget =
-  | { tab: "workspace"; label: string }
   | { tab: "tasks"; label: string }
   | { tab: "settings"; section: ControlCenterSectionId; label: string };
 
@@ -32,8 +31,8 @@ export function inferDesktopLaunchNavigationTarget(target: string): DesktopLaunc
 
   if (hasIdentity("code", "vscode", "visual studio code", "cursor", "windsurf", "trae")) {
     return {
-      tab: "workspace",
-      label: "工作区",
+      tab: "tasks",
+      label: "聊天",
     };
   }
 
@@ -46,8 +45,8 @@ export function inferDesktopLaunchNavigationTarget(target: string): DesktopLaunc
 
   if (hasIdentity("explorer", "资源管理器", "finder", "files")) {
     return {
-      tab: "workspace",
-      label: "工作区",
+      tab: "tasks",
+      label: "聊天",
     };
   }
 

@@ -1,15 +1,16 @@
 import type { DesktopInputRetrySuggestion } from "@/types/electron-api";
+import SKILL_CATALOG from "@/generated/skills-catalog.json";
 
 export type AgentId = "orchestrator" | "explorer" | "writer" | "designer" | "performer" | "greeter";
 export type AgentStatus = "idle" | "running" | "error";
 export type TaskComplexity = "high" | "medium" | "low";
 export type TaskStatus = "pending" | "running" | "done" | "failed";
+export type AssistantMessageFeedback = "up" | "down";
 export type AppTab = "dashboard" | "tasks" | "workspace" | "dispatch" | "meeting" | "settings";
 export type UiLocale = "zh-CN" | "zh-TW" | "en" | "ja";
 export type AutomationMode = "manual" | "supervised" | "autonomous";
 export type ControlCenterSectionId =
   | "overview"
-  | "readiness"
   | "entities"
   | "remote"
   | "execution"
@@ -46,6 +47,22 @@ export interface Task {
   createdAt: number;
   completedAt?: number;
   isUserMessage?: boolean;
+  feedback?: AssistantMessageFeedback;
+}
+
+export interface AssistantFeedbackRecord {
+  taskId: string;
+  sessionId: string;
+  agentId: AgentId;
+  feedback: AssistantMessageFeedback;
+  excerpt: string;
+  createdAt: number;
+}
+
+export interface AssistantFeedbackProfile {
+  liked: AssistantFeedbackRecord[];
+  disliked: AssistantFeedbackRecord[];
+  updatedAt: number | null;
 }
 
 export interface Activity {
@@ -261,51 +278,28 @@ export interface DesktopEvidenceRecord {
 
 export interface AgentSkill {
   id: string;
-  name: string;
-  description: string;
+  order?: number;
   category: string;
+  sourceType: "built-in" | "clawhub" | "local";
+  sourceLabel: string;
+  sourceUrl?: string;
+  accent: string;
+  icon: string;
+  tags: string[];
+  recommendedAgents: AgentId[];
+  locales: Record<UiLocale, {
+    name: string;
+    short: string;
+    description: string;
+    dispatch: string;
+    typicalTasks: string;
+    outputs: string;
+  }>;
 }
 
-export const AGENT_SKILLS = [
-  {
-    id: "frontend",
-    name: "前端开发",
-    description: "构建页面、组件、交互和样式改造。",
-    category: "基础技能",
-  },
-  {
-    id: "doc_word",
-    name: "Word 文档",
-    description: "编写和整理 Word 文档、方案、报告。",
-    category: "文档编写",
-  },
-  {
-    id: "doc_ppt",
-    name: "PPT 演示",
-    description: "编写和生成汇报、方案、路演幻灯片。",
-    category: "文档编写",
-  },
-  {
-    id: "doc_excel",
-    name: "Excel 表格",
-    description: "整理表格、数据台账、公式与统计内容。",
-    category: "文档编写",
-  },
-  {
-    id: "screenshot",
-    name: "截图处理",
-    description: "截取界面、保存关键画面并辅助问题说明。",
-    category: "图像处理",
-  },
-  {
-    id: "image_edit",
-    name: "图片修改",
-    description: "裁剪、标注、替换和优化现有图片素材。",
-    category: "图像处理",
-  },
-] as const satisfies readonly AgentSkill[];
+export const AGENT_SKILLS = SKILL_CATALOG as AgentSkill[];
 
-export type AgentSkillId = typeof AGENT_SKILLS[number]["id"];
+export type AgentSkillId = string;
 
 export interface AgentConfig {
   id: AgentId;
@@ -333,37 +327,37 @@ export type PlatformConnectionStatus =
 
 export const AGENT_META: Record<AgentId, { name: string; emoji: string; badge: string; defaultPersonality: string }> = {
   orchestrator: {
-    name: "虾总管",
+    name: "鹦鹉螺",
     emoji: "🦞",
     badge: "badge-orchestrator",
     defaultPersonality: "你是跨境电商 AI 团队的总调度员，负责任务拆解和团队协调。",
   },
   explorer: {
-    name: "探海龙虾",
+    name: "探海鲸鱼",
     emoji: "🔎",
     badge: "badge-explorer",
     defaultPersonality: "你是跨境电商选品专家，专注竞品分析、选品趋势研究和市场数据分析，提供具体可执行的洞察。",
   },
   writer: {
-    name: "执笔龙虾",
+    name: "星海章鱼",
     emoji: "✍️",
     badge: "badge-writer",
     defaultPersonality: "你是跨境电商文案专家，专注多语种文案创作、SEO 标题优化和商品详情页撰写，输出高转化率文案。",
   },
   designer: {
-    name: "幻影龙虾",
+    name: "珊瑚水母",
     emoji: "🎨",
     badge: "badge-designer",
     defaultPersonality: "你是电商视觉设计专家。当需要生成图片时，请先输出一段英文图片生成提示词（以 [IMAGE_PROMPT] 开头），然后再输出设计方案说明。",
   },
   performer: {
-    name: "戏精龙虾",
+    name: "逐浪海豚",
     emoji: "🎭",
     badge: "badge-performer",
     defaultPersonality: "你是短视频内容专家，专注数字人视频脚本、TikTok/抖音内容策略和多平台矩阵发布计划。",
   },
   greeter: {
-    name: "迎客龙虾",
+    name: "招潮蟹",
     emoji: "💬",
     badge: "badge-greeter",
     defaultPersonality: "你是多语种客服专家，专注客服话术、评论回复模板和买家互动策略，保持友好专业语气。",
@@ -466,6 +460,127 @@ export const AGENT_RECOMMENDED_MODEL_TIERS: Record<AgentId, ModelPresetTier> = {
   designer: "balanced",
   performer: "balanced",
   greeter: "budget",
+};
+
+export interface AgentModelRoutingProfile {
+  defaultTier: ModelPresetTier;
+  focusLabel: string;
+  summary: string;
+  allowProviderFallback: boolean;
+  preferredProviderIds?: string[];
+}
+
+export const AGENT_MODEL_ROUTING_PROFILES: Record<AgentId, AgentModelRoutingProfile> = {
+  orchestrator: {
+    defaultTier: "reasoning",
+    focusLabel: "多模态总控",
+    summary: "永远优先分配可处理复杂桌面、视觉和高复杂度协同任务的多模态模型。",
+    allowProviderFallback: true,
+    preferredProviderIds: ["openai", "aliyun-coding", "4sapi", "anthropic"],
+  },
+  explorer: {
+    defaultTier: "reasoning",
+    focusLabel: "深度研究",
+    summary: "优先推理、检索和结构化分析能力。",
+    allowProviderFallback: false,
+  },
+  writer: {
+    defaultTier: "balanced",
+    focusLabel: "文案写作",
+    summary: "优先语言质量、改写和多语种表达能力。",
+    allowProviderFallback: false,
+  },
+  designer: {
+    defaultTier: "balanced",
+    focusLabel: "视觉多模态",
+    summary: "优先支持视觉理解和图像创作提示的多模态模型。",
+    allowProviderFallback: true,
+    preferredProviderIds: ["openai", "aliyun-coding", "4sapi", "anthropic"],
+  },
+  performer: {
+    defaultTier: "balanced",
+    focusLabel: "音视频多模态",
+    summary: "优先支持视频脚本、分镜和多模态内容理解的模型。",
+    allowProviderFallback: true,
+    preferredProviderIds: ["openai", "aliyun-coding", "4sapi", "anthropic"],
+  },
+  greeter: {
+    defaultTier: "budget",
+    focusLabel: "客服对话",
+    summary: "优先成本稳定、响应快、持续在线的对话模型。",
+    allowProviderFallback: false,
+  },
+};
+
+const PROVIDER_AGENT_MODEL_OVERRIDES: Partial<Record<string, Partial<Record<AgentId, Partial<Record<ModelPresetTier, string[]>>>>>> = {
+  openai: {
+    orchestrator: {
+      reasoning: ["gpt-4o", "gpt-5.4"],
+      balanced: ["gpt-4o", "gpt-5.4-mini"],
+      budget: ["gpt-4o-mini", "gpt-5.4-nano"],
+    },
+    designer: {
+      reasoning: ["gpt-4o", "gpt-5.4"],
+      balanced: ["gpt-4o", "gpt-5.4-mini"],
+      budget: ["gpt-4o-mini", "gpt-5.4-nano"],
+    },
+    performer: {
+      reasoning: ["gpt-4o", "gpt-5.4"],
+      balanced: ["gpt-4o", "gpt-5.4-mini"],
+      budget: ["gpt-4o-mini", "gpt-5.4-nano"],
+    },
+  },
+  anthropic: {
+    orchestrator: {
+      reasoning: ["claude-opus-4-6", "claude-sonnet-4-6"],
+      balanced: ["claude-sonnet-4-6", "claude-opus-4-6"],
+      budget: ["claude-sonnet-4-6", "claude-haiku-4-5-20251001"],
+    },
+    designer: {
+      reasoning: ["claude-opus-4-6", "claude-sonnet-4-6"],
+      balanced: ["claude-sonnet-4-6", "claude-opus-4-6"],
+      budget: ["claude-haiku-4-5-20251001", "claude-sonnet-4-6"],
+    },
+    performer: {
+      reasoning: ["claude-opus-4-6", "claude-sonnet-4-6"],
+      balanced: ["claude-sonnet-4-6", "claude-opus-4-6"],
+      budget: ["claude-haiku-4-5-20251001", "claude-sonnet-4-6"],
+    },
+  },
+  "aliyun-coding": {
+    orchestrator: {
+      reasoning: ["qwen3-max-2026-01-23", "qwen3.5-plus", "MiniMax-M2.5", "glm-5"],
+      balanced: ["qwen3.5-plus", "qwen3-max-2026-01-23", "MiniMax-M2.5", "glm-5"],
+      budget: ["qwen3.5-plus", "MiniMax-M2.5", "glm-5", "qwen3-max-2026-01-23"],
+    },
+    designer: {
+      reasoning: ["qwen3-max-2026-01-23", "qwen3.5-plus", "MiniMax-M2.5", "glm-5"],
+      balanced: ["qwen3.5-plus", "qwen3-max-2026-01-23", "MiniMax-M2.5", "glm-5"],
+      budget: ["qwen3.5-plus", "MiniMax-M2.5", "glm-5", "qwen3-max-2026-01-23"],
+    },
+    performer: {
+      reasoning: ["qwen3-max-2026-01-23", "qwen3.5-plus", "kimi-k2.5", "MiniMax-M2.5"],
+      balanced: ["qwen3.5-plus", "qwen3-max-2026-01-23", "kimi-k2.5", "MiniMax-M2.5"],
+      budget: ["qwen3.5-plus", "kimi-k2.5", "MiniMax-M2.5", "glm-5"],
+    },
+  },
+  "4sapi": {
+    orchestrator: {
+      reasoning: ["gpt-4o", "claude-3-7-sonnet-20250219"],
+      balanced: ["gpt-4o", "claude-3-5-sonnet-20241022"],
+      budget: ["gpt-4o-mini", "claude-3-5-sonnet-20241022"],
+    },
+    designer: {
+      reasoning: ["gpt-4o", "claude-3-7-sonnet-20250219"],
+      balanced: ["gpt-4o", "claude-3-5-sonnet-20241022"],
+      budget: ["gpt-4o-mini", "claude-3-5-sonnet-20241022"],
+    },
+    performer: {
+      reasoning: ["gpt-4o", "claude-3-7-sonnet-20250219"],
+      balanced: ["gpt-4o", "claude-3-5-sonnet-20241022"],
+      budget: ["gpt-4o-mini", "claude-3-5-sonnet-20241022"],
+    },
+  },
 };
 
 export interface TeamOperatingTemplate {
@@ -590,12 +705,12 @@ export const TEAM_OPERATING_SURFACES: Record<TeamOperatingTemplateId, TeamOperat
         tab: "tasks",
       },
       {
-        id: "engineering-workspace",
-        eyebrow: "Desk",
-        title: "打开工作区整理上下文",
-        copy: "把文件、记忆、Desk Notes 和引用面板收束到当前项目里。",
-        actionLabel: "进入工作区",
-        tab: "workspace",
+        id: "engineering-context",
+        eyebrow: "Context",
+        title: "进入聊天继续当前上下文",
+        copy: "把文件、记忆和项目上下文带进主对话区，直接继续研发推进。",
+        actionLabel: "打开聊天",
+        tab: "tasks",
       },
       {
         id: "engineering-control",
@@ -649,12 +764,13 @@ export const TEAM_OPERATING_SURFACES: Record<TeamOperatingTemplateId, TeamOperat
         controlCenterSectionId: "remote",
       },
       {
-        id: "support-workspace",
-        eyebrow: "Desk",
-        title: "整理口径与知识上下文",
-        copy: "把 SOP、退款规范和话术记忆收进当前项目工作区。",
-        actionLabel: "进入工作区",
-        tab: "workspace",
+        id: "support-knowledge",
+        eyebrow: "Knowledge",
+        title: "查看知识与处理规则",
+        copy: "把 SOP、退款规范和回复口径集中放到控制台统一维护。",
+        actionLabel: "打开控制台",
+        tab: "settings",
+        controlCenterSectionId: "plugins",
       },
     ],
     homePrompts: [
@@ -690,12 +806,12 @@ export const TEAM_OPERATING_SURFACES: Record<TeamOperatingTemplateId, TeamOperat
         tab: "tasks",
       },
       {
-        id: "content-workspace",
-        eyebrow: "Desk",
-        title: "整理素材与知识记忆",
-        copy: "把参考素材、封面方向和内容规范收进工作区一起复用。",
-        actionLabel: "进入工作区",
-        tab: "workspace",
+        id: "content-context",
+        eyebrow: "Context",
+        title: "进入聊天继续内容生产",
+        copy: "把参考素材、内容规范和当前目标带回聊天区，直接推进脚本与发布动作。",
+        actionLabel: "打开聊天",
+        tab: "tasks",
       },
       {
         id: "content-control",
@@ -977,6 +1093,102 @@ export function getRecommendedModelForProvider(providerId: string, tier: ModelPr
   return PROVIDER_MODEL_PRESETS[presetId]?.[tier] ?? null;
 }
 
+function uniqueModels(models: Array<string | null | undefined>): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const model of models) {
+    if (!model || seen.has(model)) continue;
+    seen.add(model);
+    result.push(model);
+  }
+  return result;
+}
+
+function getRoleSpecificModelsForProvider(providerId: string, agentId: AgentId, tier: ModelPresetTier): string[] {
+  const presetId = resolveProviderPresetId(providerId);
+  if (!presetId) return [];
+
+  const availableModels = getModelsForProvider(providerId);
+  const availableSet = new Set(availableModels);
+  const roleSpecific =
+    PROVIDER_AGENT_MODEL_OVERRIDES[presetId]?.[agentId]?.[tier]
+    ?? PROVIDER_AGENT_MODEL_OVERRIDES[presetId]?.[agentId]?.[AGENT_MODEL_ROUTING_PROFILES[agentId].defaultTier]
+    ?? [];
+
+  return uniqueModels(roleSpecific).filter(model => availableSet.has(model));
+}
+
+function getRoleAwareModelsForProvider(providerId: string, agentId: AgentId, tier: ModelPresetTier): string[] {
+  const availableModels = getModelsForProvider(providerId);
+  const availableSet = new Set(availableModels);
+  const tierDefault = getRecommendedModelForProvider(providerId, tier);
+  const roleSpecific = getRoleSpecificModelsForProvider(providerId, agentId, tier);
+
+  return uniqueModels([...roleSpecific, tierDefault, ...availableModels]).filter(model => availableSet.has(model));
+}
+
+export function getAgentModelRoutingProfile(agentId: AgentId): AgentModelRoutingProfile {
+  return AGENT_MODEL_ROUTING_PROFILES[agentId];
+}
+
+export interface AgentModelSelection {
+  providerId: string;
+  model: string | null;
+  tier: ModelPresetTier;
+  usedProviderFallback: boolean;
+}
+
+export function getRecommendedModelSelectionForAgent(
+  providers: Array<Pick<ModelProvider, "id">>,
+  preferredProviderId: string | null | undefined,
+  agentId: AgentId,
+  tier: ModelPresetTier = getRecommendedTierForAgent(agentId),
+): AgentModelSelection | null {
+  const profile = getAgentModelRoutingProfile(agentId);
+  const providerIds = uniqueModels([preferredProviderId, ...providers.map(provider => provider.id)]);
+  const primaryProviderId = providerIds[0];
+
+  if (!primaryProviderId) return null;
+
+  const primaryRoleSpecific = getRoleSpecificModelsForProvider(primaryProviderId, agentId, tier);
+  if (primaryRoleSpecific[0]) {
+    return {
+      providerId: primaryProviderId,
+      model: primaryRoleSpecific[0],
+      tier,
+      usedProviderFallback: false,
+    };
+  }
+
+  if (profile.allowProviderFallback) {
+    const fallbackProviderIds = uniqueModels([
+      ...(profile.preferredProviderIds ?? []),
+      ...providerIds,
+    ]);
+
+    for (const providerId of fallbackProviderIds) {
+      if (!providerId || providerId === primaryProviderId) continue;
+      const roleSpecificModels = getRoleSpecificModelsForProvider(providerId, agentId, tier);
+      if (!roleSpecificModels[0]) continue;
+
+      return {
+        providerId,
+        model: roleSpecificModels[0],
+        tier,
+        usedProviderFallback: true,
+      };
+    }
+  }
+
+  const defaultModel = getRecommendedModelForProvider(primaryProviderId, tier) ?? getModelsForProvider(primaryProviderId)[0] ?? null;
+  return {
+    providerId: primaryProviderId,
+    model: defaultModel,
+    tier,
+    usedProviderFallback: false,
+  };
+}
+
 export function inferRecommendedModelTier(providerId: string, model: string): ModelPresetTier | null {
   const presetId = resolveProviderPresetId(providerId);
   if (!presetId || !model) return null;
@@ -990,7 +1202,7 @@ export function inferRecommendedModelTier(providerId: string, model: string): Mo
 }
 
 export function getRecommendedTierForAgent(agentId: AgentId): ModelPresetTier {
-  return AGENT_RECOMMENDED_MODEL_TIERS[agentId];
+  return AGENT_MODEL_ROUTING_PROFILES[agentId]?.defaultTier ?? AGENT_RECOMMENDED_MODEL_TIERS[agentId];
 }
 
 export function getTeamOperatingTemplate(id: TeamOperatingTemplateId): TeamOperatingTemplate | null {

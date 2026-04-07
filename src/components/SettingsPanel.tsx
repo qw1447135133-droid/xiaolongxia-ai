@@ -1,67 +1,36 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
-import { filterByProjectScope, getSessionProjectLabel } from "@/lib/project-context";
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { randomId } from "@/lib/utils";
 import { resolveBackendUrl } from "@/lib/backend-url";
-import { getSemanticMemoryProviderStatus } from "@/lib/semantic-memory";
-import { buildKnowledgeDocumentSnippet } from "@/lib/workspace-memory";
 import { syncRuntimeSettings } from "@/lib/runtime-settings-sync";
+import { pickLocaleText } from "@/lib/ui-locale";
 import { useStore } from "@/store";
 import {
   AGENT_META,
   TEAM_OPERATING_TEMPLATES,
+  getAgentModelRoutingProfile,
   getRecommendedTierForAgent,
-  AGENT_SKILLS,
   PROVIDER_MODELS,
   PROVIDER_PRESETS,
   getModelsForProvider,
-  getRecommendedModelForProvider,
+  getRecommendedModelSelectionForAgent,
   inferRecommendedModelTier,
 } from "@/store/types";
 import type {
   AgentConfig,
   AgentId,
-  AgentSkillId,
   DesktopProgramEntry,
   ModelPresetTier,
   ModelProvider,
   TeamOperatingTemplateId,
 } from "@/store/types";
 import { PlatformSettings } from "./PlatformSettings";
-import { DesktopRuntimeBadge } from "./DesktopRuntimeBadge";
-import { DesktopRuntimeDiagnosticsCard } from "./DesktopRuntimeDiagnosticsCard";
+import { NativeAppsCenter } from "./NativeAppsCenter";
 
 type TestResult =
   | { ok: true; latencyMs: number; model: string; tokens: number; reply: string }
   | { ok: false; error: string };
-
-const SEMANTIC_KNOWLEDGE_TEMPLATES = [
-  {
-    id: "customer-service-refund",
-    title: "客服退款 SOP",
-    sourceLabel: "客服手册",
-    tags: ["客服", "退款", "SOP"],
-    content:
-      "1. 先确认订单号、付款渠道和客户诉求。\n2. 判断是否满足退款条件，并明确全额/部分退款口径。\n3. 需要升级时转人工主管，并记录原因。\n4. 回复客户时保持简洁、安抚情绪，并给出预计处理时间。\n5. 完成后同步更新工单状态与客户摘要。",
-  },
-  {
-    id: "sales-followup",
-    title: "销售跟进脚本",
-    sourceLabel: "销售作战卡",
-    tags: ["销售", "线索", "跟进"],
-    content:
-      "目标：推动线索进入下一阶段。\n开场：先复述对方业务目标，再确认当前最紧迫问题。\n推进：给出 1 个清晰价值点和 1 个可量化案例。\n收口：约定下一步动作、负责人和时间点。\n禁忌：不要一次抛太多方案，不要在未确认需求前直接报价。",
-  },
-  {
-    id: "content-publishing",
-    title: "内容发布规范",
-    sourceLabel: "内容运营规范",
-    tags: ["内容", "发布", "规范"],
-    content:
-      "所有内容任务发布前需要检查：\n1. 标题是否明确目标人群和核心利益点。\n2. 正文是否有统一语气和 CTA。\n3. 平台标签、封面、首评是否准备齐全。\n4. 是否包含发布时间、负责人、复盘指标。\n5. 如涉及品牌口径，必须与知识库保持一致。",
-  },
-] as const;
 
 async function testModel(apiKey: string, baseUrl: string, model: string): Promise<TestResult> {
   const url = await resolveBackendUrl("/api/test-model");
@@ -73,21 +42,18 @@ async function testModel(apiKey: string, baseUrl: string, model: string): Promis
   return res.json() as Promise<TestResult>;
 }
 
-function toggleSkill(skills: AgentSkillId[], skillId: AgentSkillId): AgentSkillId[] {
-  return skills.includes(skillId)
-    ? skills.filter(id => id !== skillId)
-    : [...skills, skillId];
-}
-
 type SettingsSectionId = "agents" | "providers" | "desktop" | "platforms" | "semantic";
 
 export function SettingsPanel({
   initialSection = "agents",
   allowedSections,
+  showSectionTabs = true,
 }: {
   initialSection?: SettingsSectionId;
   allowedSections?: SettingsSectionId[];
+  showSectionTabs?: boolean;
 }) {
+  const locale = useStore(s => s.locale);
   const [activeSection, setActiveSection] = useState<SettingsSectionId>(initialSection);
   const visibleSections = useMemo(
     () => ([
@@ -110,42 +76,97 @@ export function SettingsPanel({
     }
   }, [activeSection, visibleSections]);
 
-  const showSidebar = visibleSections.length > 1;
+  const activeSectionMeta = useMemo(() => {
+    const sectionMeta: Record<SettingsSectionId, { title: string; copy: string }> = {
+      agents: {
+        title: "Agent 设置",
+        copy: "调整各个 agent 的模型、个性和团队运行模板。",
+      },
+      providers: {
+        title: "模型供应商",
+        copy: "统一管理 API Key、Base URL 和默认模型来源。",
+      },
+      desktop: {
+        title: "本机程序",
+        copy: "管理本机程序白名单、桌面接管和本地运行策略。",
+      },
+      semantic: {
+        title: "语义记忆",
+        copy: "AI 自动管理的语义记忆模块，通常无需手动干预。",
+      },
+      platforms: {
+        title: "消息平台",
+        copy: "配置渠道平台、联调状态和发送能力。",
+      },
+    };
+
+    return sectionMeta[activeSection];
+  }, [activeSection]);
 
   return (
-    <div style={{ display: "flex", gap: 0, height: "100%", overflow: "hidden" }}>
-      {showSidebar ? (
-        <div style={{ width: 156, flexShrink: 0, borderRight: "1px solid var(--border)", padding: "8px 0" }}>
+    <div style={{ display: "grid", gap: 10, height: "100%", minHeight: 0, overflow: "hidden" }}>
+      {showSectionTabs ? (
+        <div className="control-center__quick-actions" style={{ marginTop: 0, flexWrap: "wrap" }}>
           {visibleSections.map(section => (
-          <button
-            key={section.id}
-            onClick={() => setActiveSection(section.id)}
-            style={{
-              display: "block",
-              width: "100%",
-              textAlign: "left",
-              padding: "10px 14px",
-              background: activeSection === section.id ? "var(--accent-dim)" : "transparent",
-              border: "none",
-              borderLeft: activeSection === section.id ? "2px solid var(--accent)" : "2px solid transparent",
-              color: activeSection === section.id ? "var(--accent)" : "var(--text-muted)",
-              cursor: "pointer",
-              fontSize: 12,
-              fontWeight: activeSection === section.id ? 600 : 500,
-            }}
-          >
-            {section.label}
-          </button>
+            <button
+              key={section.id}
+              type="button"
+              className="btn-ghost"
+              onClick={() => setActiveSection(section.id)}
+              style={activeSection === section.id ? { borderColor: "rgba(var(--accent-rgb), 0.24)", background: "rgba(var(--accent-rgb), 0.1)", color: "var(--accent)" } : undefined}
+            >
+              {section.label}
+            </button>
           ))}
         </div>
       ) : null}
 
-      <div style={{ flex: 1, overflowY: "auto", padding: 16 }}>
-        {activeSection === "agents" && <AgentsSection />}
-        {activeSection === "providers" && <ProvidersSection />}
-        {activeSection === "desktop" && <DesktopProgramsSection />}
-        {activeSection === "semantic" && <SemanticSection />}
-        {activeSection === "platforms" && <PlatformSettings />}
+      <div style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
+        <section
+          className="control-center__panel"
+          style={{
+            height: "100%",
+            minHeight: 0,
+            display: "grid",
+            gridTemplateRows: "auto minmax(0, 1fr)",
+            padding: 14,
+            borderRadius: 28,
+          }}
+        >
+          <div
+            style={{
+              display: "grid",
+              gap: 4,
+              padding: "2px 2px 10px",
+              borderBottom: "1px solid var(--border-subtle)",
+            }}
+          >
+            <div className="control-center__eyebrow">
+              {locale === "en" ? "Settings" : locale === "ja" ? "設定" : "设置"}
+            </div>
+            <div className="control-center__panel-title" style={{ fontSize: 18 }}>
+              {activeSectionMeta.title}
+            </div>
+            <div className="control-center__copy" style={{ marginTop: 2, fontSize: 12, lineHeight: 1.6 }}>
+              {activeSectionMeta.copy}
+            </div>
+          </div>
+
+          <div
+            style={{
+              minHeight: 0,
+              overflowY: "auto",
+              paddingTop: 10,
+              paddingRight: 2,
+            }}
+          >
+            {activeSection === "agents" && <AgentsSection />}
+            {activeSection === "providers" && <ProvidersSection />}
+            {activeSection === "desktop" && <DesktopProgramsSection />}
+            {activeSection === "semantic" && <SemanticSection />}
+            {activeSection === "platforms" && <PlatformSettings />}
+          </div>
+        </section>
       </div>
     </div>
   );
@@ -169,35 +190,34 @@ function AgentsSection() {
     await syncToServer();
   };
 
-  const handleSkillChange = async (agentId: AgentId, skills: AgentSkillId[]) => {
-    updateAgentConfig(agentId, { skills });
-    await syncToServer();
-  };
-
-  const applyRolePresetToAgent = async (agentId: AgentId) => {
+  const applyRolePresetToAgent = async (agentId: AgentId, preferredProviderId?: string) => {
     const currentConfig = agentConfigs[agentId];
-    const providerId = currentConfig.providerId || providers[0]?.id || "";
-    if (!providerId) return;
-
     const recommendedTier = getRecommendedTierForAgent(agentId);
-    const recommendedModel = getRecommendedModelForProvider(providerId, recommendedTier);
-    if (!recommendedModel) return;
+    const selection = getRecommendedModelSelectionForAgent(
+      providers,
+      preferredProviderId || currentConfig.providerId || providers[0]?.id || "",
+      agentId,
+      recommendedTier,
+    );
+    if (!selection?.providerId || !selection.model) return;
 
-    updateAgentConfig(agentId, { providerId, model: recommendedModel });
+    updateAgentConfig(agentId, { providerId: selection.providerId, model: selection.model });
     await syncToServer();
   };
 
   const applyRolePresetToAllAgents = async () => {
     for (const agentId of Object.keys(AGENT_META) as AgentId[]) {
       const currentConfig = agentConfigs[agentId];
-      const providerId = currentConfig.providerId || providers[0]?.id || "";
-      if (!providerId) continue;
-
       const recommendedTier = getRecommendedTierForAgent(agentId);
-      const recommendedModel = getRecommendedModelForProvider(providerId, recommendedTier);
-      if (!recommendedModel) continue;
+      const selection = getRecommendedModelSelectionForAgent(
+        providers,
+        currentConfig.providerId || providers[0]?.id || "",
+        agentId,
+        recommendedTier,
+      );
+      if (!selection?.providerId || !selection.model) continue;
 
-      updateAgentConfig(agentId, { providerId, model: recommendedModel });
+      updateAgentConfig(agentId, { providerId: selection.providerId, model: selection.model });
     }
 
     setActiveTeamOperatingTemplate(null);
@@ -210,14 +230,17 @@ function AgentsSection() {
 
     for (const agentId of Object.keys(AGENT_META) as AgentId[]) {
       const currentConfig = agentConfigs[agentId];
-      const providerId = currentConfig.providerId || providers[0]?.id || "";
       const tier = template.agentTiers[agentId];
-      const model = providerId ? getRecommendedModelForProvider(providerId, tier) : null;
+      const selection = getRecommendedModelSelectionForAgent(
+        providers,
+        currentConfig.providerId || providers[0]?.id || "",
+        agentId,
+        tier,
+      );
 
       updateAgentConfig(agentId, {
-        providerId: providerId || currentConfig.providerId,
-        ...(model ? { model } : {}),
-        ...(template.agentSkills[agentId] ? { skills: template.agentSkills[agentId]! } : {}),
+        providerId: selection?.providerId || currentConfig.providerId,
+        ...(selection?.model ? { model: selection.model } : {}),
       });
     }
 
@@ -226,10 +249,10 @@ function AgentsSection() {
   };
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 12, overflow: "visible" }}>
-      <div className="card" style={{ padding: 14 }}>
-        <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 10 }}>用户称呼</div>
-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+    <div style={{ display: "grid", gap: 8, overflow: "visible" }}>
+      <div className="card" style={{ padding: 10 }}>
+        <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+          <div style={{ minWidth: 88, fontSize: 12, fontWeight: 700 }}>用户称呼</div>
           <input
             value={nickDraft}
             onChange={e => setNickDraft(e.target.value)}
@@ -241,75 +264,55 @@ function AgentsSection() {
               background: "var(--input-bg, rgba(255,255,255,0.06))",
               border: "1px solid var(--border)",
               borderRadius: 6,
-              padding: "6px 10px",
+              padding: "5px 10px",
               color: "var(--text)",
-              fontSize: 13,
+              fontSize: 12,
             }}
           />
           <button
             onClick={handleNicknameSave}
             style={{
-              padding: "6px 14px",
+              padding: "5px 12px",
               background: "var(--accent)",
               border: "none",
               borderRadius: 6,
               color: "#fff",
-              fontSize: 12,
+              fontSize: 11,
               cursor: "pointer",
             }}
           >
             保存
           </button>
         </div>
-        <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 6 }}>
-          Agent 在对话中会用这个称呼称呼你
-        </div>
       </div>
 
-      <div
-        className="card"
-        style={{
-          padding: 14,
-          background: "linear-gradient(135deg, rgba(var(--accent-rgb), 0.12), rgba(255,255,255,0.02))",
-          borderColor: "rgba(var(--accent-rgb), 0.22)",
-        }}
-      >
-        <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 6 }}>Agent 技能面板</div>
-        <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.7 }}>
-          每个 agent 都可以单独配置技能。打开技能菜单后，技能栏会固定显示在右侧空余区域，并保持顶部对齐。
-        </div>
-        <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center", marginTop: 12, flexWrap: "wrap" }}>
-          <div style={{ fontSize: 11, color: "var(--text-muted)", lineHeight: 1.7 }}>
-            角色推荐默认策略：总调度偏平衡，研究偏强推理，客服偏省成本。未选供应商时会优先使用第一家已配置供应商。
-          </div>
-          <button
-            type="button"
-            className="btn-primary"
-            style={{ fontSize: 12, padding: "8px 14px" }}
-            onClick={() => void applyRolePresetToAllAgents()}
-            disabled={providers.length === 0}
-          >
-            按角色批量套用
-          </button>
-        </div>
-      </div>
-
-      <div className="card" style={{ padding: 14 }}>
+      <div className="card" style={{ padding: 10 }}>
         <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
-          <div>
-            <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 6 }}>团队运行模板</div>
-            <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.7 }}>
-              一次切换整支团队的模型档位和技能组合，适合在研发、客服值守、内容矩阵三种工作状态间快速切换。
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 2 }}>团队运行模板</div>
+              <div style={{ fontSize: 10, color: "var(--text-muted)", lineHeight: 1.5 }}>
+              一键切换整队模型档位和协作节奏。
+              </div>
             </div>
-          </div>
-          <div style={{ fontSize: 11, color: "var(--text-muted)" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <button
+              type="button"
+              className="btn-primary"
+              style={{ fontSize: 11, padding: "5px 10px" }}
+              onClick={() => void applyRolePresetToAllAgents()}
+              disabled={providers.length === 0}
+            >
+              按角色批量套用
+            </button>
+            <div style={{ fontSize: 10, color: "var(--text-muted)" }}>
             {activeTeamOperatingTemplateId
               ? `当前团队模式：${TEAM_OPERATING_TEMPLATES.find(item => item.id === activeTeamOperatingTemplateId)?.label ?? activeTeamOperatingTemplateId}`
               : "还没有套用团队模板"}
+            </div>
           </div>
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10, marginTop: 12 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 8, marginTop: 8 }}>
           {TEAM_OPERATING_TEMPLATES.map(template => {
             const active = activeTeamOperatingTemplateId === template.id;
             return (
@@ -319,44 +322,26 @@ function AgentsSection() {
                   borderRadius: 14,
                   border: `1px solid ${active ? "rgba(var(--accent-rgb), 0.36)" : "var(--border)"}`,
                   background: active ? "rgba(var(--accent-rgb), 0.08)" : "rgba(255,255,255,0.03)",
-                  padding: 14,
+                  padding: 8,
                   display: "grid",
-                  gap: 10,
+                  gap: 6,
                 }}
               >
                 <div>
-                  <div style={{ fontSize: 14, fontWeight: 700 }}>{template.label}</div>
-                  <div style={{ fontSize: 11, color: "var(--text-muted)", lineHeight: 1.7, marginTop: 4 }}>
+                  <div style={{ fontSize: 12, fontWeight: 700 }}>{template.label}</div>
+                  <div style={{ fontSize: 10, color: "var(--text-muted)", lineHeight: 1.45, marginTop: 2 }}>
                     {template.description}
                   </div>
                 </div>
 
-                <div style={{ fontSize: 11, color: "var(--text-muted)", lineHeight: 1.7 }}>
+                <div style={{ fontSize: 10, color: "var(--text-muted)", lineHeight: 1.45 }}>
                   {template.summary}
-                </div>
-
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                  {(Object.keys(template.agentTiers) as AgentId[]).map(agentId => (
-                    <span
-                      key={`${template.id}-${agentId}`}
-                      style={{
-                        padding: "3px 8px",
-                        borderRadius: 999,
-                        border: "1px solid rgba(255,255,255,0.08)",
-                        background: "rgba(255,255,255,0.04)",
-                        fontSize: 10,
-                        color: "var(--text-muted)",
-                      }}
-                    >
-                      {AGENT_META[agentId].name} · {template.agentTiers[agentId] === "reasoning" ? "强推理" : template.agentTiers[agentId] === "balanced" ? "平衡" : "省成本"}
-                    </span>
-                  ))}
                 </div>
 
                 <button
                   type="button"
                   className={active ? "btn-primary" : "btn-ghost"}
-                  style={{ fontSize: 12, padding: "8px 12px" }}
+                  style={{ fontSize: 11, padding: "5px 10px" }}
                   onClick={() => void applyOperatingTemplate(template.id)}
                   disabled={providers.length === 0}
                 >
@@ -368,27 +353,29 @@ function AgentsSection() {
         </div>
       </div>
 
-      {(Object.keys(AGENT_META) as AgentId[]).map(id => (
-        <AgentConfigCard
-          key={id}
-          agentId={id}
-          config={agentConfigs[id]}
-          providers={providers}
-          isEditing={editing === id}
-          onEdit={() => setEditing(editing === id ? null : id)}
-          onSave={async updates => {
-            updateAgentConfig(id, updates);
-            setEditing(null);
-            await syncToServer();
-          }}
-          onQuickModelPreset={async (providerId, model) => {
-            updateAgentConfig(id, { providerId, model });
-            await syncToServer();
-          }}
-          onApplyRolePreset={() => applyRolePresetToAgent(id)}
-          onSkillChange={skills => handleSkillChange(id, skills)}
-        />
-      ))}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 8 }}>
+        {(Object.keys(AGENT_META) as AgentId[]).map(id => (
+          <div key={id} style={editing === id ? { gridColumn: "1 / -1" } : undefined}>
+            <AgentConfigCard
+              agentId={id}
+              config={agentConfigs[id]}
+              providers={providers}
+              isEditing={editing === id}
+              onEdit={() => setEditing(editing === id ? null : id)}
+              onSave={async updates => {
+                updateAgentConfig(id, updates);
+                setEditing(null);
+                await syncToServer();
+              }}
+              onQuickModelPreset={async (providerId, model) => {
+                updateAgentConfig(id, { providerId, model });
+                await syncToServer();
+              }}
+              onApplyRolePreset={(providerId) => applyRolePresetToAgent(id, providerId)}
+            />
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -402,7 +389,6 @@ function AgentConfigCard({
   onSave,
   onQuickModelPreset,
   onApplyRolePreset,
-  onSkillChange,
 }: {
   agentId: AgentId;
   config: AgentConfig;
@@ -411,37 +397,14 @@ function AgentConfigCard({
   onEdit: () => void;
   onSave: (updates: Partial<AgentConfig>) => Promise<void>;
   onQuickModelPreset: (providerId: string, model: string) => Promise<void>;
-  onApplyRolePreset: () => Promise<void>;
-  onSkillChange: (skills: AgentSkillId[]) => Promise<void>;
+  onApplyRolePreset: (providerId?: string) => Promise<void>;
 }) {
   const meta = AGENT_META[agentId];
   const [draft, setDraft] = useState<AgentConfig>(config);
-  const [skillsMenuOpen, setSkillsMenuOpen] = useState(false);
-  const menuRef = useRef<HTMLDivElement>(null);
-  const rightOpen = useStore(state => state.rightOpen);
 
   useEffect(() => {
     setDraft(config);
   }, [config]);
-
-  useEffect(() => {
-    if (!isEditing) {
-      setSkillsMenuOpen(false);
-    }
-  }, [isEditing]);
-
-  useEffect(() => {
-    if (!skillsMenuOpen) return;
-
-    const handlePointerDown = (event: MouseEvent) => {
-      if (!menuRef.current?.contains(event.target as Node)) {
-        setSkillsMenuOpen(false);
-      }
-    };
-
-    document.addEventListener("mousedown", handlePointerDown);
-    return () => document.removeEventListener("mousedown", handlePointerDown);
-  }, [skillsMenuOpen]);
 
   const selectedProvider = providers.find(p => p.id === draft.providerId);
   const modelOptions = selectedProvider ? getModelsForProvider(selectedProvider.id) : [];
@@ -450,42 +413,43 @@ function AgentConfigCard({
   const testModelName = draft.model || (selectedProvider ? (getModelsForProvider(selectedProvider.id)[0] ?? "") : "");
   const recommendedTier = inferRecommendedModelTier(draft.providerId, draft.model);
   const roleRecommendedTier = getRecommendedTierForAgent(agentId);
-  const roleRecommendedModel = draft.providerId
-    ? getRecommendedModelForProvider(draft.providerId, roleRecommendedTier)
-    : null;
-  const selectedSkillItems = useMemo(
-    () => AGENT_SKILLS.filter(skill => config.skills.includes(skill.id)),
-    [config.skills]
+  const routingProfile = getAgentModelRoutingProfile(agentId);
+  const roleRecommendedSelection = getRecommendedModelSelectionForAgent(
+    providers,
+    draft.providerId || config.providerId || providers[0]?.id || "",
+    agentId,
+    roleRecommendedTier,
   );
-
-  const handleToggleSkill = async (skillId: AgentSkillId) => {
-    const nextSkills = toggleSkill(draft.skills, skillId);
-    setDraft(prev => ({ ...prev, skills: nextSkills }));
-    await onSkillChange(nextSkills);
-  };
+  const roleRecommendedModel = roleRecommendedSelection?.model ?? null;
+  const roleRecommendedProvider = roleRecommendedSelection?.providerId ?? draft.providerId;
 
   const handleApplyModelPreset = async (tier: ModelPresetTier) => {
-    if (!draft.providerId) return;
-    const recommendedModel = getRecommendedModelForProvider(draft.providerId, tier);
-    if (!recommendedModel) return;
+    const selection = getRecommendedModelSelectionForAgent(
+      providers,
+      draft.providerId || providers[0]?.id || "",
+      agentId,
+      tier,
+    );
+    if (!selection?.providerId || !selection.model) return;
+    const nextModel = selection.model;
 
-    setDraft(prev => ({ ...prev, model: recommendedModel }));
-    await onQuickModelPreset(draft.providerId, recommendedModel);
+    setDraft(prev => ({ ...prev, providerId: selection.providerId, model: nextModel }));
+    await onQuickModelPreset(selection.providerId, nextModel);
   };
 
   return (
-    <div className="card" style={{ padding: 14, overflow: "visible", position: "relative" }}>
-      <div style={{ display: "flex", alignItems: "flex-start", gap: 12, marginBottom: isEditing ? 14 : 0 }}>
+    <div className="card" style={{ padding: 10, overflow: "visible", position: "relative" }}>
+      <div style={{ display: "flex", alignItems: "flex-start", gap: 10, marginBottom: isEditing ? 10 : 0 }}>
         <div
           style={{
-            width: 44,
-            height: 44,
-            borderRadius: 14,
+            width: 34,
+            height: 34,
+            borderRadius: 10,
             display: "grid",
             placeItems: "center",
             background: "rgba(var(--accent-rgb), 0.08)",
             border: "1px solid rgba(var(--accent-rgb), 0.2)",
-            fontSize: 22,
+            fontSize: 18,
             flexShrink: 0,
           }}
         >
@@ -493,82 +457,49 @@ function AgentConfigCard({
         </div>
 
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 4 }}>
-            <div style={{ fontWeight: 700, fontSize: 14 }}>{config.name || meta.name}</div>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginBottom: 2 }}>
+            <div style={{ fontWeight: 700, fontSize: 12 }}>{config.name || meta.name}</div>
             <span className={`badge ${meta.badge}`}>{agentId}</span>
             <span
               style={{
-                padding: "2px 8px",
+                padding: "2px 6px",
                 borderRadius: 999,
                 background: "rgba(var(--accent-rgb), 0.12)",
                 color: "var(--accent)",
-                fontSize: 11,
+                fontSize: 10,
                 fontWeight: 600,
               }}
             >
-              已启用 {config.skills.length} 项技能
+              技能自动分配
             </span>
           </div>
 
-          <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
+          <div style={{ fontSize: 10, color: "var(--text-muted)", lineHeight: 1.45 }}>
             {config.model || "默认模型"} · {providers.find(p => p.id === config.providerId)?.name || "默认供应商"}
           </div>
 
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 10 }}>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 6 }}>
             <span
               style={{
-                padding: "3px 8px",
+                padding: "2px 7px",
                 borderRadius: 999,
                 border: "1px solid rgba(var(--accent-rgb), 0.24)",
                 background: "rgba(var(--accent-rgb), 0.08)",
-                fontSize: 11,
+                fontSize: 10,
                 color: "var(--text)",
               }}
             >
-              角色推荐: {roleRecommendedTier === "reasoning" ? "强推理" : roleRecommendedTier === "balanced" ? "平衡" : "省成本"}
+              角色推荐: {routingProfile.focusLabel} · {roleRecommendedTier === "reasoning" ? "强推理" : roleRecommendedTier === "balanced" ? "平衡" : "省成本"}
             </span>
-            {roleRecommendedModel && (
-              <span
-                style={{
-                  padding: "3px 8px",
-                  borderRadius: 999,
-                  border: "1px solid rgba(255,255,255,0.08)",
-                  background: "rgba(255,255,255,0.04)",
-                  fontSize: 11,
-                  color: "var(--text-muted)",
-                }}
-              >
-                {roleRecommendedModel}
-              </span>
-            )}
           </div>
 
-          {selectedSkillItems.length > 0 && (
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 10 }}>
-              {selectedSkillItems.map(skill => (
-                <span
-                  key={skill.id}
-                  style={{
-                    padding: "3px 8px",
-                    borderRadius: 999,
-                    border: "1px solid rgba(255,255,255,0.08)",
-                    background: "rgba(255,255,255,0.04)",
-                    fontSize: 11,
-                    color: "var(--text)",
-                  }}
-                >
-                  {skill.name}
-                </span>
-              ))}
-            </div>
-          )}
+          <div style={{ fontSize: 10, color: "var(--text-muted)", marginTop: 6, lineHeight: 1.45 }}>
+            {routingProfile.summary}
+          </div>
         </div>
 
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexShrink: 0 }}>
-          {config.providerId && config.model && (
-            <TestButton apiKey={selectedProvider?.apiKey ?? ""} baseUrl={selectedProvider?.baseUrl ?? ""} testModel={config.model} />
-          )}
-          <button className="btn-ghost" style={{ fontSize: 12, padding: "6px 12px" }} onClick={onEdit}>
+          <button className="btn-ghost" style={{ fontSize: 11, padding: "4px 9px" }} onClick={onEdit}>
             {isEditing ? "关闭编辑" : "编辑设置"}
           </button>
         </div>
@@ -662,13 +593,14 @@ function AgentConfigCard({
                     {roleRecommendedTier === "reasoning" ? "强推理" : roleRecommendedTier === "balanced" ? "平衡" : "省成本"}
                   </strong>
                   {roleRecommendedModel ? ` · ${roleRecommendedModel}` : ""}
+                  {roleRecommendedProvider && roleRecommendedProvider !== draft.providerId ? ` · 推荐切到 ${providers.find(provider => provider.id === roleRecommendedProvider)?.name ?? roleRecommendedProvider}` : ""}
                 </div>
                 <button
                   type="button"
                   className="btn-ghost"
                   style={{ fontSize: 12, padding: "6px 10px" }}
-                  disabled={!draft.providerId || !roleRecommendedModel}
-                  onClick={() => void onApplyRolePreset()}
+                  disabled={!roleRecommendedProvider || !roleRecommendedModel}
+                  onClick={() => void onApplyRolePreset(draft.providerId || providers[0]?.id || "")}
                 >
                   应用角色推荐
                 </button>
@@ -692,8 +624,17 @@ function AgentConfigCard({
                     copy: "给大量日常执行、轻任务或高频客服。",
                   },
                 ] as const).map(item => {
-                  const model = draft.providerId ? getRecommendedModelForProvider(draft.providerId, item.tier) : null;
-                  const active = recommendedTier === item.tier && draft.model === model;
+                  const selection = getRecommendedModelSelectionForAgent(
+                    providers,
+                    draft.providerId || providers[0]?.id || "",
+                    agentId,
+                    item.tier,
+                  );
+                  const model = selection?.model ?? null;
+                  const active =
+                    recommendedTier === item.tier
+                    && draft.model === model
+                    && (!selection?.providerId || selection.providerId === draft.providerId);
 
                   return (
                     <button
@@ -717,7 +658,9 @@ function AgentConfigCard({
                     >
                       <span style={{ fontSize: 12, fontWeight: 700 }}>{item.label}</span>
                       <span style={{ fontSize: 10, lineHeight: 1.5, color: "var(--text-muted)", textAlign: "left" }}>
-                        {model ?? "当前供应商没有这档预设"}
+                        {model
+                          ? `${selection?.providerId && selection.providerId !== draft.providerId ? `${providers.find(provider => provider.id === selection.providerId)?.name ?? selection.providerId} · ` : ""}${model}`
+                          : "没有匹配到合适模型"}
                       </span>
                     </button>
                   );
@@ -741,84 +684,6 @@ function AgentConfigCard({
             </div>
           )}
 
-          <div ref={menuRef} style={{ position: "relative", overflow: "visible" }}>
-            <label style={labelStyle}>技能开关</label>
-            <button
-              type="button"
-              className="btn-ghost"
-              onClick={() => setSkillsMenuOpen(open => !open)}
-              style={{
-                width: "100%",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                padding: "10px 12px",
-                color: skillsMenuOpen ? "var(--accent)" : "var(--text)",
-                borderColor: skillsMenuOpen ? "rgba(var(--accent-rgb), 0.4)" : "var(--border)",
-                background: skillsMenuOpen ? "rgba(var(--accent-rgb), 0.08)" : "transparent",
-              }}
-            >
-              <span style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 2 }}>
-                <span style={{ fontSize: 13, fontWeight: 600 }}>打开技能菜单</span>
-                <span style={{ fontSize: 11, color: "var(--text-muted)" }}>
-                  已选择 {draft.skills.length} 项，点击后在右侧空余区域展开
-                </span>
-              </span>
-              <span style={{ fontSize: 16 }}>{skillsMenuOpen ? "×" : "＋"}</span>
-            </button>
-
-            {skillsMenuOpen && (
-              <div
-                className="animate-fade-in"
-                style={{
-                  position: "fixed",
-                  top: 74,
-                  right: rightOpen ? "calc(var(--right-w) + 22px)" : 22,
-                  width: 332,
-                  maxWidth: "min(332px, calc(100vw - 48px))",
-                  maxHeight: "calc(100vh - 96px)",
-                  overflowY: "auto",
-                  borderRadius: "var(--radius-lg)",
-                  border: "1px solid rgba(var(--accent-rgb), 0.2)",
-                  background: "linear-gradient(180deg, rgba(22, 25, 32, 0.98), rgba(15, 18, 24, 0.98))",
-                  boxShadow: "0 18px 48px rgba(0, 0, 0, 0.45)",
-                  zIndex: 60,
-                }}
-              >
-                <div
-                  style={{
-                    padding: "14px 14px 12px",
-                    borderBottom: "1px solid var(--border)",
-                    background: "linear-gradient(180deg, rgba(var(--accent-rgb), 0.08), rgba(255,255,255,0.01))",
-                  }}
-                >
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 6 }}>
-                    <div style={{ fontSize: 14, fontWeight: 700 }}>技能二级菜单</div>
-                    <span
-                      style={{
-                        padding: "2px 8px",
-                        borderRadius: 999,
-                        background: "rgba(var(--accent-rgb), 0.12)",
-                        color: "var(--accent)",
-                        fontSize: 10,
-                        fontWeight: 700,
-                      }}
-                    >
-                      {draft.skills.length} 项
-                    </span>
-                  </div>
-                  <div style={{ fontSize: 11, color: "var(--text-muted)", lineHeight: 1.6 }}>
-                    顶部对齐显示，分组和勾选项统一使用同一套卡片排版。
-                  </div>
-                </div>
-
-                <div style={{ padding: 14 }}>
-                  {renderSkillGroups(draft.skills, handleToggleSkill)}
-                </div>
-              </div>
-            )}
-          </div>
-
           <div>
             <label style={labelStyle}>个性补充</label>
             <textarea
@@ -841,480 +706,80 @@ function AgentConfigCard({
   );
 }
 
-function renderSkillGroups(selectedSkills: AgentSkillId[], onToggle: (skillId: AgentSkillId) => void) {
-  const groupMap = AGENT_SKILLS.reduce<Record<string, (typeof AGENT_SKILLS)[number][]>>((acc, skill) => {
-    if (!acc[skill.category]) acc[skill.category] = [];
-    acc[skill.category].push(skill);
-    return acc;
-  }, {});
-
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-      {Object.entries(groupMap).map(([category, skills]) => (
-        <div key={category} style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          <div
-            style={{
-              fontSize: 10,
-              fontWeight: 700,
-              color: "var(--accent)",
-              letterSpacing: "0.08em",
-              textTransform: "uppercase",
-            }}
-          >
-            {category}
-          </div>
-
-          {skills.map(skill => {
-            const checked = selectedSkills.includes(skill.id);
-            return (
-              <label
-                key={skill.id}
-                style={{
-                  display: "flex",
-                  alignItems: "flex-start",
-                  gap: 10,
-                  padding: "10px 12px",
-                  borderRadius: "var(--radius-sm)",
-                  border: `1px solid ${checked ? "rgba(var(--accent-rgb), 0.35)" : "var(--border)"}`,
-                  background: checked ? "rgba(var(--accent-rgb), 0.08)" : "rgba(255,255,255,0.02)",
-                  cursor: "pointer",
-                }}
-              >
-                <input
-                  type="checkbox"
-                  checked={checked}
-                  onChange={() => onToggle(skill.id)}
-                  style={{ marginTop: 2, accentColor: "var(--accent)" }}
-                />
-                <span style={{ display: "flex", flexDirection: "column", gap: 4, minWidth: 0 }}>
-                  <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text)" }}>{skill.name}</span>
-                  <span style={{ fontSize: 11, color: "var(--text-muted)", lineHeight: 1.55 }}>{skill.description}</span>
-                </span>
-              </label>
-            );
-          })}
-        </div>
-      ))}
-    </div>
-  );
-}
-
 function SemanticSection() {
-  const {
-    semanticMemoryConfig,
-    updateSemanticMemoryConfig,
-    updateSemanticMemoryPgvectorConfig,
-    semanticKnowledgeDocs,
-    createSemanticKnowledgeDoc,
-    updateSemanticKnowledgeDoc,
-    deleteSemanticKnowledgeDoc,
-    chatSessions,
-    activeSessionId,
-    workspaceRoot,
-    appendCommandDraft,
-  } = useStore();
-  const [editingDocId, setEditingDocId] = useState<string | null>(null);
-  const [title, setTitle] = useState("");
-  const [sourceLabel, setSourceLabel] = useState("手动录入");
-  const [tags, setTags] = useState("");
-  const [content, setContent] = useState("");
+  const locale = useStore(s => s.locale);
+  const resetSemanticMemory = useStore(s => s.resetSemanticMemory);
+  const [isResetting, setIsResetting] = useState(false);
 
-  const activeSession = useMemo(
-    () => chatSessions.find(session => session.id === activeSessionId) ?? null,
-    [activeSessionId, chatSessions],
-  );
-  const scopedKnowledgeDocs = useMemo(
-    () =>
-      filterByProjectScope(semanticKnowledgeDocs, {
-        projectId: activeSession?.projectId,
-        workspaceRoot: activeSession?.workspaceRoot ?? workspaceRoot,
-      }),
-    [activeSession?.projectId, activeSession?.workspaceRoot, semanticKnowledgeDocs, workspaceRoot],
-  );
-  const status = useMemo(
-    () => getSemanticMemoryProviderStatus(semanticMemoryConfig),
-    [semanticMemoryConfig],
-  );
-
-  const statusTone =
-    status.tone === "ready"
-      ? {
-          border: "rgba(var(--success-rgb), 0.28)",
-          background: "rgba(var(--success-rgb), 0.08)",
-          color: "var(--success)",
-        }
-      : {
-          border: "rgba(var(--warning-rgb), 0.28)",
-          background: "rgba(var(--warning-rgb), 0.08)",
-          color: "var(--warning)",
-        };
-
-  const resetDocForm = () => {
-    setEditingDocId(null);
-    setTitle("");
-    setContent("");
-    setTags("");
-    setSourceLabel("手动录入");
-  };
-
-  const handleCreateOrUpdateDoc = () => {
-    if (!title.trim() || !content.trim()) return;
-    const normalizedTags = tags
-      .split(/[,\n，、]/)
-      .map(item => item.trim())
-      .filter(Boolean);
-
-    if (editingDocId) {
-      updateSemanticKnowledgeDoc(editingDocId, {
-        title,
-        content,
-        tags: normalizedTags,
-        sourceLabel,
-      });
-    } else {
-      createSemanticKnowledgeDoc({
-        title,
-        content,
-        tags: normalizedTags,
-        sourceLabel,
-      });
+  const handleReset = async () => {
+    setIsResetting(true);
+    try {
+      resetSemanticMemory();
+      await syncToServer();
+    } finally {
+      setIsResetting(false);
     }
-
-    resetDocForm();
-  };
-
-  const updateRecallFlag = (
-    key: "autoRecallProjectMemories" | "autoRecallDeskNotes" | "autoRecallKnowledgeDocs",
-    value: boolean,
-  ) => {
-    updateSemanticMemoryConfig({ [key]: value });
-  };
-
-  const applyTemplate = (template: (typeof SEMANTIC_KNOWLEDGE_TEMPLATES)[number]) => {
-    setEditingDocId(null);
-    setTitle(template.title);
-    setSourceLabel(template.sourceLabel);
-    setTags(template.tags.join(", "));
-    setContent(template.content);
-  };
-
-  const startEditingDoc = (id: string) => {
-    const target = scopedKnowledgeDocs.find(item => item.id === id);
-    if (!target) return;
-    setEditingDocId(id);
-    setTitle(target.title);
-    setSourceLabel(target.sourceLabel);
-    setTags(target.tags.join(", "));
-    setContent(target.content);
   };
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-      <div className="card" style={{ padding: 14 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", flexWrap: "wrap" }}>
-          <div>
-            <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 6 }}>语义记忆总开关</div>
-            <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.7 }}>
-              结构化业务数据继续放在主 store，语义层只负责召回项目记忆、Desk Notes 和知识文档。
+      <div className="card" style={{ padding: 18 }}>
+        <div
+          style={{
+            display: "grid",
+            gap: 12,
+            minHeight: 180,
+            alignContent: "space-between",
+          }}
+        >
+          <div style={{ display: "grid", gap: 8 }}>
+            <div style={{ fontSize: 15, fontWeight: 700, color: "var(--text)" }}>
+              {pickLocaleText(locale, {
+                "zh-CN": "语义记忆由 AI 自动管理",
+                "zh-TW": "語義記憶由 AI 自動管理",
+                en: "Semantic memory is managed automatically by AI",
+                ja: "セマンティック記憶は AI が自動管理します",
+              })}
             </div>
-            <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 8 }}>
-              当前项目范围: {activeSession ? getSessionProjectLabel(activeSession) : "General"}
-            </div>
-          </div>
-
-          <div
-            style={{
-              minWidth: 220,
-              border: `1px solid ${statusTone.border}`,
-              background: statusTone.background,
-              color: statusTone.color,
-              borderRadius: 12,
-              padding: "10px 12px",
-            }}
-          >
-            <div style={{ fontSize: 12, fontWeight: 700 }}>{status.label}</div>
-            <div style={{ fontSize: 11, lineHeight: 1.6, marginTop: 4 }}>{status.detail}</div>
-          </div>
-        </div>
-      </div>
-
-      <div className="card" style={{ padding: 14 }}>
-        <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12 }}>检索 Provider</div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10 }}>
-          {([
-            {
-              id: "local",
-              label: "本地词法检索",
-              copy: "零依赖，适合当前 Electron 单机工作台。",
-            },
-            {
-              id: "pgvector",
-              label: "Pgvector 预备位",
-              copy: "先录入配置，等后端接通后再切真实向量检索。",
-            },
-          ] as const).map(option => {
-            const active = semanticMemoryConfig.providerId === option.id;
-            return (
-              <button
-                key={option.id}
-                type="button"
-                onClick={() => updateSemanticMemoryConfig({ providerId: option.id })}
-                style={{
-                  textAlign: "left",
-                  borderRadius: 12,
-                  border: `1px solid ${active ? "rgba(var(--accent-rgb), 0.35)" : "var(--border)"}`,
-                  background: active ? "rgba(var(--accent-rgb), 0.08)" : "rgba(255,255,255,0.02)",
-                  padding: 12,
-                  cursor: "pointer",
-                  color: "var(--text)",
-                }}
-              >
-                <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 4 }}>{option.label}</div>
-                <div style={{ fontSize: 11, color: "var(--text-muted)", lineHeight: 1.6 }}>{option.copy}</div>
-              </button>
-            );
-          })}
-        </div>
-
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10, marginTop: 14 }}>
-          {([
-            {
-              key: "autoRecallProjectMemories",
-              label: "自动召回项目记忆",
-              copy: "命中项目记忆时，自动把记忆摘要拼进执行上下文。",
-            },
-            {
-              key: "autoRecallDeskNotes",
-              label: "自动召回 Desk Notes",
-              copy: "把最近最相关的 Desk Note 自动带进派发指令。",
-            },
-            {
-              key: "autoRecallKnowledgeDocs",
-              label: "自动召回知识文档",
-              copy: "从知识库里补充 SOP、口径和业务背景。",
-            },
-          ] as const).map(item => {
-            const checked = semanticMemoryConfig[item.key];
-            return (
-              <label
-                key={item.key}
-                style={{
-                  display: "flex",
-                  gap: 10,
-                  alignItems: "flex-start",
-                  borderRadius: 12,
-                  border: "1px solid var(--border)",
-                  background: "rgba(255,255,255,0.02)",
-                  padding: 12,
-                  cursor: "pointer",
-                }}
-              >
-                <input
-                  type="checkbox"
-                  checked={checked}
-                  onChange={event => updateRecallFlag(item.key, event.target.checked)}
-                  style={{ marginTop: 2, accentColor: "var(--accent)" }}
-                />
-                <span style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                  <span style={{ fontSize: 12, fontWeight: 700, color: "var(--text)" }}>{item.label}</span>
-                  <span style={{ fontSize: 11, color: "var(--text-muted)", lineHeight: 1.6 }}>{item.copy}</span>
-                </span>
-              </label>
-            );
-          })}
-        </div>
-      </div>
-
-      <div className="card" style={{ padding: 14 }}>
-        <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12 }}>Pgvector 预配配置</div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10 }}>
-          <label style={semanticFieldStyle}>
-            <span style={labelStyle}>已启用</span>
-            <input
-              type="checkbox"
-              checked={semanticMemoryConfig.pgvector.enabled}
-              onChange={event => updateSemanticMemoryPgvectorConfig({ enabled: event.target.checked })}
-              style={{ alignSelf: "flex-start", accentColor: "var(--accent)" }}
-            />
-          </label>
-          <label style={semanticFieldStyle}>
-            <span style={labelStyle}>Connection String</span>
-            <input
-              className="input"
-              value={semanticMemoryConfig.pgvector.connectionString}
-              onChange={event => updateSemanticMemoryPgvectorConfig({ connectionString: event.target.value })}
-              placeholder="postgres://user:pass@host:5432/db"
-            />
-          </label>
-          <label style={semanticFieldStyle}>
-            <span style={labelStyle}>Schema</span>
-            <input
-              className="input"
-              value={semanticMemoryConfig.pgvector.schema}
-              onChange={event => updateSemanticMemoryPgvectorConfig({ schema: event.target.value })}
-            />
-          </label>
-          <label style={semanticFieldStyle}>
-            <span style={labelStyle}>Table</span>
-            <input
-              className="input"
-              value={semanticMemoryConfig.pgvector.table}
-              onChange={event => updateSemanticMemoryPgvectorConfig({ table: event.target.value })}
-            />
-          </label>
-          <label style={semanticFieldStyle}>
-            <span style={labelStyle}>Embedding Model</span>
-            <input
-              className="input"
-              value={semanticMemoryConfig.pgvector.embeddingModel}
-              onChange={event => updateSemanticMemoryPgvectorConfig({ embeddingModel: event.target.value })}
-            />
-          </label>
-          <label style={semanticFieldStyle}>
-            <span style={labelStyle}>Dimensions</span>
-            <input
-              className="input"
-              type="number"
-              min={1}
-              value={semanticMemoryConfig.pgvector.dimensions}
-              onChange={event => updateSemanticMemoryPgvectorConfig({ dimensions: Number(event.target.value) || 0 })}
-            />
-          </label>
-        </div>
-      </div>
-
-      <div className="card" style={{ padding: 14 }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 12 }}>
-          <div>
-            <div style={{ fontSize: 13, fontWeight: 700 }}>项目知识文档</div>
-            <div style={{ fontSize: 11, color: "var(--text-muted)", lineHeight: 1.6 }}>
-              当前项目下共有 {scopedKnowledgeDocs.length} 份知识文档，可被输入框推荐，也可在执行时自动召回。
+            <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.8, maxWidth: 720 }}>
+              {pickLocaleText(locale, {
+                "zh-CN": "这个模块会在后台自动维护召回策略、项目记忆与知识缓存。正常使用中不需要手动配置；如果语义上下文异常或需要回到初始状态，可执行一次重置。",
+                "zh-TW": "這個模組會在背景自動維護召回策略、專案記憶與知識快取。正常使用中不需要手動設定；如果語義上下文異常或需要回到初始狀態，可執行一次重置。",
+                en: "This module manages recall behavior, project memory, and knowledge cache automatically in the background. Manual tuning is usually unnecessary; use reset only when semantic context becomes noisy or you need a clean baseline.",
+                ja: "このモジュールは想起戦略、プロジェクト記憶、知識キャッシュをバックグラウンドで自動管理します。通常は手動調整不要で、文脈が乱れたときだけリセットします。",
+              })}
             </div>
           </div>
-        </div>
 
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 12 }}>
-          {SEMANTIC_KNOWLEDGE_TEMPLATES.map(template => (
+          <div style={{ display: "flex", justifyContent: "flex-end" }}>
             <button
-              key={template.id}
               type="button"
               className="btn-ghost"
-              style={{ fontSize: 12 }}
-              onClick={() => applyTemplate(template)}
-            >
-              导入模板 · {template.title}
-            </button>
-          ))}
-        </div>
-
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10 }}>
-          <label style={semanticFieldStyle}>
-            <span style={labelStyle}>标题</span>
-            <input className="input" value={title} onChange={event => setTitle(event.target.value)} placeholder="例如：客服退款 SOP" />
-          </label>
-          <label style={semanticFieldStyle}>
-            <span style={labelStyle}>来源标签</span>
-            <input className="input" value={sourceLabel} onChange={event => setSourceLabel(event.target.value)} placeholder="例如：运营手册 / 销售脚本" />
-          </label>
-          <label style={semanticFieldStyle}>
-            <span style={labelStyle}>Tags</span>
-            <input className="input" value={tags} onChange={event => setTags(event.target.value)} placeholder="客服, 退款, SOP" />
-          </label>
-        </div>
-
-        <div style={{ marginTop: 10 }}>
-          <label style={labelStyle}>正文内容</label>
-          <textarea
-            className="input"
-            style={{ minHeight: 140, resize: "vertical", fontFamily: "inherit" }}
-            value={content}
-            onChange={event => setContent(event.target.value)}
-            placeholder="录入可复用的业务口径、流程 SOP、销售脚本、内容规范等。"
-          />
-        </div>
-
-        <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 10 }}>
-          <div style={{ display: "flex", gap: 8 }}>
-            {editingDocId && (
-              <button
-                type="button"
-                className="btn-ghost"
-                style={{ padding: "8px 18px" }}
-                onClick={resetDocForm}
-              >
-                取消编辑
-              </button>
-            )}
-            <button
-              type="button"
-              className="btn-primary"
-              style={{ padding: "8px 18px" }}
-              disabled={!title.trim() || !content.trim()}
-              onClick={handleCreateOrUpdateDoc}
-            >
-              {editingDocId ? "保存修改" : "保存知识文档"}
-            </button>
-          </div>
-        </div>
-
-        <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 14 }}>
-          {scopedKnowledgeDocs.length === 0 && (
-            <div style={{ fontSize: 12, color: "var(--text-muted)", padding: "12px 0" }}>
-              当前项目还没有知识文档，可以先录入客服 SOP、销售话术、内容发布规范等。
-            </div>
-          )}
-
-          {scopedKnowledgeDocs.map(document => (
-            <article
-              key={document.id}
+              onClick={() => void handleReset()}
+              disabled={isResetting}
               style={{
-                borderRadius: 12,
-                border: "1px solid var(--border)",
-                background: "rgba(255,255,255,0.03)",
-                padding: 12,
+                minWidth: 140,
+                fontSize: 12,
+                padding: "8px 18px",
+                color: "var(--danger)",
+                borderColor: "rgba(var(--danger-rgb), 0.24)",
               }}
             >
-              <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start" }}>
-                <div style={{ minWidth: 0 }}>
-                  <div style={{ fontSize: 13, fontWeight: 700 }}>{document.title}</div>
-                  <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>
-                    {document.sourceLabel}
-                    {document.tags.length > 0 ? ` · ${document.tags.join("、")}` : ""}
-                  </div>
-                </div>
-                <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
-                  <button
-                    type="button"
-                    className="btn-ghost"
-                    style={{ fontSize: 12 }}
-                    onClick={() => startEditingDoc(document.id)}
-                  >
-                    编辑
-                  </button>
-                  <button
-                    type="button"
-                    className="btn-ghost"
-                    style={{ fontSize: 12 }}
-                    onClick={() => appendCommandDraft(buildKnowledgeDocumentSnippet(document))}
-                  >
-                    注入输入框
-                  </button>
-                  <button
-                    type="button"
-                    className="btn-ghost"
-                    style={{ fontSize: 12, color: "var(--danger)", borderColor: "rgba(var(--danger-rgb), 0.24)" }}
-                    onClick={() => deleteSemanticKnowledgeDoc(document.id)}
-                  >
-                    删除
-                  </button>
-                </div>
-              </div>
-
-              <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.7, marginTop: 10, whiteSpace: "pre-wrap" }}>
-                {document.content.length > 260 ? `${document.content.slice(0, 260).trim()}...` : document.content}
-              </div>
-            </article>
-          ))}
+              {isResetting
+                ? pickLocaleText(locale, {
+                    "zh-CN": "重置中...",
+                    "zh-TW": "重置中...",
+                    en: "Resetting...",
+                    ja: "リセット中...",
+                  })
+                : pickLocaleText(locale, {
+                    "zh-CN": "重置语义记忆",
+                    "zh-TW": "重置語義記憶",
+                    en: "Reset Semantic Memory",
+                    ja: "セマンティック記憶をリセット",
+                  })}
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -1372,340 +837,9 @@ function ProvidersSection() {
 }
 
 function DesktopProgramsSection() {
-  const {
-    desktopProgramSettings,
-    updateDesktopProgramSettings,
-    saveDesktopFavorite,
-    removeDesktopFavorite,
-    saveDesktopWhitelistEntry,
-    removeDesktopWhitelistEntry,
-  } = useStore();
-  const [label, setLabel] = useState("");
-  const [target, setTarget] = useState("");
-  const [argsText, setArgsText] = useState("");
-  const [cwd, setCwd] = useState("");
-  const [note, setNote] = useState("");
-
-  const parseArgs = () =>
-    argsText
-      .split(/\r?\n/)
-      .map(item => item.trim())
-      .filter(Boolean);
-
-  const buildPayload = (): Pick<DesktopProgramEntry, "label" | "target" | "args" | "cwd" | "notes" | "source"> | null => {
-    const nextTarget = target.trim();
-    if (!nextTarget) return null;
-
-    return {
-      label: label.trim() || nextTarget,
-      target: nextTarget,
-      args: parseArgs(),
-      cwd: cwd.trim(),
-      notes: note.trim(),
-      source: "manual",
-    };
-  };
-
-  const resetForm = () => {
-    setLabel("");
-    setTarget("");
-    setArgsText("");
-    setCwd("");
-    setNote("");
-  };
-
-  const addFavorite = () => {
-    const payload = buildPayload();
-    if (!payload) return;
-    saveDesktopFavorite(payload);
-    void syncToServer();
-    resetForm();
-  };
-
-  const addWhitelist = () => {
-    const payload = buildPayload();
-    if (!payload) return;
-    saveDesktopWhitelistEntry(payload);
-    void syncToServer();
-    resetForm();
-  };
-
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-      <div className="card" style={{ padding: 14 }}>
-        <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 6 }}>本机程序调用策略</div>
-        <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.7 }}>
-          这里控制 Electron 桌面运行态是否允许启动本机程序，以及是否允许 agent 接管鼠标键盘处理桌面端纯 UI 任务。
-        </div>
-        <div style={{ marginTop: 12 }}>
-          <DesktopRuntimeBadge showDetail />
-        </div>
-
-        <div style={{ display: "grid", gap: 10, marginTop: 14 }}>
-          <label style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
-            <div>
-              <div style={{ fontSize: 13, fontWeight: 600 }}>启用本机程序调用</div>
-              <div style={{ fontSize: 11, color: "var(--text-muted)", lineHeight: 1.7 }}>
-                关闭后，聊天和控制台都无法启动微信、飞书、Chrome、VS Code 等本机程序。
-              </div>
-            </div>
-            <input
-              type="checkbox"
-              checked={desktopProgramSettings.enabled}
-              onChange={event => {
-                updateDesktopProgramSettings({ enabled: event.target.checked });
-                void syncToServer();
-              }}
-            />
-          </label>
-
-          <label style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
-            <div>
-              <div style={{ fontSize: 13, fontWeight: 600 }}>白名单模式</div>
-              <div style={{ fontSize: 11, color: "var(--text-muted)", lineHeight: 1.7 }}>
-                开启后，只允许启动白名单中登记的程序；关闭后，可以启动本机任意程序。
-              </div>
-            </div>
-            <input
-              type="checkbox"
-              checked={desktopProgramSettings.whitelistMode}
-              onChange={event => {
-                updateDesktopProgramSettings({ whitelistMode: event.target.checked });
-                void syncToServer();
-              }}
-            />
-          </label>
-
-          <label style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
-            <div>
-              <div style={{ fontSize: 13, fontWeight: 600 }}>启用鼠标键盘接管</div>
-              <div style={{ fontSize: 11, color: "var(--text-muted)", lineHeight: 1.7 }}>
-                开启后，agent 在桌面端应用、系统弹窗或无法通过代码完成的交互里，可以请求鼠标和键盘接管。
-              </div>
-            </div>
-            <input
-              type="checkbox"
-              checked={desktopProgramSettings.inputControl.enabled}
-              onChange={event => {
-                updateDesktopProgramSettings({
-                  inputControl: {
-                    ...desktopProgramSettings.inputControl,
-                    enabled: event.target.checked,
-                  },
-                });
-                void syncToServer();
-              }}
-            />
-          </label>
-
-          <label style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
-            <div>
-              <div style={{ fontSize: 13, fontWeight: 600 }}>agent 动作时自动切到桌面面板</div>
-              <div style={{ fontSize: 11, color: "var(--text-muted)", lineHeight: 1.7 }}>
-                当桌面输入接管发生时，自动切到桌面控制台，方便你观察和接管。
-              </div>
-            </div>
-            <input
-              type="checkbox"
-              checked={desktopProgramSettings.inputControl.autoOpenPanelOnAction}
-              onChange={event => {
-                updateDesktopProgramSettings({
-                  inputControl: {
-                    ...desktopProgramSettings.inputControl,
-                    autoOpenPanelOnAction: event.target.checked,
-                  },
-                });
-                void syncToServer();
-              }}
-            />
-          </label>
-
-          <label style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
-            <div>
-              <div style={{ fontSize: 13, fontWeight: 600 }}>验证码 / 验证场景强制人工接管</div>
-              <div style={{ fontSize: 11, color: "var(--text-muted)", lineHeight: 1.7 }}>
-                检测到验证码、OTP、2FA 或人机验证时，不自动执行输入动作，直接切到人工接管状态。
-              </div>
-            </div>
-            <input
-              type="checkbox"
-              checked={desktopProgramSettings.inputControl.requireManualTakeoverForVerification}
-              onChange={event => {
-                updateDesktopProgramSettings({
-                  inputControl: {
-                    ...desktopProgramSettings.inputControl,
-                    requireManualTakeoverForVerification: event.target.checked,
-                  },
-                });
-                void syncToServer();
-              }}
-            />
-          </label>
-        </div>
-
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 12 }}>
-          <span className="badge badge-orchestrator">
-            本机程序: {desktopProgramSettings.enabled ? "已启用" : "已关闭"}
-          </span>
-          <span className="badge badge-explorer">
-            白名单模式: {desktopProgramSettings.whitelistMode ? "开启" : "关闭"}
-          </span>
-          <span className="badge badge-greeter">
-            收藏预设 {desktopProgramSettings.favorites.length}
-          </span>
-          <span className="badge badge-writer">
-            白名单 {desktopProgramSettings.whitelist.length}
-          </span>
-          <span className="badge badge-performer">
-            输入接管 {desktopProgramSettings.inputControl.enabled ? "已启用" : "已关闭"}
-          </span>
-        </div>
-      </div>
-
-      <DesktopRuntimeDiagnosticsCard />
-
-      <div className="card" style={{ padding: 14 }}>
-        <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 6 }}>手动添加预设 / 白名单</div>
-        <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.7 }}>
-          可以手动录入程序名、可执行路径或系统命令。扫描页里加入的程序也会同步显示在这里。
-        </div>
-
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10, marginTop: 12 }}>
-          <label style={semanticFieldStyle}>
-            <span style={labelStyle}>显示名称</span>
-            <input className="input" value={label} onChange={event => setLabel(event.target.value)} placeholder="例如：微信主程序" />
-          </label>
-          <label style={semanticFieldStyle}>
-            <span style={labelStyle}>程序路径 / 命令</span>
-            <input className="input" value={target} onChange={event => setTarget(event.target.value)} placeholder="例如：WeChat.exe" />
-          </label>
-          <label style={semanticFieldStyle}>
-            <span style={labelStyle}>工作目录</span>
-            <input className="input" value={cwd} onChange={event => setCwd(event.target.value)} placeholder="可选" />
-          </label>
-        </div>
-
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 10 }}>
-          <label style={semanticFieldStyle}>
-            <span style={labelStyle}>启动参数</span>
-            <textarea
-              className="input"
-              style={{ minHeight: 100, resize: "vertical", fontFamily: "inherit" }}
-              value={argsText}
-              onChange={event => setArgsText(event.target.value)}
-              placeholder="每行一个参数"
-            />
-          </label>
-          <label style={semanticFieldStyle}>
-            <span style={labelStyle}>备注</span>
-            <textarea
-              className="input"
-              style={{ minHeight: 100, resize: "vertical", fontFamily: "inherit" }}
-              value={note}
-              onChange={event => setNote(event.target.value)}
-              placeholder="例如：客服值守使用"
-            />
-          </label>
-        </div>
-
-        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 12 }}>
-          <button type="button" className="btn-ghost" onClick={resetForm}>
-            清空
-          </button>
-          <button type="button" className="btn-ghost" disabled={!target.trim()} onClick={addFavorite}>
-            加入收藏预设
-          </button>
-          <button type="button" className="btn-primary" disabled={!target.trim()} onClick={addWhitelist}>
-            加入白名单
-          </button>
-        </div>
-      </div>
-
-      <DesktopProgramListCard
-        title="收藏预设"
-        copy="这些项目会直接出现在桌面程序面板的快捷区。"
-        items={desktopProgramSettings.favorites}
-        emptyText="还没有收藏预设。"
-        removeLabel="移除预设"
-        onRemove={id => {
-          removeDesktopFavorite(id);
-          void syncToServer();
-        }}
-      />
-
-      <DesktopProgramListCard
-        title="白名单"
-        copy="白名单模式开启后，只有这些程序允许被 agent 或手动面板启动。"
-        items={desktopProgramSettings.whitelist}
-        emptyText="白名单还是空的。"
-        removeLabel="移除白名单"
-        onRemove={id => {
-          removeDesktopWhitelistEntry(id);
-          void syncToServer();
-        }}
-      />
-    </div>
-  );
-}
-
-function DesktopProgramListCard({
-  title,
-  copy,
-  items,
-  emptyText,
-  removeLabel,
-  onRemove,
-}: {
-  title: string;
-  copy: string;
-  items: DesktopProgramEntry[];
-  emptyText: string;
-  removeLabel: string;
-  onRemove: (id: string) => void;
-}) {
-  return (
-    <div className="card" style={{ padding: 14 }}>
-      <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 6 }}>{title}</div>
-      <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.7 }}>{copy}</div>
-
-      <div style={{ display: "grid", gap: 10, marginTop: 12 }}>
-        {items.length === 0 ? (
-          <div style={{ fontSize: 12, color: "var(--text-muted)" }}>{emptyText}</div>
-        ) : (
-          items.map(item => (
-            <article
-              key={item.id}
-              style={{
-                borderRadius: 12,
-                border: "1px solid var(--border)",
-                background: "rgba(255,255,255,0.03)",
-                padding: 12,
-                display: "grid",
-                gap: 8,
-              }}
-            >
-              <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start" }}>
-                <div style={{ minWidth: 0 }}>
-                  <div style={{ fontSize: 13, fontWeight: 700 }}>{item.label}</div>
-                  <div style={{ fontSize: 11, color: "var(--text-muted)", lineHeight: 1.7, wordBreak: "break-all" }}>
-                    {item.target}
-                  </div>
-                </div>
-                <button type="button" className="btn-ghost" style={{ fontSize: 12 }} onClick={() => onRemove(item.id)}>
-                  {removeLabel}
-                </button>
-              </div>
-              {(item.args.length > 0 || item.cwd || item.notes) && (
-                <div style={{ fontSize: 11, color: "var(--text-muted)", lineHeight: 1.7, whiteSpace: "pre-wrap" }}>
-                  {item.args.length > 0 ? `参数: ${item.args.join(" ")}` : ""}
-                  {item.cwd ? `${item.args.length > 0 ? "\n" : ""}目录: ${item.cwd}` : ""}
-                  {item.notes ? `${item.args.length > 0 || item.cwd ? "\n" : ""}备注: ${item.notes}` : ""}
-                </div>
-              )}
-            </article>
-          ))
-        )}
-      </div>
+    <div style={{ height: "100%", minHeight: 0 }}>
+      <NativeAppsCenter />
     </div>
   );
 }
@@ -1985,8 +1119,3 @@ const labelStyle: CSSProperties = {
   letterSpacing: "0.05em",
 };
 
-const semanticFieldStyle: CSSProperties = {
-  display: "flex",
-  flexDirection: "column",
-  gap: 4,
-};

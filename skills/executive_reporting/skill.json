@@ -1,0 +1,45 @@
+{
+  "id": "executive_reporting",
+  "order": 300,
+  "category": "documents",
+  "sourceType": "local",
+  "sourceLabel": "Local Product Skill",
+  "accent": "#7c3aed",
+  "icon": "slides",
+  "recommendedAgents": ["writer", "performer", "orchestrator"],
+  "tags": ["report", "summary", "management", "dashboard"],
+  "locales": {
+    "zh-CN": {
+      "name": "经营汇报",
+      "short": "阶段进展、问题、风险与下一步汇总。",
+      "description": "用于把客服、销售、内容、交付等运行结果整理成管理层可快速阅读的经营汇报和阶段摘要。",
+      "dispatch": "当任务涉及周报、阶段汇报、经营摘要、进展同步或管理层视角总结时自动命中。",
+      "typicalTasks": "周报、月报、阶段经营摘要、管理层同步材料。",
+      "outputs": "经营摘要、关键指标、风险事项和下一步计划。"
+    },
+    "zh-TW": {
+      "name": "經營彙報",
+      "short": "階段進展、問題、風險與下一步彙總。",
+      "description": "用於把客服、銷售、內容、交付等運行結果整理成管理層可快速閱讀的經營彙報與階段摘要。",
+      "dispatch": "當任務涉及週報、階段彙報、經營摘要、進展同步或管理層視角總結時自動命中。",
+      "typicalTasks": "週報、月報、階段經營摘要、管理層同步材料。",
+      "outputs": "經營摘要、關鍵指標、風險事項與下一步計畫。"
+    },
+    "en": {
+      "name": "Executive Reporting",
+      "short": "Summarize progress, issues, risks, and next moves.",
+      "description": "Turns operational outcomes across support, sales, content, and delivery into management-friendly reports and milestone summaries.",
+      "dispatch": "Auto-selected for weekly reports, milestone updates, management summaries, progress syncs, or executive-facing recaps.",
+      "typicalTasks": "Weekly updates, monthly summaries, operating recaps, and leadership sync material.",
+      "outputs": "Executive summaries, key metrics, risk notes, and next-step plans."
+    },
+    "ja": {
+      "name": "経営レポート",
+      "short": "進捗、課題、リスク、次アクションを整理。",
+      "description": "客服、営業、コンテンツ、納品の運用結果を、管理層がすぐ読める経営サマリーと段階報告へ変換します。",
+      "dispatch": "週報、段階報告、経営要約、進捗共有、管理者向け総括が必要なとき自動で使われます。",
+      "typicalTasks": "週報、月報、運営要約、マネジメント共有資料。",
+      "outputs": "経営要約、主要指標、リスク項目、次の計画。"
+    }
+  }
+}

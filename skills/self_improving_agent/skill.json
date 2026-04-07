@@ -1,0 +1,46 @@
+{
+  "id": "self_improving_agent",
+  "order": 130,
+  "category": "governance",
+  "sourceType": "clawhub",
+  "sourceLabel": "ClawHub · self-improving-agent",
+  "sourceUrl": "https://clawhub.ai/skills?sort=downloads&nonSuspicious=true",
+  "accent": "#ec4899",
+  "icon": "spark",
+  "recommendedAgents": ["orchestrator", "explorer", "greeter"],
+  "tags": ["improvement", "reflection", "memory", "quality"],
+  "locales": {
+    "zh-CN": {
+      "name": "自我改进",
+      "short": "记录错误、修正与长期改进。",
+      "description": "把失败案例、用户纠正、流程偏差和经验沉淀成可复用的改进记忆，让数字员工越跑越稳。",
+      "dispatch": "当任务涉及复盘、纠错、失败恢复、质量提升或经验沉淀时自动命中。",
+      "typicalTasks": "记录失败原因、沉淀修复经验、更新操作注意事项、形成长期改进项。",
+      "outputs": "改进记录、复盘摘要、注意事项和后续优化建议。"
+    },
+    "zh-TW": {
+      "name": "自我改進",
+      "short": "記錄錯誤、修正與長期改進。",
+      "description": "把失敗案例、使用者修正、流程偏差與經驗沉澱成可重用的改進記憶，讓數位員工越跑越穩。",
+      "dispatch": "當任務涉及復盤、糾錯、失敗恢復、品質提升或經驗沉澱時自動命中。",
+      "typicalTasks": "記錄失敗原因、沉澱修復經驗、更新操作注意事項、形成長期改進項。",
+      "outputs": "改進記錄、復盤摘要、注意事項與後續優化建議。"
+    },
+    "en": {
+      "name": "Self Improvement",
+      "short": "Capture errors, corrections, and durable improvements.",
+      "description": "Turns failures, user corrections, and workflow drift into reusable improvement memory so the digital workforce becomes more stable over time.",
+      "dispatch": "Auto-selected when the task is about retrospection, error correction, recovery, quality uplift, or operational learning.",
+      "typicalTasks": "Record failure causes, capture repair lessons, update runbook notes, and define improvement actions.",
+      "outputs": "Improvement logs, recap summaries, caution notes, and follow-up optimization suggestions."
+    },
+    "ja": {
+      "name": "自己改善",
+      "short": "失敗、修正、長期改善を記録。",
+      "description": "失敗事例、ユーザー修正、運用のズレを改善記憶として蓄積し、デジタル社員の安定性を高めます。",
+      "dispatch": "振り返り、修正、失敗復旧、品質向上、運用学習が必要なとき自動で使われます。",
+      "typicalTasks": "失敗原因の記録、修復知見の蓄積、注意事項の更新、改善項目の整理。",
+      "outputs": "改善ログ、振り返り要約、注意メモ、次の最適化提案。"
+    }
+  }
+}

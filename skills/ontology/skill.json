@@ -1,0 +1,46 @@
+{
+  "id": "ontology",
+  "order": 90,
+  "category": "governance",
+  "sourceType": "clawhub",
+  "sourceLabel": "ClawHub · ontology",
+  "sourceUrl": "https://clawhub.ai/skills?sort=downloads&nonSuspicious=true",
+  "accent": "#0ea5e9",
+  "icon": "graph",
+  "recommendedAgents": ["orchestrator", "explorer"],
+  "tags": ["knowledge graph", "memory", "entity", "ontology"],
+  "locales": {
+    "zh-CN": {
+      "name": "业务本体",
+      "short": "结构化业务实体与关系记忆。",
+      "description": "把客户、线索、工单、内容任务、渠道会话等实体和关系整理成可追踪、可查询的知识结构。",
+      "dispatch": "当任务涉及实体建模、跨对象关联、长期记忆或业务关系追踪时自动命中。",
+      "typicalTasks": "客户关系建模、线索到工单映射、会话与任务关联、知识图谱沉淀。",
+      "outputs": "结构化实体关系、记忆约束、可查询的数据骨架。"
+    },
+    "zh-TW": {
+      "name": "業務本體",
+      "short": "結構化業務實體與關係記憶。",
+      "description": "把客戶、線索、工單、內容任務、渠道會話等實體與關係整理成可追蹤、可查詢的知識結構。",
+      "dispatch": "當任務涉及實體建模、跨物件關聯、長期記憶或業務關係追蹤時自動命中。",
+      "typicalTasks": "客戶關係建模、線索到工單對映、會話與任務關聯、知識圖譜沉澱。",
+      "outputs": "結構化實體關係、記憶約束與可查詢的資料骨架。"
+    },
+    "en": {
+      "name": "Ontology Memory",
+      "short": "Structured entities and relationship memory.",
+      "description": "Organizes customers, leads, tickets, content tasks, and channel sessions into a structured graph of business entities and relationships.",
+      "dispatch": "Auto-selected when the task needs entity modeling, long-term structured memory, or cross-object relationship tracking.",
+      "typicalTasks": "Customer relationship modeling, lead-to-ticket mapping, session-to-task linking, and business memory design.",
+      "outputs": "Structured entity maps, memory constraints, and queryable relationship scaffolds."
+    },
+    "ja": {
+      "name": "業務オントロジー",
+      "short": "構造化された業務エンティティ記憶。",
+      "description": "顧客、リード、チケット、コンテンツタスク、チャネル会話を関係付きの知識構造として整理します。",
+      "dispatch": "エンティティ設計、長期記憶、関係追跡、跨ぎ参照が必要なとき自動で使われます。",
+      "typicalTasks": "顧客関係モデル、リードとチケットの関連付け、会話とタスクの紐付け、知識構造設計。",
+      "outputs": "構造化エンティティ関係、記憶ルール、検索可能なデータ骨格。"
+    }
+  }
+}

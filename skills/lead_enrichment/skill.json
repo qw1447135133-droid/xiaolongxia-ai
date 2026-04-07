@@ -1,0 +1,45 @@
+{
+  "id": "lead_enrichment",
+  "order": 270,
+  "category": "sales",
+  "sourceType": "local",
+  "sourceLabel": "Local Product Skill",
+  "accent": "#0ea5e9",
+  "icon": "search",
+  "recommendedAgents": ["explorer", "greeter", "orchestrator"],
+  "tags": ["lead", "research", "crm", "enrichment"],
+  "locales": {
+    "zh-CN": {
+      "name": "线索补全",
+      "short": "补齐客户背景、需求线索与跟进依据。",
+      "description": "用于收集客户背景、公司信息、公开动态和需求线索，帮助销售或客服更精准地推进下一步动作。",
+      "dispatch": "当任务涉及线索背景调查、客户画像、补全跟进依据或触达前准备时自动命中。",
+      "typicalTasks": "客户背景补充、公司信息梳理、触达前准备、线索字段补全。",
+      "outputs": "客户画像、补全字段、跟进依据和触达建议。"
+    },
+    "zh-TW": {
+      "name": "線索補全",
+      "short": "補齊客戶背景、需求線索與跟進依據。",
+      "description": "用於收集客戶背景、公司資訊、公開動態與需求線索，幫助銷售或客服更精準地推進下一步動作。",
+      "dispatch": "當任務涉及線索背景調查、客戶畫像、補全跟進依據或觸達前準備時自動命中。",
+      "typicalTasks": "客戶背景補充、公司資訊整理、觸達前準備、線索欄位補全。",
+      "outputs": "客戶畫像、補全欄位、跟進依據與觸達建議。"
+    },
+    "en": {
+      "name": "Lead Enrichment",
+      "short": "Complete customer context, intent clues, and outreach basis.",
+      "description": "Collects company context, public signals, and customer hints so sales or support can make better next-step decisions.",
+      "dispatch": "Auto-selected when the task needs lead background research, account profiling, pre-outreach prep, or missing CRM field completion.",
+      "typicalTasks": "Customer background collection, company summaries, outreach prep, and field completion.",
+      "outputs": "Lead profiles, filled fields, outreach rationale, and next-step suggestions."
+    },
+    "ja": {
+      "name": "リード補完",
+      "short": "顧客背景、需要兆候、追客根拠を補う。",
+      "description": "企業情報、公開シグナル、顧客手がかりを集め、営業や客服が次アクションを判断しやすくします。",
+      "dispatch": "リード背景調査、顧客プロファイル、事前接触準備、CRM 欠損補完が必要なとき自動で使われます。",
+      "typicalTasks": "顧客背景収集、企業要約、接触前準備、項目補完。",
+      "outputs": "リードプロファイル、補完項目、接触根拠、次アクション提案。"
+    }
+  }
+}

@@ -1,0 +1,45 @@
+{
+  "id": "incident_response",
+  "order": 320,
+  "category": "service",
+  "sourceType": "local",
+  "sourceLabel": "Local Product Skill",
+  "accent": "#dc2626",
+  "icon": "shield",
+  "recommendedAgents": ["orchestrator", "explorer", "greeter"],
+  "tags": ["incident", "alert", "failure", "response"],
+  "locales": {
+    "zh-CN": {
+      "name": "异常响应",
+      "short": "告警判断、应对步骤与恢复沟通。",
+      "description": "用于接住运行异常、失败告警、服务中断和高风险问题，并整理应对步骤与恢复沟通口径。",
+      "dispatch": "当任务涉及异常告警、运行失败、服务中断、风险升级或恢复沟通时自动命中。",
+      "typicalTasks": "异常分级、恢复步骤、对外说明、事后记录。",
+      "outputs": "告警摘要、应对动作、恢复话术和事件记录。"
+    },
+    "zh-TW": {
+      "name": "異常響應",
+      "short": "告警判斷、應對步驟與恢復溝通。",
+      "description": "用於接住運行異常、失敗告警、服務中斷與高風險問題，並整理應對步驟與恢復溝通口徑。",
+      "dispatch": "當任務涉及異常告警、運行失敗、服務中斷、風險升級或恢復溝通時自動命中。",
+      "typicalTasks": "異常分級、恢復步驟、對外說明、事後記錄。",
+      "outputs": "告警摘要、應對動作、恢復話術與事件記錄。"
+    },
+    "en": {
+      "name": "Incident Response",
+      "short": "Alert judgment, response steps, and recovery communication.",
+      "description": "Handles runtime alerts, failures, outages, and high-risk problems by organizing response steps and recovery messaging.",
+      "dispatch": "Auto-selected for alerts, failures, outages, escalation situations, or recovery communication work.",
+      "typicalTasks": "Severity triage, recovery steps, stakeholder messaging, and incident notes.",
+      "outputs": "Alert summaries, response actions, recovery messaging, and incident records."
+    },
+    "ja": {
+      "name": "障害対応",
+      "short": "アラート判断、対応手順、復旧連絡。",
+      "description": "実行異常、失敗通知、停止、高リスク問題を受け止め、対応手順と復旧連絡の整理を行います。",
+      "dispatch": "アラート、失敗、停止、リスク昇格、復旧連絡が必要なとき自動で使われます。",
+      "typicalTasks": "深刻度判断、復旧手順、対外説明、障害記録。",
+      "outputs": "アラート要約、対応アクション、復旧文面、障害記録。"
+    }
+  }
+}

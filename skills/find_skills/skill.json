@@ -1,0 +1,45 @@
+{
+  "id": "find_skills",
+  "order": 70,
+  "category": "ops",
+  "sourceType": "local",
+  "sourceLabel": "Session Skill · Find Skills",
+  "accent": "#60a5fa",
+  "icon": "search",
+  "recommendedAgents": ["orchestrator", "explorer"],
+  "tags": ["skills", "search", "market", "discovery"],
+  "locales": {
+    "zh-CN": {
+      "name": "技能搜索",
+      "short": "搜索市场中可安装的技能。",
+      "description": "用于判断是否已有现成 skill 可复用，并把适合当前业务的能力引入到本地技能目录。",
+      "dispatch": "当任务涉及扩展能力、寻找现成工作流、补齐新能力时自动命中。",
+      "typicalTasks": "搜索渠道接入 skill、搜索文档 skill、搜索浏览器自动化 skill。",
+      "outputs": "候选 skill 清单、安装建议和来源记录。"
+    },
+    "zh-TW": {
+      "name": "技能搜尋",
+      "short": "搜尋市場中可安裝的技能。",
+      "description": "用於判斷是否已有現成 skill 可重用，並把適合當前業務的能力引入本地技能目錄。",
+      "dispatch": "當任務涉及擴展能力、尋找現成工作流、補齊新能力時自動命中。",
+      "typicalTasks": "搜尋渠道接入 skill、搜尋文件 skill、搜尋瀏覽器自動化 skill。",
+      "outputs": "候選 skill 清單、安裝建議與來源記錄。"
+    },
+    "en": {
+      "name": "Skill Finder",
+      "short": "Search the market for installable skills.",
+      "description": "Used to discover reusable skills from the market and route suitable capabilities into the local skill directory.",
+      "dispatch": "Auto-selected when the task is about extending capability coverage, finding reusable workflows, or adding new skills.",
+      "typicalTasks": "Search channel connector skills, documentation skills, or browser automation skills.",
+      "outputs": "Candidate skill lists, install suggestions, and source notes."
+    },
+    "ja": {
+      "name": "スキル検索",
+      "short": "市場のインストール可能スキルを検索。",
+      "description": "再利用できる skill を市場から探し、現在の業務に合う能力をローカル技能ディレクトリへ取り込むために使います。",
+      "dispatch": "能力拡張、既成ワークフロー探索、新スキル追加が必要なとき自動で使われます。",
+      "typicalTasks": "チャネル接続 skill、文書 skill、ブラウザ自動化 skill の探索。",
+      "outputs": "候補 skill 一覧、導入提案、出典メモ。"
+    }
+  }
+}

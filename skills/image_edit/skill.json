@@ -1,0 +1,45 @@
+{
+  "id": "image_edit",
+  "order": 60,
+  "category": "visual",
+  "sourceType": "built-in",
+  "sourceLabel": "Built-in Skill",
+  "accent": "#14b8a6",
+  "icon": "image",
+  "recommendedAgents": ["designer", "writer"],
+  "tags": ["image", "asset", "annotation", "creative"],
+  "locales": {
+    "zh-CN": {
+      "name": "图片修改",
+      "short": "裁剪、标注、替换与素材优化。",
+      "description": "用于现有图片的裁剪、替换、注释和轻量视觉修补，适合运营素材与界面说明。",
+      "dispatch": "当任务涉及素材修整、图片替换、说明标注或轻量设计改动时自动命中。",
+      "typicalTasks": "封面修图、界面标注、营销素材修补、说明图补充。",
+      "outputs": "修订图片、标注版素材和图片修改说明。"
+    },
+    "zh-TW": {
+      "name": "圖片修改",
+      "short": "裁切、標註、替換與素材優化。",
+      "description": "用於現有圖片的裁切、替換、註解與輕量視覺修補，適合營運素材與介面說明。",
+      "dispatch": "當任務涉及素材修整、圖片替換、說明標註或輕量設計改動時自動命中。",
+      "typicalTasks": "封面修圖、介面標註、行銷素材修補、說明圖補充。",
+      "outputs": "修訂圖片、標註版素材與圖片修改說明。"
+    },
+    "en": {
+      "name": "Image Editing",
+      "short": "Crop, annotate, replace, and refine assets.",
+      "description": "Used for lightweight image edits, annotations, asset replacement, and visual cleanups for operations or UI explanation.",
+      "dispatch": "Auto-selected when the task needs asset touch-ups, image replacement, annotation, or light design fixes.",
+      "typicalTasks": "Cover edits, UI annotations, campaign asset patches, and explainer visuals.",
+      "outputs": "Revised images, annotated assets, and change notes."
+    },
+    "ja": {
+      "name": "画像編集",
+      "short": "切り抜き、注釈、差し替え、素材調整。",
+      "description": "既存画像の軽微な修正、注釈、差し替え、運用素材の見た目調整に使います。",
+      "dispatch": "素材修整、画像差し替え、注釈追加、軽いデザイン修正が必要なとき自動で使われます。",
+      "typicalTasks": "カバー修正、画面注釈、販促素材補修、説明画像の追加。",
+      "outputs": "修正版画像、注釈素材、変更説明。"
+    }
+  }
+}

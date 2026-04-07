@@ -220,8 +220,8 @@ export function ArtifactsCenter() {
           <button type="button" className="btn-ghost" onClick={() => openControlSection("execution")}>
             查看执行面板
           </button>
-          <button type="button" className="btn-ghost" onClick={() => openControlSection("workspace")}>
-            打开工作区面板
+          <button type="button" className="btn-ghost" onClick={() => setTab("tasks")}>
+            回到聊天继续处理
           </button>
         </div>
       </div>

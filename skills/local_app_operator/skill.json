@@ -1,0 +1,45 @@
+{
+  "id": "local_app_operator",
+  "order": 220,
+  "category": "automation",
+  "sourceType": "local",
+  "sourceLabel": "Local Product Skill",
+  "accent": "#14b8a6",
+  "icon": "app-window",
+  "recommendedAgents": ["explorer", "orchestrator", "greeter"],
+  "tags": ["desktop", "app", "launcher", "whitelist"],
+  "locales": {
+    "zh-CN": {
+      "name": "本机程序操作",
+      "short": "扫描、白名单、收藏与程序调用。",
+      "description": "用于管理本机程序扫描结果、白名单策略、收藏应用和桌面任务所需的程序调用入口。",
+      "dispatch": "当任务涉及本机程序搜索、白名单判断、程序路径选择或启动目标应用时自动命中。",
+      "typicalTasks": "搜索程序、加入白名单、选择程序路径、启动指定应用。",
+      "outputs": "程序候选、白名单变更、调用目标和操作记录。"
+    },
+    "zh-TW": {
+      "name": "本機程式操作",
+      "short": "掃描、白名單、收藏與程式呼叫。",
+      "description": "用於管理本機程式掃描結果、白名單策略、收藏應用與桌面任務所需的程式呼叫入口。",
+      "dispatch": "當任務涉及本機程式搜尋、白名單判斷、程式路徑選擇或啟動目標應用時自動命中。",
+      "typicalTasks": "搜尋程式、加入白名單、選擇程式路徑、啟動指定應用。",
+      "outputs": "程式候選、白名單變更、呼叫目標與操作記錄。"
+    },
+    "en": {
+      "name": "Local App Operator",
+      "short": "Scan, whitelist, favorite, and launch local programs.",
+      "description": "Manages installed app discovery, whitelist policy, favorite presets, and local program launch entry points for desktop tasks.",
+      "dispatch": "Auto-selected for local app search, whitelist checks, path picking, or launching a target desktop application.",
+      "typicalTasks": "Search programs, add to whitelist, choose executable paths, and launch selected apps.",
+      "outputs": "Program candidates, whitelist updates, launch targets, and action logs."
+    },
+    "ja": {
+      "name": "ローカルアプリ操作",
+      "short": "スキャン、許可一覧、お気に入り、起動。",
+      "description": "インストール済みアプリ検出、ホワイトリスト方針、お気に入り登録、デスクトップ作業向け起動入口を管理します。",
+      "dispatch": "ローカルアプリ検索、許可判断、パス選択、対象アプリ起動が必要なとき自動で使われます。",
+      "typicalTasks": "アプリ検索、許可一覧追加、実行パス選択、指定アプリ起動。",
+      "outputs": "候補アプリ、許可一覧更新、起動対象、操作ログ。"
+    }
+  }
+}

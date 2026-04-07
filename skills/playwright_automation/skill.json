@@ -1,0 +1,46 @@
+{
+  "id": "playwright_automation",
+  "order": 110,
+  "category": "automation",
+  "sourceType": "clawhub",
+  "sourceLabel": "ClawHub · Playwright (Automation + MCP + Scraper)",
+  "sourceUrl": "https://clawhub.ai/skills?sort=downloads&nonSuspicious=true",
+  "accent": "#f59e0b",
+  "icon": "browser",
+  "recommendedAgents": ["explorer", "greeter", "orchestrator"],
+  "tags": ["browser", "playwright", "automation", "scraping"],
+  "locales": {
+    "zh-CN": {
+      "name": "浏览器自动化",
+      "short": "网页点击、表单、抓取与真实浏览器流程。",
+      "description": "用于在真实浏览器中完成点击、输入、抓取、截图和网页流程验证，适合客服、销售和内容运营场景。",
+      "dispatch": "当任务涉及网页操作、表单填写、站点抓取、流程复现或在线调研时自动命中。",
+      "typicalTasks": "网页登录、表单录入、网页搜索、后台录入、页面验证。",
+      "outputs": "浏览器操作记录、页面数据、截图证据和流程结果。"
+    },
+    "zh-TW": {
+      "name": "瀏覽器自動化",
+      "short": "網頁點擊、表單、抓取與真實瀏覽器流程。",
+      "description": "用於在真實瀏覽器中完成點擊、輸入、抓取、截圖與網頁流程驗證，適合客服、銷售與內容營運場景。",
+      "dispatch": "當任務涉及網頁操作、表單填寫、站點抓取、流程重現或在線調研時自動命中。",
+      "typicalTasks": "網站登入、表單錄入、網頁搜尋、後台錄入、頁面驗證。",
+      "outputs": "瀏覽器操作記錄、頁面資料、截圖證據與流程結果。"
+    },
+    "en": {
+      "name": "Browser Automation",
+      "short": "Clicks, forms, extraction, and real browser flows.",
+      "description": "Runs tasks in a real browser for clicking, typing, scraping, screenshots, and end-to-end web workflow verification.",
+      "dispatch": "Auto-selected when a task involves site navigation, form filling, web extraction, repro steps, or online workflow execution.",
+      "typicalTasks": "Site login, form entry, web search, admin console entry, and UI verification.",
+      "outputs": "Browser action traces, extracted data, screenshots, and workflow results."
+    },
+    "ja": {
+      "name": "ブラウザ自動化",
+      "short": "クリック、フォーム、抽出、実ブラウザ操作。",
+      "description": "実ブラウザでクリック、入力、取得、スクリーンショット、Web ワークフロー検証を行います。",
+      "dispatch": "サイト操作、フォーム入力、Web 抽出、再現手順、オンライン処理が必要なとき自動で使われます。",
+      "typicalTasks": "ログイン、フォーム登録、Web 検索、管理画面入力、UI 検証。",
+      "outputs": "ブラウザ操作ログ、取得データ、スクリーンショット、実行結果。"
+    }
+  }
+}

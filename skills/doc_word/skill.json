@@ -1,0 +1,45 @@
+{
+  "id": "doc_word",
+  "order": 20,
+  "category": "documents",
+  "sourceType": "built-in",
+  "sourceLabel": "Built-in Skill",
+  "accent": "#fb7185",
+  "icon": "doc",
+  "recommendedAgents": ["writer", "orchestrator", "greeter"],
+  "tags": ["word", "report", "proposal", "sop"],
+  "locales": {
+    "zh-CN": {
+      "name": "Word 文档",
+      "short": "方案、报告、说明与正式文档。",
+      "description": "用于输出正式说明书、SOP、方案书、复盘报告和对外交付文档。",
+      "dispatch": "当任务目标是结构化表达、正式输出或沉淀规则文档时自动命中。",
+      "typicalTasks": "方案书、会议纪要、SOP、值守规则、交付总结。",
+      "outputs": "结构化文档内容、段落草稿、清单和正式文书。"
+    },
+    "zh-TW": {
+      "name": "Word 文件",
+      "short": "方案、報告、說明與正式文件。",
+      "description": "用於輸出正式說明書、SOP、方案書、復盤報告與對外交付文件。",
+      "dispatch": "當任務目標是結構化表達、正式輸出或沉澱規則文件時自動命中。",
+      "typicalTasks": "方案書、會議紀要、SOP、值守規則、交付總結。",
+      "outputs": "結構化文件內容、段落草稿、清單與正式文書。"
+    },
+    "en": {
+      "name": "Word Docs",
+      "short": "Plans, reports, briefs, and formal documents.",
+      "description": "Used for structured documentation such as SOPs, proposals, recap reports, and external-facing deliverables.",
+      "dispatch": "Auto-selected when a task needs formal writing, structured communication, or durable documentation.",
+      "typicalTasks": "Proposals, meeting notes, SOPs, supervision rules, and delivery summaries.",
+      "outputs": "Structured document drafts, sections, checklists, and polished written deliverables."
+    },
+    "ja": {
+      "name": "Word 文書",
+      "short": "提案、報告、説明、正式文書。",
+      "description": "SOP、提案書、振り返りレポート、対外文書などの構造化された正式文書を作成します。",
+      "dispatch": "構造化された表現、正式出力、ルール文書の整理が必要なとき自動で使われます。",
+      "typicalTasks": "提案書、議事録、SOP、監督ルール、納品まとめ。",
+      "outputs": "文書ドラフト、段落、一覧、正式な書面成果物。"
+    }
+  }
+}

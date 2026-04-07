@@ -369,10 +369,10 @@ export function ExecutionCenter({ compact = false }: { compact?: boolean }) {
       {visibleRuns.length === 0 ? (
         <div style={emptyPanelStyle}>
           {pickLocaleText(locale, {
-            "zh-CN": "还没有执行日志。发出一条聊天消息或快捷任务后，这里会开始累积执行轨迹。",
-            "zh-TW": "還沒有執行日誌。發出一條聊天消息或快捷任務後，這裡會開始累積執行軌跡。",
-            en: "There are no execution logs yet. Send a chat message or quick task and traces will start accumulating here.",
-            ja: "まだ実行ログはありません。チャットやクイックタスクを送ると、ここに実行トレースが蓄積されます。",
+            "zh-CN": "还没有执行日志。发出一条聊天消息后，这里会开始累积执行轨迹。",
+            "zh-TW": "還沒有執行日誌。發出一條聊天消息後，這裡會開始累積執行軌跡。",
+            en: "There are no execution logs yet. Send a chat message and traces will start accumulating here.",
+            ja: "まだ実行ログはありません。チャットを送ると、ここに実行トレースが蓄積されます。",
           })}
         </div>
       ) : (
@@ -666,9 +666,6 @@ export function ExecutionCenter({ compact = false }: { compact?: boolean }) {
                       {pickLocaleText(locale, { "zh-CN": "定位到内容实体", "zh-TW": "定位到內容實體", en: "Open Content Entity", ja: "コンテンツ実体を見る" })}
                     </button>
                   ) : null}
-                  <button type="button" className="btn-ghost" onClick={() => openControlSection("artifacts")}>
-                    {pickLocaleText(locale, { "zh-CN": "查看相关产物", "zh-TW": "查看相關產物", en: "Open Artifacts", ja: "関連成果物を見る" })}
-                  </button>
                   <button
                     type="button"
                     className="btn-ghost"

@@ -1,0 +1,45 @@
+{
+  "id": "sales_follow_up",
+  "order": 160,
+  "category": "sales",
+  "sourceType": "local",
+  "sourceLabel": "Local Product Skill",
+  "accent": "#f97316",
+  "icon": "handshake",
+  "recommendedAgents": ["greeter", "writer", "orchestrator"],
+  "tags": ["sales", "follow-up", "lead", "crm"],
+  "locales": {
+    "zh-CN": {
+      "name": "销售跟进",
+      "short": "推进线索、跟进节奏与转化动作。",
+      "description": "用于根据线索阶段安排下一步动作、生成跟进话术、提醒回访并把销售推进变成可监督的节奏。",
+      "dispatch": "当任务涉及线索回访、成交推进、话术拟定、提醒补触达或转化节奏安排时自动命中。",
+      "typicalTasks": "首触达、二次跟进、报价提醒、沉默客户唤醒。",
+      "outputs": "跟进文案、下一步动作、节奏建议和线索状态更新。"
+    },
+    "zh-TW": {
+      "name": "銷售跟進",
+      "short": "推進線索、跟進節奏與轉化動作。",
+      "description": "用於根據線索階段安排下一步動作、生成跟進話術、提醒回訪並把銷售推進變成可監督的節奏。",
+      "dispatch": "當任務涉及線索回訪、成交推進、話術擬定、提醒補觸達或轉化節奏安排時自動命中。",
+      "typicalTasks": "首觸達、二次跟進、報價提醒、沉默客戶喚醒。",
+      "outputs": "跟進文案、下一步動作、節奏建議與線索狀態更新。"
+    },
+    "en": {
+      "name": "Sales Follow-up",
+      "short": "Move leads forward with planned follow-up cadence.",
+      "description": "Plans next-step sales actions by lead stage, drafts outreach copy, reminds revisit timing, and keeps conversion work observable.",
+      "dispatch": "Auto-selected for lead nurture, deal progression, follow-up copy, reminder scheduling, or conversion cadence planning.",
+      "typicalTasks": "First outreach, second touch, quote reminders, and silent lead reactivation.",
+      "outputs": "Follow-up copy, next actions, cadence suggestions, and lead status updates."
+    },
+    "ja": {
+      "name": "営業フォロー",
+      "short": "リードを前に進める追客と転換動作。",
+      "description": "リード段階に応じて次アクション、連絡文面、再訪時期を整理し、営業進行を監督可能な形にします。",
+      "dispatch": "リード育成、案件前進、追客文面、再接触予定、転換リズム設計が必要なとき自動で使われます。",
+      "typicalTasks": "初回接触、再フォロー、見積もり催促、沈黙顧客の再活性化。",
+      "outputs": "追客文面、次アクション、推奨 cadence、リード状態更新。"
+    }
+  }
+}

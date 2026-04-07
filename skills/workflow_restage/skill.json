@@ -1,0 +1,45 @@
+{
+  "id": "workflow_restage",
+  "order": 240,
+  "category": "automation",
+  "sourceType": "local",
+  "sourceLabel": "Local Product Skill",
+  "accent": "#6366f1",
+  "icon": "refresh",
+  "recommendedAgents": ["orchestrator", "explorer", "writer"],
+  "tags": ["workflow", "restage", "resume", "execution"],
+  "locales": {
+    "zh-CN": {
+      "name": "流程续跑",
+      "short": "从失败、阻断或人工接管点继续执行。",
+      "description": "用于把失败执行、阻断节点或人工接管后的上下文重新整理成可续跑的 workflow 或聊天任务。",
+      "dispatch": "当任务涉及执行恢复、失败重试、流程续跑、回到聊天接管或 restage 时自动命中。",
+      "typicalTasks": "失败后续跑、从审批后恢复、接管后继续、重新分配执行入口。",
+      "outputs": "恢复上下文、续跑指令、下一阶段动作和重试建议。"
+    },
+    "zh-TW": {
+      "name": "流程續跑",
+      "short": "從失敗、阻斷或人工接管點繼續執行。",
+      "description": "用於把失敗執行、阻斷節點或人工接管後的上下文重新整理成可續跑的 workflow 或聊天任務。",
+      "dispatch": "當任務涉及執行恢復、失敗重試、流程續跑、回到聊天接管或 restage 時自動命中。",
+      "typicalTasks": "失敗後續跑、從審批後恢復、接管後繼續、重新分配執行入口。",
+      "outputs": "恢復上下文、續跑指令、下一階段動作與重試建議。"
+    },
+    "en": {
+      "name": "Workflow Restage",
+      "short": "Resume execution from failure, block, or takeover points.",
+      "description": "Repackages failed, blocked, or manually-taken-over execution context into a resumable workflow or chat handoff.",
+      "dispatch": "Auto-selected for execution recovery, retries, workflow restaging, chat handoff continuation, or blocked-run recovery.",
+      "typicalTasks": "Resume after failure, recover after approval, continue after takeover, and re-enter a run path.",
+      "outputs": "Recovery context, resume prompts, next-stage actions, and retry suggestions."
+    },
+    "ja": {
+      "name": "ワークフロー再開",
+      "short": "失敗、停止、引き継ぎ点から続行。",
+      "description": "失敗実行、停止ノード、人手引き継ぎ後の文脈を、再開可能な workflow またはチャット引き継ぎへ再整理します。",
+      "dispatch": "実行復旧、再試行、workflow restage、チャット再開、停止 run 復旧が必要なとき自動で使われます。",
+      "typicalTasks": "失敗後再開、承認後復旧、引き継ぎ後続行、再入場指示整理。",
+      "outputs": "復旧文脈、再開指示、次段階アクション、再試行提案。"
+    }
+  }
+}

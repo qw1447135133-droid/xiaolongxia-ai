@@ -3,7 +3,9 @@ import {
   type PlatformConfig,
   type PlatformConnectionStatus,
   type PlatformDef,
+  type UiLocale,
 } from "@/store/types";
+import { pickLocaleText } from "@/lib/ui-locale";
 import type { BusinessChannelSession, BusinessOperationRecord } from "@/types/business-entities";
 
 export function getPlatformDefinition(platformId: string): PlatformDef | null {
@@ -186,28 +188,28 @@ export function getPlatformStatusTone(status: PlatformConnectionStatus) {
   return "blocked";
 }
 
-export function getPlatformStatusLabel(status: PlatformConnectionStatus) {
+export function getPlatformStatusLabel(status: PlatformConnectionStatus, locale: UiLocale = "zh-CN") {
   switch (status) {
     case "idle":
-      return "未配置";
+      return pickLocaleText(locale, { "zh-CN": "未配置", "zh-TW": "未配置", en: "Not Configured", ja: "未設定" });
     case "syncing":
-      return "同步中";
+      return pickLocaleText(locale, { "zh-CN": "同步中", "zh-TW": "同步中", en: "Syncing", ja: "同期中" });
     case "configured":
-      return "已配置";
+      return pickLocaleText(locale, { "zh-CN": "已配置", "zh-TW": "已配置", en: "Configured", ja: "設定済み" });
     case "connected":
-      return "已连接";
+      return pickLocaleText(locale, { "zh-CN": "已连接", "zh-TW": "已連接", en: "Connected", ja: "接続済み" });
     case "degraded":
-      return "降级";
+      return pickLocaleText(locale, { "zh-CN": "降级", "zh-TW": "降級", en: "Degraded", ja: "劣化" });
     case "auth_failed":
-      return "鉴权失败";
+      return pickLocaleText(locale, { "zh-CN": "鉴权失败", "zh-TW": "鑑權失敗", en: "Auth Failed", ja: "認証失敗" });
     case "webhook_missing":
-      return "缺少回调";
+      return pickLocaleText(locale, { "zh-CN": "缺少回调", "zh-TW": "缺少回調", en: "Missing Webhook", ja: "Webhook不足" });
     case "webhook_unreachable":
-      return "回调异常";
+      return pickLocaleText(locale, { "zh-CN": "回调异常", "zh-TW": "回調異常", en: "Webhook Error", ja: "Webhook異常" });
     case "rate_limited":
-      return "被限流";
+      return pickLocaleText(locale, { "zh-CN": "被限流", "zh-TW": "被限流", en: "Rate Limited", ja: "レート制限" });
     case "error":
-      return "异常";
+      return pickLocaleText(locale, { "zh-CN": "异常", "zh-TW": "異常", en: "Error", ja: "異常" });
     default:
       return status;
   }

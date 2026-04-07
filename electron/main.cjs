@@ -1468,7 +1468,7 @@ function createMainWindow() {
     height: 900,
     minWidth: 900,
     minHeight: 600,
-    title: '🦞 小龙虾 AI 团队',
+    title: 'STARCRAW',
     backgroundColor: '#0d0f14',
     webPreferences: {
       nodeIntegration: false,

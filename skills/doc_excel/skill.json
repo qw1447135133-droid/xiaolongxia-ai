@@ -1,0 +1,45 @@
+{
+  "id": "doc_excel",
+  "order": 40,
+  "category": "documents",
+  "sourceType": "built-in",
+  "sourceLabel": "Built-in Skill",
+  "accent": "#22c55e",
+  "icon": "sheet",
+  "recommendedAgents": ["explorer", "writer", "orchestrator"],
+  "tags": ["excel", "spreadsheet", "ledger", "tracking"],
+  "locales": {
+    "zh-CN": {
+      "name": "Excel 表格",
+      "short": "台账、统计、公式与表格整理。",
+      "description": "用于清单台账、结构化数据整理、执行追踪和统计口径输出。",
+      "dispatch": "当任务更偏结构化信息处理、字段设计、统计整理或数据回填时自动命中。",
+      "typicalTasks": "线索台账、工单列表、执行追踪、统计汇总。",
+      "outputs": "字段结构、列设计、公式逻辑和表格结果。"
+    },
+    "zh-TW": {
+      "name": "Excel 表格",
+      "short": "台帳、統計、公式與表格整理。",
+      "description": "用於清單台帳、結構化資料整理、執行追蹤與統計口徑輸出。",
+      "dispatch": "當任務偏向結構化資訊處理、欄位設計、統計整理或資料回填時自動命中。",
+      "typicalTasks": "線索台帳、工單清單、執行追蹤、統計彙總。",
+      "outputs": "欄位結構、欄設計、公式邏輯與表格結果。"
+    },
+    "en": {
+      "name": "Spreadsheets",
+      "short": "Ledgers, formulas, stats, and structured tables.",
+      "description": "Used for structured data cleanup, list design, execution tracking, and spreadsheet-style reporting.",
+      "dispatch": "Auto-selected when the task is more about structured fields, formulas, summaries, or data backfill than freeform writing.",
+      "typicalTasks": "Lead ledgers, ticket tables, execution tracking, and metrics summaries.",
+      "outputs": "Field structures, column logic, formulas, and spreadsheet-ready outputs."
+    },
+    "ja": {
+      "name": "表計算",
+      "short": "台帳、集計、数式、表整理。",
+      "description": "構造化データ整理、台帳設計、実行追跡、集計レポート向けのスプレッドシート作業を担当します。",
+      "dispatch": "自由記述よりもフィールド設計、数式、集計、データ戻し込みに近いとき自動で使われます。",
+      "typicalTasks": "リード台帳、チケット一覧、実行追跡、集計表。",
+      "outputs": "列構成、数式ロジック、表設計、スプレッドシート成果物。"
+    }
+  }
+}

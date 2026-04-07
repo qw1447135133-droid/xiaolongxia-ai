@@ -1,13 +1,20 @@
 {
-  "providers": [],
+  "providers": [
+    {
+      "id": "aliyun-coding-p3fub58n",
+      "name": "阿里云百炼 Coding Plan",
+      "apiKey": "sk-sp-01bfaf67d87b4deeb687f3e7826e6b89",
+      "baseUrl": "https://coding.dashscope.aliyuncs.com/v1"
+    }
+  ],
   "agentConfigs": {
     "orchestrator": {
       "id": "orchestrator",
       "name": "虾总管",
       "emoji": "🦞",
       "personality": "你是跨境电商 AI 团队的总调度员，负责任务拆解和团队协调。",
-      "model": "",
-      "providerId": "",
+      "model": "qwen3.5-plus",
+      "providerId": "aliyun-coding-p3fub58n",
       "skills": []
     },
     "explorer": {
@@ -15,8 +22,8 @@
       "name": "探海龙虾",
       "emoji": "🔎",
       "personality": "你是跨境电商选品专家，专注竞品分析、选品趋势研究和市场数据分析，提供具体可执行的洞察。",
-      "model": "",
-      "providerId": "",
+      "model": "glm-4.7",
+      "providerId": "aliyun-coding-p3fub58n",
       "skills": []
     },
     "writer": {
@@ -24,8 +31,8 @@
       "name": "执笔龙虾",
       "emoji": "✍️",
       "personality": "你是跨境电商文案专家，专注多语种文案创作、SEO 标题优化和商品详情页撰写，输出高转化率文案。",
-      "model": "",
-      "providerId": "",
+      "model": "qwen3-coder-plus",
+      "providerId": "aliyun-coding-p3fub58n",
       "skills": []
     },
     "designer": {
@@ -33,8 +40,8 @@
       "name": "幻影龙虾",
       "emoji": "🎨",
       "personality": "你是电商视觉设计专家。当需要生成图片时，请先输出一段英文图片生成提示词（以 [IMAGE_PROMPT] 开头），然后再输出设计方案说明。",
-      "model": "",
-      "providerId": "",
+      "model": "qwen3.5-plus",
+      "providerId": "aliyun-coding-p3fub58n",
       "skills": []
     },
     "performer": {
@@ -42,8 +49,8 @@
       "name": "戏精龙虾",
       "emoji": "🎭",
       "personality": "你是短视频内容专家，专注数字人视频脚本、TikTok/抖音内容策略和多平台矩阵发布计划。",
-      "model": "",
-      "providerId": "",
+      "model": "qwen3.5-plus",
+      "providerId": "aliyun-coding-p3fub58n",
       "skills": []
     },
     "greeter": {
@@ -51,8 +58,8 @@
       "name": "迎客龙虾",
       "emoji": "💬",
       "personality": "你是多语种客服专家，专注客服话术、评论回复模板和买家互动策略，保持友好专业语气。",
-      "model": "",
-      "providerId": "",
+      "model": "qwen3-coder-plus",
+      "providerId": "aliyun-coding-p3fub58n",
       "skills": []
     }
   },
@@ -160,7 +167,8 @@
           "retryCount": 1
         }
       ],
-      "lastSyncedAt": 1775458705344
+      "lastSyncedAt": 1775458705344,
+      "requireOutboundApproval": false
     },
     "line": {
       "enabled": false,

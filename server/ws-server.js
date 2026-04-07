@@ -6,6 +6,7 @@ import { basename, dirname, join } from "path";
 import { spawn } from "child_process";
 import os from "os";
 import Anthropic from "@anthropic-ai/sdk";
+import OpenAI from "openai";
 
 // ── 加载 .env.local（强制覆盖系统环境变量）──
 const __dirname_ws = dirname(fileURLToPath(import.meta.url));
@@ -516,7 +517,7 @@ const ROUTING_RULES = [
 const BREVITY = "\n\n【输出要求】言简意赅、直入主题；先结论后补充；避免冗长寒暄与套话；除必须条目外尽量控制在300字内。";
 
 const SYSTEM_PROMPTS = {
-  orchestrator: "你是跨境电商 AI 团队的总协调员虾总管，负责任务拆解和团队协调。回复与汇报都要简短有力。"
+  orchestrator: "你是跨境电商 AI 团队的总协调员鹦鹉螺，负责任务拆解和团队协调。回复与汇报都要简短有力。"
     + "\n\n你拥有浏览器控制能力，可以使用以下工具：browser_goto（导航到URL）、browser_get_text（读取页面文字内容，搜索后必须用这个提取结果）、browser_page_info（获取页面信息）、browser_screenshot（截图识图）、browser_act（自然语言操作，如点击/填写/滚动）、browser_act_single（精确选择器操作）、browser_act_multi（批量操作）。"
     + "\n\n你还可以使用 desktop_list_installed_applications 工具先读取本机已安装程序列表，再用 desktop_launch_native_application 启动对应程序，例如微信、飞书、Chrome、VS Code、资源管理器或指定 exe。只有当用户明确要求打开/启动本机程序，或任务确实需要调用本机应用时才使用。"
     + "\n\n当桌面端应用无法通过代码或普通浏览器自动化完成时，你还可以先用 desktop_capture_screenshot 观察当前桌面，再用 desktop_control_input 模拟鼠标和键盘，处理桌面端应用、系统弹窗和纯 UI 交互。若任务涉及验证码、人机验证、OTP/2FA 或类似验证步骤，不要尝试自动绕过，应切换到人工接管。"
@@ -525,22 +526,22 @@ const SYSTEM_PROMPTS = {
     + "\n\n【搜索流程】：1.browser_goto 导航到搜索页或目标页 → 2.browser_get_text 读取页面内容 → 3.整理结果回复用户。不要反复跳转，读到内容就总结。"
     + "\n\n【遇到登录页】：换用百度/必应搜索该关键词，或直接总结已知信息。"
     + BREVITY,
-  explorer: "你是探海龙虾，跨境电商选品专家，专注竞品分析、选品趋势研究和市场数据分析，提供可执行洞察。" + BREVITY,
-  writer: "你是执笔龙虾，跨境电商文案专家，专注多语种文案创作、SEO 标题和详情页撰写，输出高转化文案。" + BREVITY,
-  designer: "你是幻影龙虾，电商视觉设计专家；需要出图时先给出 [IMAGE_PROMPT] 英文提示词，再补充设计说明。" + BREVITY,
-  performer: "你是戏精龙虾，短视频内容专家，专注数字人视频脚本、TikTok/抖音内容策略和多平台矩阵发布。" + BREVITY,
-  greeter: "你是迎客龙虾，多语种客服专家，专注客服话术、评论回复模板和买家互动策略。" + BREVITY,
+  explorer: "你是探海鲸鱼，跨境电商选品专家，专注竞品分析、选品趋势研究和市场数据分析，提供可执行洞察。" + BREVITY,
+  writer: "你是星海章鱼，跨境电商文案专家，专注多语种文案创作、SEO 标题和详情页撰写，输出高转化文案。" + BREVITY,
+  designer: "你是珊瑚水母，电商视觉设计专家；需要出图时先给出 [IMAGE_PROMPT] 英文提示词，再补充设计说明。" + BREVITY,
+  performer: "你是逐浪海豚，短视频内容专家，专注数字人视频脚本、TikTok/抖音内容策略和多平台矩阵发布。" + BREVITY,
+  greeter: "你是招潮蟹，多语种客服专家，专注客服话术、评论回复模板和买家互动策略。" + BREVITY,
 };
 
 const AGENT_IDS = ["orchestrator", "explorer", "writer", "designer", "performer", "greeter"];
 
 const AGENT_DISPLAY = {
-  orchestrator: "虾总管",
-  explorer: "探海龙虾",
-  writer: "执笔龙虾",
-  designer: "幻影龙虾",
-  performer: "戏精龙虾",
-  greeter: "迎客龙虾",
+  orchestrator: "鹦鹉螺",
+  explorer: "探海鲸鱼",
+  writer: "星海章鱼",
+  designer: "珊瑚水母",
+  performer: "逐浪海豚",
+  greeter: "招潮蟹",
 };
 
 function writeJson(res, status, payload) {
@@ -2459,10 +2460,10 @@ function buildDirectOrchestratorReply(text) {
     return `好，${nick}，有需要随时叫我。`;
   }
   if (/^(?:你是谁|介绍一下自己)[!！。.?？\s]*$/i.test(t)) {
-    return `我是虾总管，${nick}可以把需求直接发给我，我会判断是由我直接回复，还是分配给选品、文案、设计、视频、客服这些执行龙虾。`;
+    return `我是鹦鹉螺，${nick}可以把需求直接发给我，我会判断是由我直接回复，还是分配给选品、文案、设计、视频、客服这些执行角色。`;
   }
   if (/^(?:你是干什么的|你能做什么|怎么用)[!！。.?？\s]*$/i.test(t)) {
-    return `我是负责调度的小龙虾主管。${nick}可以直接发任务，比如选品分析、文案、海报、短视频脚本、客服话术，我会直接处理或安排合适的龙虾执行。`;
+    return `我是负责调度的 STARCRAW 主管。${nick}可以直接发任务，比如选品分析、文案、海报、短视频脚本、客服话术，我会直接处理或安排合适的执行角色。`;
   }
 
   return "";
@@ -2508,16 +2509,23 @@ function buildClient(agentId) {
   const model = config?.model || getDefaultModel();
   const personality = config?.personality ? `\n\n个性补充：${config.personality}` : "";
   const systemPrompt = `${SYSTEM_PROMPTS[agentId]}${personality}`;
+  const providerId = provider?.id || config?.providerId || "";
+  const useAnthropic =
+    providerId.startsWith("anthropic")
+    || String(baseURL || "").includes("api.anthropic.com");
 
   return {
-    client: new Anthropic({ apiKey, ...(baseURL ? { baseURL } : {}) }),
+    client: useAnthropic
+      ? new Anthropic({ apiKey, ...(baseURL ? { baseURL } : {}) })
+      : new OpenAI({ apiKey, ...(baseURL ? { baseURL } : {}) }),
+    clientType: useAnthropic ? "anthropic" : "openai",
     model,
     systemPrompt,
   };
 }
 
 async function callAgent(agentId, task, complexity, maxTokensOverride, sessionId = "default", executionMeta = {}) {
-  const { client, model, systemPrompt } = buildClient(agentId);
+  const { client, clientType, model, systemPrompt } = buildClient(agentId);
   // 若 Agent 已显式配置了模型则尊重该设置，否则按复杂度自动选择
   const hasCustomModel = !!settings.agentConfigs?.[agentId]?.model;
   const actualModel = hasCustomModel ? model : getModelForComplexity(complexity);
@@ -2532,6 +2540,7 @@ async function callAgent(agentId, task, complexity, maxTokensOverride, sessionId
     maxTokens: maxTokensOverride ?? defaultMax,
     model: actualModel,
     client,
+    clientType,
     onToolEvent: executionMeta.executionRunId
       ? createToolEventReporter({
           executionRunId: executionMeta.executionRunId,
@@ -2581,7 +2590,7 @@ async function dispatch(instruction, sessionId = "default", executionRunId = ran
       if (!text) {
         const response = await callAgent(
           "orchestrator",
-          `用户发来的是简单对话或短问句，请你以虾总管身份直接接话回复。
+          `用户发来的是简单对话或短问句，请你以鹦鹉螺身份直接接话回复。
 
 要求：
 - 不要拆解任务
@@ -2627,7 +2636,7 @@ async function dispatch(instruction, sessionId = "default", executionRunId = ran
         completedAt: Date.now(),
         event: makeExecutionEvent({
           type: "result",
-          title: "虾总管直接完成回复",
+          title: "鹦鹉螺直接完成回复",
           detail: String(text || "").slice(0, 200),
           agentId: "orchestrator",
         }),
@@ -2659,7 +2668,7 @@ async function dispatch(instruction, sessionId = "default", executionRunId = ran
         completedAt: Date.now(),
         event: makeExecutionEvent({
           type: "error",
-          title: "虾总管回复时发生异常",
+          title: "鹦鹉螺回复时发生异常",
           detail: String(err?.message || err),
           agentId: "orchestrator",
         }),
@@ -2709,7 +2718,7 @@ async function dispatch(instruction, sessionId = "default", executionRunId = ran
     executionRunId: runId,
     task: {
       id: reportTaskId,
-      description: "虾总管汇报",
+        description: "鹦鹉螺汇报",
       assignedTo: "orchestrator",
       complexity: "low",
       status: "done",
@@ -3418,7 +3427,7 @@ const httpServer = createServer(async (req, res) => {
       const { format, meeting, platformId } = await readJson(req);
       if (!platformId?.trim()) return writeJson(res, 400, { ok: false, error: "platformId 不能为空" });
       const fileResult = await exportMeetingDocument({ format, meeting });
-      const caption = `虾总管会议结论：${meeting?.topic ?? ""}\n${String(meeting?.summary ?? "").slice(0, 1800)}`;
+      const caption = `鹦鹉螺会议结论：${meeting?.topic ?? ""}\n${String(meeting?.summary ?? "").slice(0, 1800)}`;
       await sendFileToPlatform(platformId, null, {
         filePath: fileResult.filePath,
         fileName: fileResult.fileName,

@@ -8,21 +8,7 @@ import { derivePlatformProvisionState, getPlatformStatusLabel } from "@/lib/plat
 import { syncRuntimeSettings } from "@/lib/runtime-settings-sync";
 import { sendWs } from "@/hooks/useWebSocket";
 
-type PlatformDebugAction = "send_test_message" | "simulate_inbound" | "probe_webhook" | "replay_last_debug";
-type PlatformDiagnosisCheck = {
-  id: string;
-  label: string;
-  status: "pass" | "warn" | "fail" | "neutral";
-  detail: string;
-};
-type PlatformDiagnosisReport = {
-  platformId: string;
-  summary: string;
-  score: number;
-  checks: PlatformDiagnosisCheck[];
-  suggestedActions: string[];
-  checkedAt: number;
-};
+type PlatformDebugAction = "send_test_message";
 
 export function PlatformSettings() {
   return (
@@ -48,25 +34,13 @@ function PlatformCard({ def }: { def: PlatformDef }) {
         : "";
   const [expanded, setExpanded] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [debugTarget, setDebugTarget] = useState("");
-  const [debugText, setDebugText] = useState("");
   const [debugBusyAction, setDebugBusyAction] = useState<PlatformDebugAction | null>(null);
   const [debugFeedback, setDebugFeedback] = useState<{ ok: boolean; text: string } | null>(null);
-  const [diagnosisBusy, setDiagnosisBusy] = useState(false);
-  const [diagnosisReport, setDiagnosisReport] = useState<PlatformDiagnosisReport | null>(null);
 
   // 展开状态跟随 enabled
   useEffect(() => {
     if (config.enabled) setExpanded(true);
   }, [config.enabled]);
-
-  useEffect(() => {
-    if (debugTarget.trim()) return;
-    const preferredTarget = String(config.lastDebugTarget || defaultDebugTarget || "").trim();
-    if (preferredTarget) {
-      setDebugTarget(preferredTarget);
-    }
-  }, [config.lastDebugTarget, debugTarget, defaultDebugTarget]);
 
   const allRequiredFilled = def.fields
     .filter(f => f.required)
@@ -118,6 +92,7 @@ function PlatformCard({ def }: { def: PlatformDef }) {
     setDebugBusyAction(action);
     setDebugFeedback(null);
     try {
+      const targetId = String(config.lastDebugTarget || defaultDebugTarget || "").trim() || undefined;
       const url = await resolveBackendUrl("/api/platform-debug");
       const response = await fetch(url, {
         method: "POST",
@@ -125,70 +100,14 @@ function PlatformCard({ def }: { def: PlatformDef }) {
         body: JSON.stringify({
           action,
           platformId: def.id,
-          targetId: debugTarget.trim() || undefined,
-          text: debugText.trim() || undefined,
+          targetId,
         }),
       });
       const result = await response.json() as { ok?: boolean; message?: string; error?: string };
       if (!response.ok || !result.ok) {
-        throw new Error(result.error || result.message || "平台联调请求失败");
+        throw new Error(result.error || result.message || "测试通信失败");
       }
-      setDebugFeedback({ ok: true, text: result.message || "联调动作已执行" });
-    } catch (error) {
-      setDebugFeedback({ ok: false, text: error instanceof Error ? error.message : String(error) });
-    } finally {
-      setDebugBusyAction(null);
-    }
-  }
-
-  async function handleDiagnose() {
-    setDiagnosisBusy(true);
-    setDebugFeedback(null);
-    try {
-      const url = await resolveBackendUrl("/api/platform-debug");
-      const response = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "diagnose",
-          platformId: def.id,
-        }),
-      });
-      const result = await response.json() as { ok?: boolean; message?: string; error?: string; report?: PlatformDiagnosisReport };
-      if (!response.ok || !result.ok || !result.report) {
-        throw new Error(result.error || result.message || "平台诊断失败");
-      }
-      setDiagnosisReport(result.report);
-      setDebugFeedback({ ok: true, text: result.message || "诊断完成" });
-    } catch (error) {
-      setDiagnosisReport(null);
-      setDebugFeedback({ ok: false, text: error instanceof Error ? error.message : String(error) });
-    } finally {
-      setDiagnosisBusy(false);
-    }
-  }
-
-  async function handleReplayLastDebug() {
-    if (!config.lastDebugAction) return;
-    setDebugBusyAction("replay_last_debug");
-    setDebugFeedback(null);
-    try {
-      const url = await resolveBackendUrl("/api/platform-debug");
-      const response = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "replay_last_debug",
-          platformId: def.id,
-          targetId: debugTarget.trim() || undefined,
-          text: debugText.trim() || undefined,
-        }),
-      });
-      const result = await response.json() as { ok?: boolean; message?: string; error?: string };
-      if (!response.ok || !result.ok) {
-        throw new Error(result.error || result.message || "重放最近联调失败");
-      }
-      setDebugFeedback({ ok: true, text: result.message || "已重试最近联调动作" });
+      setDebugFeedback({ ok: true, text: result.message || "测试通信已发送" });
     } catch (error) {
       setDebugFeedback({ ok: false, text: error instanceof Error ? error.message : String(error) });
     } finally {
@@ -219,6 +138,7 @@ function PlatformCard({ def }: { def: PlatformDef }) {
         ? "#888"
         : "#ef4444";
   const diagnosis = getPlatformDiagnosis(def, config.status, allRequiredFilled);
+  const communicationTarget = String(config.lastDebugTarget || defaultDebugTarget || "").trim();
 
   return (
     <div className="card" style={{ padding: 0, overflow: "hidden" }}>
@@ -441,97 +361,10 @@ function PlatformCard({ def }: { def: PlatformDef }) {
             background: "rgba(247,249,253,0.96)",
             border: "1px solid var(--border)",
           }}>
-            <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text)" }}>联调工具</div>
+            <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text)" }}>测试通信</div>
             <div style={{ fontSize: 11, color: "var(--text-muted)", lineHeight: 1.6 }}>
-              发送真实测试消息，或仅在工作台内模拟一条入站消息。
-              {defaultDebugTarget ? ` 留空目标 ID 时默认使用 ${defaultDebugTarget}。` : ""}
-            </div>
-
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              <button
-                onClick={() => void handleDiagnose()}
-                className="btn-ghost"
-                disabled={diagnosisBusy}
-                style={{ fontSize: 11, padding: "4px 12px" }}
-              >
-                {diagnosisBusy ? "诊断中..." : "一键诊断"}
-              </button>
-              {diagnosisReport ? (
-                <div style={{ fontSize: 11, color: "var(--text-muted)", display: "flex", alignItems: "center" }}>
-                  诊断分 {diagnosisReport.score} · {formatPlatformTime(diagnosisReport.checkedAt)}
-                </div>
-              ) : null}
-            </div>
-
-            {diagnosisReport ? (
-              <div style={{
-                display: "flex",
-                flexDirection: "column",
-                gap: 8,
-                padding: "8px 10px",
-                borderRadius: "var(--radius-sm)",
-                background: "rgba(255,255,255,0.03)",
-                border: "1px solid rgba(255,255,255,0.06)",
-              }}>
-                <div style={{ fontSize: 11, color: "var(--text)", lineHeight: 1.6 }}>
-                  {diagnosisReport.summary}
-                </div>
-                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                  {diagnosisReport.checks.map(check => (
-                    <div
-                      key={check.id}
-                      style={{
-                        display: "flex",
-                        gap: 8,
-                        alignItems: "flex-start",
-                        fontSize: 11,
-                        color: check.status === "fail"
-                          ? "var(--danger)"
-                          : check.status === "warn"
-                            ? "var(--warning)"
-                            : check.status === "pass"
-                              ? "var(--success)"
-                              : "var(--text-muted)",
-                      }}
-                    >
-                      <span style={{ minWidth: 48, fontWeight: 600 }}>
-                        {renderDiagnosisBadge(check.status)} {check.label}
-                      </span>
-                      <span style={{ color: "var(--text-muted)", lineHeight: 1.6 }}>{check.detail}</span>
-                    </div>
-                  ))}
-                </div>
-                {diagnosisReport.suggestedActions.length > 0 ? (
-                  <div style={{ fontSize: 11, color: "var(--text-muted)", lineHeight: 1.6 }}>
-                    建议：{diagnosisReport.suggestedActions.join("；")}
-                  </div>
-                ) : null}
-              </div>
-            ) : null}
-
-            <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 8 }}>
-              <input
-                className="input"
-                type="text"
-                placeholder={
-                  config.lastDebugTarget
-                    ? `目标 ID（最近 ${config.lastDebugTarget}${defaultDebugTarget && defaultDebugTarget !== config.lastDebugTarget ? `，默认 ${defaultDebugTarget}` : ""}）`
-                    : defaultDebugTarget
-                      ? `目标 ID（默认 ${defaultDebugTarget}）`
-                      : "目标 ID / 用户 ID"
-                }
-                value={debugTarget}
-                onChange={e => setDebugTarget(e.target.value)}
-                style={{ fontSize: 12, width: "100%" }}
-              />
-              <textarea
-                className="input"
-                placeholder="测试文案，留空则使用默认测试内容"
-                value={debugText}
-                onChange={e => setDebugText(e.target.value)}
-                rows={3}
-                style={{ fontSize: 12, width: "100%", resize: "vertical", minHeight: 72 }}
-              />
+              向当前平台发送一条测试消息，用于确认账号、凭证和默认目标是否连通。
+              {communicationTarget ? ` 当前目标 ${communicationTarget}。` : " 未设置默认目标时会尝试使用平台内置默认收件方。"}
             </div>
 
             {debugFeedback ? (
@@ -547,149 +380,16 @@ function PlatformCard({ def }: { def: PlatformDef }) {
               </div>
             ) : null}
 
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              {config.lastDebugAction ? (
-                <button
-                  onClick={() => void handleReplayLastDebug()}
-                  className="btn-ghost"
-                  disabled={debugBusyAction !== null || diagnosisBusy || (!config.enabled && config.lastDebugAction !== "diagnose")}
-                  style={{ fontSize: 11, padding: "4px 12px" }}
-                >
-                  {debugBusyAction === "replay_last_debug" ? "重试中..." : "重试上次联调"}
-                </button>
-              ) : null}
-              {def.webhookBased ? (
-                <button
-                  onClick={() => void handleDebugAction("probe_webhook")}
-                  className="btn-ghost"
-                  disabled={!config.enabled || debugBusyAction !== null}
-                  style={{ fontSize: 11, padding: "4px 12px" }}
-                >
-                  {debugBusyAction === "probe_webhook" ? "探测中..." : "探测 Webhook"}
-                </button>
-              ) : null}
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
               <button
                 onClick={() => void handleDebugAction("send_test_message")}
                 className="btn-ghost"
                 disabled={!config.enabled || debugBusyAction !== null}
-                style={{ fontSize: 11, padding: "4px 12px" }}
+                style={{ fontSize: 11, padding: "4px 12px", minWidth: 92 }}
               >
-                {debugBusyAction === "send_test_message" ? "发送中..." : "发送测试消息"}
-              </button>
-              <button
-                onClick={() => void handleDebugAction("simulate_inbound")}
-                className="btn-ghost"
-                disabled={!config.enabled || debugBusyAction !== null}
-                style={{ fontSize: 11, padding: "4px 12px" }}
-              >
-                {debugBusyAction === "simulate_inbound" ? "注入中..." : "模拟入站"}
+                {debugBusyAction === "send_test_message" ? "发送中..." : "测试通信"}
               </button>
             </div>
-
-            {config.lastDebugAt ? (
-              <div style={{ fontSize: 11, color: "var(--text-muted)", lineHeight: 1.6 }}>
-                最近联调：
-                {config.lastDebugAction === "send_test_message"
-                  ? "发送测试消息"
-                  : config.lastDebugAction === "simulate_inbound"
-                    ? "模拟入站"
-                    : config.lastDebugAction === "probe_webhook"
-                      ? "探测 Webhook"
-                      : "一键诊断"}
-                {" · "}
-                {config.lastDebugStatus === "failed"
-                  ? "失败"
-                  : config.lastDebugStatus === "sent"
-                    ? "已发送"
-                    : "完成"}
-                {" · "}
-                {formatPlatformTime(config.lastDebugAt)}
-                {config.lastDebugTarget ? ` · 目标 ${config.lastDebugTarget}` : ""}
-                {config.lastDebugMessage ? ` · ${config.lastDebugMessage}` : ""}
-              </div>
-            ) : null}
-
-            {config.debugHistory?.length ? (
-              <div
-                style={{
-                  display: "grid",
-                  gap: 6,
-                  padding: "8px 10px",
-                  borderRadius: "var(--radius-sm)",
-                  background: "rgba(247,249,253,0.96)",
-                  border: "1px solid var(--border)",
-                }}
-              >
-                <div style={{ fontSize: 11, color: "var(--text)", fontWeight: 600 }}>最近联调记录</div>
-                {config.debugHistory
-                  .slice()
-                  .sort((left, right) => right.at - left.at)
-                  .map((entry, index) => (
-                    <div
-                      key={`${entry.at}-${entry.action}-${index}`}
-                      style={{
-                        display: "flex",
-                        justifyContent: "space-between",
-                        gap: 10,
-                        alignItems: "flex-start",
-                        fontSize: 11,
-                      }}
-                    >
-                      <div style={{ display: "grid", gap: 2 }}>
-                        <div style={{ color: entry.ok ? "var(--text)" : "var(--danger)" }}>
-                          {formatDebugAction(entry.action)} · {formatDebugStatus(entry.status)}
-                          {entry.target ? ` · ${entry.target}` : ""}
-                        </div>
-                        <div style={{ color: "var(--text-muted)", lineHeight: 1.6 }}>{entry.message}</div>
-                      </div>
-                      <span style={{ color: "var(--text-muted)", whiteSpace: "nowrap" }}>
-                        {formatPlatformTime(entry.at)}
-                      </span>
-                    </div>
-                  ))}
-              </div>
-            ) : null}
-
-            {config.recentFailedMessages?.length ? (
-              <div
-                style={{
-                  display: "grid",
-                  gap: 6,
-                  padding: "8px 10px",
-                  borderRadius: "var(--radius-sm)",
-                  background: "rgba(247,249,253,0.96)",
-                  border: "1px solid var(--border)",
-                }}
-              >
-                <div style={{ fontSize: 11, color: "var(--text)", fontWeight: 600 }}>最近失败消息缓存</div>
-                {config.recentFailedMessages
-                  .slice()
-                  .sort((left, right) => right.at - left.at)
-                  .map((entry, index) => (
-                    <div
-                      key={`${entry.at}-${entry.target}-${index}`}
-                      style={{
-                        display: "grid",
-                        gap: 2,
-                        fontSize: 11,
-                        padding: "6px 0",
-                        borderTop: index === 0 ? "none" : "1px solid rgba(255,255,255,0.06)",
-                      }}
-                    >
-                      <div style={{ color: "var(--text)" }}>
-                        {entry.target} · {formatPlatformTime(entry.at)}
-                        {entry.retryCount > 0 ? ` · 已重试 ${entry.retryCount} 次` : ""}
-                      </div>
-                      <div style={{ color: "var(--text-muted)", lineHeight: 1.6 }}>
-                        失败内容: {entry.message}
-                      </div>
-                      <div style={{ color: "var(--danger)", lineHeight: 1.6 }}>
-                        失败原因: {entry.reason}
-                      </div>
-                    </div>
-                  ))}
-              </div>
-            ) : null}
           </div>
 
           {/* 操作按钮 */}
@@ -730,26 +430,6 @@ function formatPlatformTime(timestamp: number) {
     hour: "2-digit",
     minute: "2-digit",
   }).format(timestamp);
-}
-
-function formatDebugAction(action: "send_test_message" | "simulate_inbound" | "diagnose" | "probe_webhook") {
-  if (action === "send_test_message") return "发送测试消息";
-  if (action === "simulate_inbound") return "模拟入站";
-  if (action === "probe_webhook") return "探测 Webhook";
-  return "一键诊断";
-}
-
-function formatDebugStatus(status: "sent" | "completed" | "failed") {
-  if (status === "sent") return "已发送";
-  if (status === "failed") return "失败";
-  return "完成";
-}
-
-function renderDiagnosisBadge(status: PlatformDiagnosisCheck["status"]) {
-  if (status === "pass") return "通过";
-  if (status === "warn") return "注意";
-  if (status === "fail") return "失败";
-  return "信息";
 }
 
 function getPlatformDiagnosis(def: PlatformDef, status: string, allRequiredFilled: boolean) {

@@ -1,0 +1,45 @@
+{
+  "id": "doc_ppt",
+  "order": 30,
+  "category": "documents",
+  "sourceType": "built-in",
+  "sourceLabel": "Built-in Skill",
+  "accent": "#f97316",
+  "icon": "slides",
+  "recommendedAgents": ["writer", "performer", "orchestrator"],
+  "tags": ["ppt", "presentation", "deck", "pitch"],
+  "locales": {
+    "zh-CN": {
+      "name": "PPT 演示",
+      "short": "汇报、路演与对外演示材料。",
+      "description": "用于整理汇报逻辑、销售演示、产品介绍和路演类幻灯片内容。",
+      "dispatch": "当任务涉及汇报结构、讲解顺序、页面大纲或演示材料时自动启用。",
+      "typicalTasks": "成交版 deck、产品介绍、阶段汇报、销售路演。",
+      "outputs": "页级结构、标题层级、讲稿要点和演示文案。"
+    },
+    "zh-TW": {
+      "name": "PPT 簡報",
+      "short": "匯報、路演與對外簡報材料。",
+      "description": "用於整理匯報邏輯、銷售演示、產品介紹與路演類投影片內容。",
+      "dispatch": "當任務涉及匯報結構、講解順序、頁面大綱或簡報材料時自動啟用。",
+      "typicalTasks": "成交版 deck、產品介紹、階段匯報、銷售路演。",
+      "outputs": "頁級結構、標題層級、講稿要點與簡報文案。"
+    },
+    "en": {
+      "name": "Slide Decks",
+      "short": "Reports, pitches, and presentation material.",
+      "description": "Shapes reporting logic, sales decks, product intros, and stakeholder presentations into a clear deck flow.",
+      "dispatch": "Auto-selected when the task implies a presentation structure, talk track, or slide-by-slide outline.",
+      "typicalTasks": "Sales decks, product intros, milestone reviews, and pitch narratives.",
+      "outputs": "Slide structures, titles, talk tracks, and presentation-ready copy."
+    },
+    "ja": {
+      "name": "スライド作成",
+      "short": "報告、提案、対外プレゼン資料。",
+      "description": "報告ロジック、営業デッキ、製品紹介、ピッチ資料を分かりやすいスライド構成に整理します。",
+      "dispatch": "報告構造、説明順序、ページ構成、プレゼン資料が必要なとき自動で使われます。",
+      "typicalTasks": "受注向け deck、製品紹介、進捗報告、営業ピッチ。",
+      "outputs": "スライド構成、タイトル階層、話す要点、プレゼン用テキスト。"
+    }
+  }
+}

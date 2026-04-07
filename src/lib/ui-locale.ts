@@ -181,20 +181,20 @@ const TEXT: Record<UiLocale, LocaleText> = {
       recoveryNeeded: "待恢复",
       pipelineRecoveryTitle: "消息链路需要恢复",
       desktopCapabilityTitle: "桌面能力尚未完全接入",
-      brandEyebrow: "Lobster Crew OS",
+      brandEyebrow: "STARCRAW OS",
       desktopBrandEyebrow: "Desktop Workspace",
-      desktopBrandTitle: "小龙虾 AI 团队",
+      desktopBrandTitle: "STARCRAW",
       iosCapsule: "iOS 玻璃感",
       gptCapsule: "GPT 式流转",
       generalProject: "通用项目",
     },
     dashboard: {
       eyebrow: "A ChatGPT-like command center",
-      title: "今天想让小龙虾团队帮你完成什么？",
-      copy: "主界面只保留一个清晰的对话入口，其他工具和状态都收进侧栏。你可以像用 ChatGPT 一样先说目标，再从工作区、会议、控制台继续深挖。",
+      title: "今天想让 STARCRAW 帮你完成什么？",
+      copy: "主界面只保留一个清晰的对话入口，其他工具和状态都收进侧栏。你可以像用 ChatGPT 一样先说目标，再从聊天、会议和控制台继续推进。",
       teamModePrefix: "当前团队模式",
       startTitle: "像 ChatGPT 一样开始",
-      startHint: "直接提问、下发任务，或把工作区上下文塞进来。主页只负责开始，深入工作去左侧功能区。",
+      startHint: "直接提问、下发任务，或把当前项目上下文带进来。主页只负责开始，深入工作去左侧功能区。",
       continueEyebrow: "Continue Working",
       continueCopy: "首页只保留最值得继续推进的入口，其余状态交给右侧监督侧轨。",
       surfacesEyebrow: "Core Surfaces",
@@ -206,10 +206,10 @@ const TEXT: Record<UiLocale, LocaleText> = {
         action: "打开聊天",
       },
       deskCard: {
-        eyebrow: "Desk",
-        title: "打开工作区",
-        copy: "文件预览、上下文包、Desk Notes 都还在，但不再抢占主聊天空间。",
-        action: "进入工作区",
+        eyebrow: "Context",
+        title: "查看项目上下文",
+        copy: "文件预览、上下文包和 Desk Notes 仍然可用，但统一回收到聊天与控制台内。",
+        action: "打开聊天",
       },
       meetCard: {
         eyebrow: "Meet",
@@ -310,20 +310,20 @@ const TEXT: Record<UiLocale, LocaleText> = {
       recoveryNeeded: "待恢復",
       pipelineRecoveryTitle: "消息鏈路需要恢復",
       desktopCapabilityTitle: "桌面能力尚未完全接入",
-      brandEyebrow: "Lobster Crew OS",
+      brandEyebrow: "STARCRAW OS",
       desktopBrandEyebrow: "Desktop Workspace",
-      desktopBrandTitle: "小龍蝦 AI 團隊",
+      desktopBrandTitle: "STARCRAW",
       iosCapsule: "iOS 玻璃感",
       gptCapsule: "GPT 式流程",
       generalProject: "通用專案",
     },
     dashboard: {
       eyebrow: "A ChatGPT-like command center",
-      title: "今天想讓小龍蝦團隊幫你完成什麼？",
+      title: "今天想讓 STARCRAW 幫你完成什麼？",
       copy: "主介面只保留一個清晰的對話入口，其他工具與狀態都收進側欄。你可以像用 ChatGPT 一樣先說目標，再從工作區、會議、控制台繼續深入。",
       teamModePrefix: "當前團隊模式",
       startTitle: "像 ChatGPT 一樣開始",
-      startHint: "直接提問、下發任務，或把工作區上下文帶進來。首頁只負責開始，深入工作去左側功能區。",
+      startHint: "直接提問、下發任務，或把目前專案上下文帶進來。首頁只負責開始，深入工作去左側功能區。",
       continueEyebrow: "Continue Working",
       continueCopy: "首頁只保留最值得繼續推進的入口，其餘狀態交給右側監督側軌。",
       surfacesEyebrow: "Core Surfaces",
@@ -335,10 +335,10 @@ const TEXT: Record<UiLocale, LocaleText> = {
         action: "打開聊天",
       },
       deskCard: {
-        eyebrow: "Desk",
-        title: "打開工作區",
-        copy: "檔案預覽、上下文包、Desk Notes 都還在，但不再搶占主聊天空間。",
-        action: "進入工作區",
+        eyebrow: "Context",
+        title: "查看專案上下文",
+        copy: "檔案預覽、上下文包與 Desk Notes 仍然可用，但統一收回聊天與控制台內。",
+        action: "打開聊天",
       },
       meetCard: {
         eyebrow: "Meet",
@@ -439,20 +439,20 @@ const TEXT: Record<UiLocale, LocaleText> = {
       recoveryNeeded: "Needs Recovery",
       pipelineRecoveryTitle: "Message pipeline needs recovery",
       desktopCapabilityTitle: "Desktop capability is not fully connected yet",
-      brandEyebrow: "Lobster Crew OS",
+      brandEyebrow: "STARCRAW OS",
       desktopBrandEyebrow: "Desktop Workspace",
-      desktopBrandTitle: "Xiaolongxia AI Team",
+      desktopBrandTitle: "STARCRAW",
       iosCapsule: "iOS Glass",
       gptCapsule: "GPT-style Flow",
       generalProject: "General",
     },
     dashboard: {
       eyebrow: "A ChatGPT-like command center",
-      title: "What do you want the Lobster team to help with today?",
-      copy: "The main view keeps one clear conversation entry point while everything else lives in the side rails. Start with a goal like ChatGPT, then go deeper through workspace, meetings, and control surfaces.",
+      title: "What do you want STARCRAW to help with today?",
+      copy: "The main view keeps one clear conversation entry point while everything else lives in the side rails. Start with a goal like ChatGPT, then continue through chat, meetings, and control surfaces.",
       teamModePrefix: "Active team mode",
       startTitle: "Start like ChatGPT",
-      startHint: "Ask directly, dispatch a task, or inject workspace context. The home view is only for starting; deeper work stays in the side surfaces.",
+      startHint: "Ask directly, dispatch a task, or inject the current project context. The home view is only for starting; deeper work stays in the side surfaces.",
       continueEyebrow: "Continue Working",
       continueCopy: "Home only keeps the most important next entry points. The rest of the status belongs to the supervision rail.",
       surfacesEyebrow: "Core Surfaces",
@@ -464,10 +464,10 @@ const TEXT: Record<UiLocale, LocaleText> = {
         action: "Open Chat",
       },
       deskCard: {
-        eyebrow: "Desk",
-        title: "Open the workspace",
-        copy: "File previews, context packs, and Desk Notes are still here without stealing the main chat space.",
-        action: "Open Workspace",
+        eyebrow: "Context",
+        title: "Review project context",
+        copy: "File previews, context packs, and Desk Notes are still available, now folded back into chat and control surfaces.",
+        action: "Open Chat",
       },
       meetCard: {
         eyebrow: "Meet",
@@ -568,20 +568,20 @@ const TEXT: Record<UiLocale, LocaleText> = {
       recoveryNeeded: "要復旧",
       pipelineRecoveryTitle: "メッセージ経路の復旧が必要です",
       desktopCapabilityTitle: "デスクトップ機能はまだ完全に接続されていません",
-      brandEyebrow: "Lobster Crew OS",
+      brandEyebrow: "STARCRAW OS",
       desktopBrandEyebrow: "Desktop Workspace",
-      desktopBrandTitle: "シャオロンシア AI チーム",
+      desktopBrandTitle: "STARCRAW",
       iosCapsule: "iOS ガラス",
       gptCapsule: "GPT 風フロー",
       generalProject: "共通プロジェクト",
     },
     dashboard: {
       eyebrow: "A ChatGPT-like command center",
-      title: "今日はロブスターチームに何を進めてもらいますか？",
-      copy: "メイン画面には明確な対話の入口だけを残し、他のツールや状態はサイドレールに収めます。ChatGPT のように目標から始め、ワークスペース、会議、コントロール面へと掘り下げられます。",
+      title: "今日は STARCRAW に何を進めてもらいますか？",
+      copy: "メイン画面には明確な対話の入口だけを残し、他のツールや状態はサイドレールに収めます。ChatGPT のように目標から始め、チャット、会議、コントロール面へ進められます。",
       teamModePrefix: "現在のチームモード",
       startTitle: "ChatGPT のように開始",
-      startHint: "そのまま質問する、タスクを投げる、ワークスペース文脈を差し込む。ホームは開始専用で、深い作業はサイド面に任せます。",
+      startHint: "そのまま質問する、タスクを投げる、現在のプロジェクト文脈を差し込む。ホームは開始専用で、深い作業はサイド面に任せます。",
       continueEyebrow: "Continue Working",
       continueCopy: "ホームには本当に重要な次の入口だけを残し、その他の状態は監督レールに任せます。",
       surfacesEyebrow: "Core Surfaces",
@@ -593,10 +593,10 @@ const TEXT: Record<UiLocale, LocaleText> = {
         action: "チャットを開く",
       },
       deskCard: {
-        eyebrow: "Desk",
-        title: "ワークスペースを開く",
-        copy: "ファイルプレビュー、コンテキストパック、Desk Notes は残しつつ、主チャット空間を奪いません。",
-        action: "ワークスペースへ",
+        eyebrow: "Context",
+        title: "プロジェクト文脈を見る",
+        copy: "ファイルプレビュー、コンテキストパック、Desk Notes は残しつつ、チャットとコントロール面へ整理しています。",
+        action: "チャットを開く",
       },
       meetCard: {
         eyebrow: "Meet",
@@ -639,7 +639,7 @@ export function getUiText(locale: UiLocale): LocaleText {
 
 export function getPrimaryNavItems(locale: UiLocale): Array<{ id: AppTab; label: string; eyebrow: string }> {
   const text = getUiText(locale);
-  return (["dashboard", "tasks", "workspace", "dispatch", "meeting", "settings"] as const).map(id => ({
+  return (["dashboard", "tasks", "dispatch", "meeting", "settings"] as const).map(id => ({
     id,
     label: text.nav[id].label,
     eyebrow: text.nav[id].eyebrow,
@@ -651,25 +651,25 @@ export function getDefaultHomePrompts(locale: UiLocale): string[] {
     case "zh-TW":
       return [
         "幫我梳理今天最值得推進的一項任務，並自動拆成執行步驟。",
-        "從當前會話和工作區上下文裡，給我一版可以直接開工的開發計畫。",
+        "從當前會話和專案上下文裡，給我一版可以直接開工的開發計畫。",
         "檢查團隊配置、插件和工作流，告訴我哪裡還不順手。",
       ];
     case "en":
       return [
         "Help me identify the single highest-leverage task for today and break it into executable steps.",
-        "Use the current chat and workspace context to draft a development plan I can start immediately.",
+        "Use the current chat and project context to draft a development plan I can start immediately.",
         "Review the team setup, plugins, and workflows and tell me what still feels rough.",
       ];
     case "ja":
       return [
         "今日いちばん進める価値の高いタスクを整理して、実行ステップまで分解してください。",
-        "現在の会話とワークスペース文脈から、すぐ着手できる開発計画を作ってください。",
+        "現在の会話とプロジェクト文脈から、すぐ着手できる開発計画を作ってください。",
         "チーム設定、プラグイン、ワークフローを確認して、まだ使いにくい点を教えてください。",
       ];
     default:
       return [
         "帮我梳理今天最值得推进的一项任务，并自动拆成执行步骤。",
-        "从当前会话和工作区上下文里，给我一版可以直接开工的开发计划。",
+        "从当前会话和项目上下文里，给我一版可以直接开工的开发计划。",
         "检查一下团队配置、插件和工作流，告诉我哪里还不顺手。",
       ];
   }

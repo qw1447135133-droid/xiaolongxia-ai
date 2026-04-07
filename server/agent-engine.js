@@ -51,6 +51,77 @@ function appendToSession(agentId, sessionId, ...messages) {
   }
 }
 
+function parseOpenAiToolArguments(rawArguments) {
+  if (!rawArguments || typeof rawArguments !== "string") return {};
+  try {
+    return JSON.parse(rawArguments);
+  } catch {
+    return {};
+  }
+}
+
+function flattenAnthropicContentToText(content) {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .filter((block) => block?.type === "text" && typeof block.text === "string")
+    .map((block) => block.text)
+    .join("\n\n")
+    .trim();
+}
+
+function mapSessionMessagesToOpenAiMessages(messages, systemPrompt) {
+  const mapped = [];
+
+  if (systemPrompt?.trim()) {
+    mapped.push({ role: "system", content: systemPrompt });
+  }
+
+  for (const message of messages) {
+    if (message.role === "user" && typeof message.content === "string") {
+      mapped.push({ role: "user", content: message.content });
+      continue;
+    }
+
+    if (message.role === "assistant") {
+      const content = Array.isArray(message.content) ? message.content : [];
+      const text = flattenAnthropicContentToText(content);
+      const toolCalls = content
+        .filter((block) => block?.type === "tool_use")
+        .map((block) => ({
+          id: block.id,
+          type: "function",
+          function: {
+            name: block.name,
+            arguments: JSON.stringify(block.input ?? {}),
+          },
+        }));
+
+      if (text || toolCalls.length > 0) {
+        mapped.push({
+          role: "assistant",
+          ...(text ? { content: text } : { content: "" }),
+          ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
+        });
+      }
+      continue;
+    }
+
+    if (message.role === "user" && Array.isArray(message.content)) {
+      for (const block of message.content) {
+        if (block?.type !== "tool_result") continue;
+        mapped.push({
+          role: "tool",
+          tool_call_id: block.tool_use_id,
+          content: typeof block.content === "string" ? block.content : JSON.stringify(block.content ?? ""),
+        });
+      }
+    }
+  }
+
+  return mapped;
+}
+
 // ---------------------------------------------------------------------------
 // 工具执行
 // 对应 Python _query_loop() 中的 tool_use 处理段
@@ -178,6 +249,7 @@ export async function queryAgent({
   maxTokens,
   model,
   client,
+  clientType = "anthropic",
   onToolEvent,
   toolContext,
 }) {
@@ -202,41 +274,76 @@ export async function queryAgent({
 
     // 3. 构建 API 请求参数
     const messages = [...getSessionMessages(agentId, sessionId)];
-    const requestParams = {
-      model,
-      max_tokens: maxTokens,
-      system: systemPrompt,
-      messages,
-    };
+    let assistantContent = [];
+    let stopReason = "end_turn";
 
-    // 仅在有工具时传入 tools 参数
-    if (tools.length > 0) {
-      requestParams.tools = tools.map((t) => t.toToolParam());
-    }
-
-    // 4. 调用 Anthropic Messages API
-    let response;
     try {
-      response = await client.messages.create(requestParams);
+      if (clientType === "openai") {
+        const response = await client.chat.completions.create({
+          model,
+          max_tokens: maxTokens,
+          messages: mapSessionMessagesToOpenAiMessages(messages, systemPrompt),
+          ...(tools.length > 0
+            ? {
+                tools: tools.map((tool) => ({
+                  type: "function",
+                  function: {
+                    name: tool.name,
+                    description: tool.searchHint,
+                    parameters: tool.inputSchema(),
+                  },
+                })),
+                tool_choice: "auto",
+              }
+            : {}),
+        });
+
+        inputTokensTotal += response.usage?.prompt_tokens ?? 0;
+        outputTokensTotal += response.usage?.completion_tokens ?? 0;
+
+        const choice = response.choices?.[0];
+        const message = choice?.message;
+        const text = typeof message?.content === "string" ? message.content : "";
+        const toolCalls = Array.isArray(message?.tool_calls) ? message.tool_calls : [];
+
+        assistantContent = [
+          ...(text ? [{ type: "text", text }] : []),
+          ...toolCalls.map((call) => ({
+            type: "tool_use",
+            id: call.id,
+            name: call.function?.name || "",
+            input: parseOpenAiToolArguments(call.function?.arguments),
+          })),
+        ];
+        stopReason = toolCalls.length > 0 ? "tool_use" : "end_turn";
+      } else {
+        const requestParams = {
+          model,
+          max_tokens: maxTokens,
+          system: systemPrompt,
+          messages,
+        };
+
+        if (tools.length > 0) {
+          requestParams.tools = tools.map((t) => t.toToolParam());
+        }
+
+        const response = await client.messages.create(requestParams);
+        inputTokensTotal += response.usage?.input_tokens ?? 0;
+        outputTokensTotal += response.usage?.output_tokens ?? 0;
+        assistantContent = response.content || [];
+        stopReason = response.stop_reason;
+      }
     } catch (err) {
       const msg = `API 调用失败：${err?.message || String(err)}`;
       console.error(`[agent-engine] ${agentId} API error:`, msg);
       return { text: msg, tokens: inputTokensTotal + outputTokensTotal };
     }
 
-    // 5. 累计 token 用量
-    inputTokensTotal += response.usage?.input_tokens ?? 0;
-    outputTokensTotal += response.usage?.output_tokens ?? 0;
-
-    // 6. 将 assistant 消息追加到会话历史
-    const assistantContent = response.content || [];
     appendToSession(agentId, sessionId, {
       role: "assistant",
       content: assistantContent,
     });
-
-    // 7. 检测 stop_reason
-    const stopReason = response.stop_reason;
 
     if (stopReason === "tool_use") {
       const toolUseBlocks = assistantContent.filter((b) => b.type === "tool_use");

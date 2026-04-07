@@ -1,0 +1,45 @@
+{
+  "id": "frontend",
+  "order": 10,
+  "category": "automation",
+  "sourceType": "built-in",
+  "sourceLabel": "Built-in Skill",
+  "accent": "#38bdf8",
+  "icon": "layout",
+  "recommendedAgents": ["designer", "orchestrator"],
+  "tags": ["ui", "electron", "react", "frontend"],
+  "locales": {
+    "zh-CN": {
+      "name": "前端开发",
+      "short": "页面、组件、交互与样式实现。",
+      "description": "负责界面搭建、布局调整、样式统一和交互细节补完，适合桌面工作台、聊天页和控制台类任务。",
+      "dispatch": "当任务包含页面、组件、布局、样式、前端修复或 Electron 交互时自动优先命中。",
+      "typicalTasks": "聊天页重构、设置页整理、控制台统一、交互反馈修复。",
+      "outputs": "React 组件、页面布局、样式更新和可交付前端代码。"
+    },
+    "zh-TW": {
+      "name": "前端開發",
+      "short": "頁面、元件、互動與樣式實作。",
+      "description": "負責介面搭建、版面調整、樣式統一與互動細節補完，適合桌面工作台、聊天頁與控制台類任務。",
+      "dispatch": "當任務包含頁面、元件、版面、樣式、前端修復或 Electron 互動時自動優先命中。",
+      "typicalTasks": "聊天頁重構、設定頁整理、控制台統一、互動回饋修復。",
+      "outputs": "React 元件、頁面版面、樣式更新與可交付前端程式碼。"
+    },
+    "en": {
+      "name": "Frontend Delivery",
+      "short": "Pages, components, interactions, and styling.",
+      "description": "Handles UI builds, layout cleanup, style unification, and interaction polish across the desktop workbench, chat view, and control surfaces.",
+      "dispatch": "Auto-selected when the task mentions pages, components, layouts, styling, frontend fixes, or Electron UI work.",
+      "typicalTasks": "Chat refactors, settings cleanup, control panel polish, and interaction fixes.",
+      "outputs": "React components, page layouts, style updates, and shippable frontend code."
+    },
+    "ja": {
+      "name": "フロントエンド",
+      "short": "画面、コンポーネント、操作、スタイル実装。",
+      "description": "デスクトップ作業台、チャット画面、コントロール面の UI 構築、レイアウト調整、見た目統一、操作改善を担当します。",
+      "dispatch": "ページ、コンポーネント、レイアウト、スタイル、フロント修正、Electron UI が含まれると自動で優先されます。",
+      "typicalTasks": "チャット改修、設定整理、コントロール面の統一、操作フィードバック修正。",
+      "outputs": "React コンポーネント、画面レイアウト、スタイル更新、納品可能な UI 実装。"
+    }
+  }
+}

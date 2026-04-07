@@ -26,6 +26,8 @@ import type {
   VerificationStepResult,
   ModelProvider,
   PlatformConfig,
+  AssistantFeedbackProfile,
+  AssistantMessageFeedback,
   Task,
   ControlCenterSectionId,
   TeamOperatingTemplateId,
@@ -59,7 +61,7 @@ import {
 import { getWorkflowTemplateById } from "@/lib/workflow-runtime";
 import { buildProjectContext, getProjectScopeKey, matchProjectScope } from "@/lib/project-context";
 import { derivePlatformProvisionState, getPlatformDefinition } from "@/lib/platform-connectors";
-import { PLUGIN_PACKS } from "@/lib/plugin-runtime";
+import { DEFAULT_ENABLED_PLUGIN_IDS, PLUGIN_PACKS } from "@/lib/plugin-runtime";
 import type {
   BusinessApprovalRecord,
   BusinessChannelSession,
@@ -97,7 +99,17 @@ interface TaskSlice {
   tasks: Task[];
   addTask: (task: Task) => void;
   updateTask: (id: string, updates: Partial<Task>) => void;
+  truncateTasksAfter: (id: string) => void;
   clearTasks: () => void;
+}
+
+interface AssistantFeedbackSlice {
+  assistantFeedbackProfile: AssistantFeedbackProfile;
+  rateAssistantTask: (payload: {
+    taskId: string;
+    feedback: AssistantMessageFeedback;
+    sessionId?: string;
+  }) => void;
 }
 
 interface ChatSlice {
@@ -179,6 +191,7 @@ interface SettingsSlice {
   setActiveTeamOperatingTemplate: (id: TeamOperatingTemplateId | null) => void;
   updateSemanticMemoryConfig: (updates: Partial<SemanticMemoryConfig>) => void;
   updateSemanticMemoryPgvectorConfig: (updates: Partial<SemanticMemoryConfig["pgvector"]>) => void;
+  resetSemanticMemory: () => void;
   updateDesktopProgramSettings: (updates: Partial<DesktopProgramSettings>) => void;
   replaceHermesDispatchSettings: (updates: Partial<HermesDispatchSettings>) => void;
   setHermesDispatchActivePlannerProfile: (id: string) => void;
@@ -510,6 +523,7 @@ interface WorkspaceProjectViewState {
 type Store =
   & AgentSlice
   & TaskSlice
+  & AssistantFeedbackSlice
   & ChatSlice
   & ActivitySlice
   & TaskNavigationSlice
@@ -773,6 +787,32 @@ const DEFAULT_DESKTOP_PROGRAM_SETTINGS: DesktopProgramSettings = {
     requireManualTakeoverForVerification: true,
   },
 };
+
+const DEFAULT_ASSISTANT_FEEDBACK_PROFILE: AssistantFeedbackProfile = {
+  liked: [],
+  disliked: [],
+  updatedAt: null,
+};
+
+function capAssistantFeedbackRecords(records: AssistantFeedbackProfile["liked"]) {
+  return records.slice(0, 8);
+}
+
+function normalizeAssistantFeedbackProfile(
+  profile: Partial<AssistantFeedbackProfile> | undefined,
+): AssistantFeedbackProfile {
+  return {
+    liked: Array.isArray(profile?.liked) ? capAssistantFeedbackRecords(profile.liked) : [],
+    disliked: Array.isArray(profile?.disliked) ? capAssistantFeedbackRecords(profile.disliked) : [],
+    updatedAt: typeof profile?.updatedAt === "number" ? profile.updatedAt : null,
+  };
+}
+
+function buildAssistantFeedbackExcerpt(task: Task) {
+  const raw = (task.result ?? task.description ?? "").replace(/\s+/g, " ").trim();
+  if (!raw) return "未记录具体片段";
+  return raw.length > 140 ? `${raw.slice(0, 140)}...` : raw;
+}
 
 const DEFAULT_HERMES_DISPATCH_SETTINGS: HermesDispatchSettings = {
   activePlannerProfileId: "default",
@@ -1496,6 +1536,18 @@ export const useStore = create<Store>()(
             .map(sess => (sess.id === sid ? { ...sess, tasks: nextTasks, updatedAt: Date.now() } : sess));
           return { tasks: nextTasks, chatSessions: sortChatSessions(sessions) };
         }),
+      truncateTasksAfter: (id) =>
+        set(s => {
+          const targetIndex = s.tasks.findIndex(task => task.id === id);
+          if (targetIndex === -1) return {};
+
+          const nextTasks = s.tasks.slice(targetIndex);
+          const sid = s.activeSessionId;
+          const sessions = s.chatSessions
+            .map(sess => (sess.id === sid ? { ...sess, tasks: nextTasks, updatedAt: Date.now() } : sess));
+
+          return { tasks: nextTasks, chatSessions: sortChatSessions(sessions) };
+        }),
       clearTasks: () =>
         set(s => ({
           tasks: [],
@@ -1639,12 +1691,64 @@ export const useStore = create<Store>()(
 
       providers: [],
       agentConfigs: initAgentConfigs(),
-      enabledPluginIds: [],
+      enabledPluginIds: DEFAULT_ENABLED_PLUGIN_IDS,
       userNickname: "您",
       activeTeamOperatingTemplateId: null,
+      assistantFeedbackProfile: DEFAULT_ASSISTANT_FEEDBACK_PROFILE,
       semanticMemoryConfig: DEFAULT_SEMANTIC_MEMORY_CONFIG,
       desktopProgramSettings: DEFAULT_DESKTOP_PROGRAM_SETTINGS,
       hermesDispatchSettings: DEFAULT_HERMES_DISPATCH_SETTINGS,
+      rateAssistantTask: ({ taskId, feedback, sessionId }) =>
+        set(s => {
+          const now = Date.now();
+          const resolvedSessionId = sessionId ?? s.activeSessionId;
+          const task =
+            s.tasks.find(item => item.id === taskId)
+            ?? s.chatSessions.flatMap(session => session.tasks).find(item => item.id === taskId)
+            ?? null;
+
+          if (!task || task.isUserMessage) return {};
+
+          const excerpt = buildAssistantFeedbackExcerpt(task);
+          const record = {
+            taskId,
+            sessionId: resolvedSessionId,
+            agentId: task.assignedTo,
+            feedback,
+            excerpt,
+            createdAt: now,
+          };
+
+          const updateTaskFeedback = (items: Task[]) =>
+            items.map(item =>
+              item.id === taskId
+                ? {
+                    ...item,
+                    feedback,
+                  }
+                : item,
+            );
+
+          const liked = s.assistantFeedbackProfile.liked.filter(item => item.taskId !== taskId);
+          const disliked = s.assistantFeedbackProfile.disliked.filter(item => item.taskId !== taskId);
+          const nextProfile: AssistantFeedbackProfile = {
+            liked: capAssistantFeedbackRecords(feedback === "up" ? [record, ...liked] : liked),
+            disliked: capAssistantFeedbackRecords(feedback === "down" ? [record, ...disliked] : disliked),
+            updatedAt: now,
+          };
+
+          return {
+            tasks: updateTaskFeedback(s.tasks),
+            chatSessions: sortChatSessions(
+              s.chatSessions.map(session => ({
+                ...session,
+                tasks: updateTaskFeedback(session.tasks),
+                updatedAt: session.tasks.some(item => item.id === taskId) ? now : session.updatedAt,
+              })),
+            ),
+            assistantFeedbackProfile: nextProfile,
+          };
+        }),
       setUserNickname: (nickname) => set({ userNickname: nickname }),
       setActiveTeamOperatingTemplate: (activeTeamOperatingTemplateId) => set({ activeTeamOperatingTemplateId }),
       platformConfigs: Object.fromEntries(
@@ -1728,8 +1832,11 @@ export const useStore = create<Store>()(
         set(s => {
           const pack = PLUGIN_PACKS.find(item => item.id === id);
           if (!pack) return {};
+          const allEnabled = pack.pluginIds.every(pluginId => s.enabledPluginIds.includes(pluginId));
           return {
-            enabledPluginIds: Array.from(new Set([...s.enabledPluginIds, ...pack.pluginIds])),
+            enabledPluginIds: allEnabled
+              ? s.enabledPluginIds.filter(pluginId => !pack.pluginIds.includes(pluginId))
+              : Array.from(new Set([...s.enabledPluginIds, ...pack.pluginIds])),
           };
         }),
       updateSemanticMemoryConfig: (updates) =>
@@ -1745,6 +1852,11 @@ export const useStore = create<Store>()(
               ...updates,
             },
           },
+        })),
+      resetSemanticMemory: () =>
+        set(() => ({
+          semanticMemoryConfig: DEFAULT_SEMANTIC_MEMORY_CONFIG,
+          semanticKnowledgeDocs: [],
         })),
       updateDesktopProgramSettings: (updates) =>
         set(s => ({
@@ -3673,6 +3785,7 @@ export const useStore = create<Store>()(
         platformConfigs: s.platformConfigs,
         userNickname: s.userNickname,
         activeTeamOperatingTemplateId: s.activeTeamOperatingTemplateId,
+        assistantFeedbackProfile: s.assistantFeedbackProfile,
         semanticMemoryConfig: s.semanticMemoryConfig,
         desktopProgramSettings: s.desktopProgramSettings,
         hermesDispatchSettings: s.hermesDispatchSettings,
@@ -3715,6 +3828,9 @@ export const useStore = create<Store>()(
         const merged = { ...current, ...persistedStore } as Store;
         const agentConfigs = normalizeAgentConfigs(current.agentConfigs, persistedStore.agentConfigs);
         const agents = syncAgentsWithConfigs(current.agents, agentConfigs, persistedStore.agents);
+        const assistantFeedbackProfile = normalizeAssistantFeedbackProfile(
+          persistedStore.assistantFeedbackProfile,
+        );
         const semanticMemoryConfig = normalizeSemanticMemoryConfig(
           current.semanticMemoryConfig,
           persistedStore.semanticMemoryConfig,
@@ -3741,6 +3857,7 @@ export const useStore = create<Store>()(
           ...merged,
           agentConfigs,
           agents,
+          assistantFeedbackProfile,
           semanticMemoryConfig,
           desktopProgramSettings,
           hermesDispatchSettings,

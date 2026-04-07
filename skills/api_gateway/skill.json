@@ -1,0 +1,46 @@
+{
+  "id": "api_gateway",
+  "order": 100,
+  "category": "integration",
+  "sourceType": "clawhub",
+  "sourceLabel": "ClawHub · API Gateway",
+  "sourceUrl": "https://clawhub.ai/skills?sort=downloads&nonSuspicious=true",
+  "accent": "#22c55e",
+  "icon": "plug",
+  "recommendedAgents": ["orchestrator", "explorer", "greeter"],
+  "tags": ["api", "oauth", "integration", "connector"],
+  "locales": {
+    "zh-CN": {
+      "name": "API 网关",
+      "short": "统一接入外部 API 与 SaaS。",
+      "description": "用于把消息平台、表单、CRM、邮件、文档和其他 SaaS 服务统一接入到数字员工平台。",
+      "dispatch": "当任务需要对接外部 API、配置 OAuth、连接 SaaS 或打通系统链路时自动命中。",
+      "typicalTasks": "接入 HubSpot、Notion、Google Workspace、Slack、表单和通知服务。",
+      "outputs": "连接方案、接入配置、字段映射和联调记录。"
+    },
+    "zh-TW": {
+      "name": "API 閘道",
+      "short": "統一接入外部 API 與 SaaS。",
+      "description": "用於把訊息平台、表單、CRM、郵件、文件與其他 SaaS 服務統一接入到數位員工平台。",
+      "dispatch": "當任務需要對接外部 API、配置 OAuth、連接 SaaS 或打通系統鏈路時自動命中。",
+      "typicalTasks": "接入 HubSpot、Notion、Google Workspace、Slack、表單與通知服務。",
+      "outputs": "連接方案、接入設定、欄位映射與聯調記錄。"
+    },
+    "en": {
+      "name": "API Gateway",
+      "short": "Unified access to external APIs and SaaS.",
+      "description": "Connects message platforms, forms, CRM tools, email, documents, and other SaaS systems into one integration layer.",
+      "dispatch": "Auto-selected when a task needs API integration, OAuth setup, SaaS connectivity, or system-to-system wiring.",
+      "typicalTasks": "Connect HubSpot, Notion, Google Workspace, Slack, forms, and notification services.",
+      "outputs": "Integration plans, connector configs, field mapping, and test records."
+    },
+    "ja": {
+      "name": "API ゲートウェイ",
+      "short": "外部 API と SaaS の統合接続。",
+      "description": "メッセージ基盤、フォーム、CRM、メール、文書系 SaaS を一つの接続層へ統合します。",
+      "dispatch": "外部 API 接続、OAuth 設定、SaaS 連携、システム間配線が必要なとき自動で使われます。",
+      "typicalTasks": "HubSpot、Notion、Google Workspace、Slack、フォーム、通知系の接続。",
+      "outputs": "統合設計、接続設定、フィールド対応表、疎通記録。"
+    }
+  }
+}

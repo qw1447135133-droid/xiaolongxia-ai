@@ -320,7 +320,7 @@ export function CommandInput({
 
       {showHeader ? (
         <div className="command-input__header">
-          <div className="command-input__title">{title ?? "给小龙虾团队发送消息"}</div>
+          <div className="command-input__title">{title ?? "给 STARCRAW 发送消息"}</div>
           <div className="command-input__hint">
             {hint ?? "像 ChatGPT 一样直接发问题、任务或文件上下文，系统会自动派发给合适的角色。"}
           </div>

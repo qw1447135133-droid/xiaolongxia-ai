@@ -1,0 +1,46 @@
+{
+  "id": "market_research",
+  "order": 140,
+  "category": "research",
+  "sourceType": "clawhub",
+  "sourceLabel": "ClawHub · Market Research",
+  "sourceUrl": "https://clawhub.ai/skills?sort=downloads&nonSuspicious=true",
+  "accent": "#10b981",
+  "icon": "trend",
+  "recommendedAgents": ["explorer", "writer", "performer"],
+  "tags": ["market", "research", "competitor", "demand"],
+  "locales": {
+    "zh-CN": {
+      "name": "市场调研",
+      "short": "竞品、定价、需求与市场判断。",
+      "description": "用于行业观察、竞品比较、市场规模判断、需求验证和销售切入点分析。",
+      "dispatch": "当任务需要做行业调研、用户需求验证、竞品比较或产品包装分析时自动命中。",
+      "typicalTasks": "市场规模估算、竞品地图、卖点整理、定价参考。",
+      "outputs": "调研摘要、竞品表、判断依据和行动建议。"
+    },
+    "zh-TW": {
+      "name": "市場調研",
+      "short": "競品、定價、需求與市場判斷。",
+      "description": "用於產業觀察、競品比較、市場規模判斷、需求驗證與銷售切入點分析。",
+      "dispatch": "當任務需要做產業調研、使用者需求驗證、競品比較或產品包裝分析時自動命中。",
+      "typicalTasks": "市場規模估算、競品地圖、賣點整理、定價參考。",
+      "outputs": "調研摘要、競品表、判斷依據與行動建議。"
+    },
+    "en": {
+      "name": "Market Research",
+      "short": "Competitors, pricing, demand, and market signals.",
+      "description": "Supports industry scans, competitor comparison, market sizing, demand validation, and go-to-market positioning analysis.",
+      "dispatch": "Auto-selected when the task needs industry research, demand validation, competitor comparison, or packaging analysis.",
+      "typicalTasks": "Market sizing, competitor maps, value proposition cleanup, and pricing references.",
+      "outputs": "Research summaries, competitor tables, rationale, and recommended actions."
+    },
+    "ja": {
+      "name": "市場調査",
+      "short": "競合、価格、需要、市場判断。",
+      "description": "業界観察、競合比較、市場規模推定、需要検証、営業切り口の整理を支援します。",
+      "dispatch": "業界調査、需要確認、競合比較、製品包装分析が必要なとき自動で使われます。",
+      "typicalTasks": "市場規模推定、競合マップ、価値訴求整理、価格参考。",
+      "outputs": "調査要約、競合表、判断根拠、次アクション提案。"
+    }
+  }
+}

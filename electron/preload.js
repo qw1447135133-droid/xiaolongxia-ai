@@ -10,6 +10,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   openWorkspacePreviewWindow: (preview) => ipcRenderer.invoke('open-workspace-preview-window', preview),
   runWorkspaceVerification: (targetPath) => ipcRenderer.invoke('run-workspace-verification', targetPath),
   launchNativeApplication: (payload) => ipcRenderer.invoke('launch-native-application', payload),
+  selectNativeApplicationFile: () => ipcRenderer.invoke('select-native-application-file'),
   listInstalledApplications: (forceRefresh) => ipcRenderer.invoke('list-installed-applications', forceRefresh),
   isElectron: true,
 });

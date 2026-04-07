@@ -1,0 +1,45 @@
+{
+  "id": "skill_creator",
+  "order": 80,
+  "category": "ops",
+  "sourceType": "local",
+  "sourceLabel": "Session Skill · Skill Creator",
+  "accent": "#a78bfa",
+  "icon": "wand",
+  "recommendedAgents": ["orchestrator", "writer"],
+  "tags": ["skills", "authoring", "template", "creation"],
+  "locales": {
+    "zh-CN": {
+      "name": "技能创建",
+      "short": "为缺失能力创建新的本地技能。",
+      "description": "用于把产品里反复出现的新工作流沉淀成本地 skill，并统一加入技能目录。",
+      "dispatch": "当现成 skill 不够用、需要沉淀新流程或把业务经验做成固定能力时自动命中。",
+      "typicalTasks": "创建客服话术 skill、创建销售跟进 skill、创建内容排期 skill。",
+      "outputs": "新的 skill 目录、SKILL.md、元数据和目录同步结果。"
+    },
+    "zh-TW": {
+      "name": "技能建立",
+      "short": "為缺失能力建立新的本地技能。",
+      "description": "用於把產品裡反覆出現的新工作流沉澱成本地 skill，並統一加入技能目錄。",
+      "dispatch": "當現成 skill 不夠用、需要沉澱新流程或把業務經驗做成固定能力時自動命中。",
+      "typicalTasks": "建立客服話術 skill、建立銷售跟進 skill、建立內容排期 skill。",
+      "outputs": "新的 skill 目錄、SKILL.md、中繼資料與目錄同步結果。"
+    },
+    "en": {
+      "name": "Skill Creator",
+      "short": "Create new local skills for missing capabilities.",
+      "description": "Turns repeated business workflows into local reusable skills and adds them into the product skill directory.",
+      "dispatch": "Auto-selected when existing skills are insufficient and the workflow should be captured as a reusable local capability.",
+      "typicalTasks": "Create a support reply skill, sales follow-up skill, or content scheduling skill.",
+      "outputs": "New skill folders, SKILL.md files, metadata, and refreshed catalog output."
+    },
+    "ja": {
+      "name": "スキル作成",
+      "short": "不足している能力をローカル skill として作成。",
+      "description": "繰り返し使う業務フローをローカル skill に落とし込み、製品の技能ディレクトリへ追加します。",
+      "dispatch": "既存 skill では足りず、業務知識を再利用可能な形で固定化したいとき自動で使われます。",
+      "typicalTasks": "客服応答 skill、営業フォロー skill、コンテンツ日程 skill の作成。",
+      "outputs": "新しい skill フォルダ、SKILL.md、メタデータ、更新済みカタログ。"
+    }
+  }
+}

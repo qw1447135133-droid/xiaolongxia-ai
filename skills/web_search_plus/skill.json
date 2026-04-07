@@ -1,0 +1,46 @@
+{
+  "id": "web_search_plus",
+  "order": 120,
+  "category": "research",
+  "sourceType": "clawhub",
+  "sourceLabel": "ClawHub · Web Search Plus",
+  "sourceUrl": "https://clawhub.ai/skills?sort=downloads&nonSuspicious=true",
+  "accent": "#06b6d4",
+  "icon": "compass",
+  "recommendedAgents": ["explorer", "writer", "greeter"],
+  "tags": ["search", "research", "web", "news"],
+  "locales": {
+    "zh-CN": {
+      "name": "网页搜索增强",
+      "short": "实时搜索、资料提取与多源调研。",
+      "description": "用于进行联网检索、跨站资料提取、竞品查找和问题求证，适合客服答复、销售调研和内容选题。",
+      "dispatch": "当任务需要最新资料、网页证据、多源对比或事实核实时自动命中。",
+      "typicalTasks": "竞品调研、FAQ 查证、市场信号搜索、客户背景补充。",
+      "outputs": "来源清单、调研摘要、关键信息和可引用链接。"
+    },
+    "zh-TW": {
+      "name": "網頁搜尋增強",
+      "short": "即時搜尋、資料提取與多源調研。",
+      "description": "用於進行聯網檢索、跨站資料提取、競品查找與問題求證，適合客服答覆、銷售調研與內容選題。",
+      "dispatch": "當任務需要最新資料、網頁證據、多源對比或事實核實時自動命中。",
+      "typicalTasks": "競品調研、FAQ 查證、市場訊號搜尋、客戶背景補充。",
+      "outputs": "來源清單、調研摘要、關鍵資訊與可引用連結。"
+    },
+    "en": {
+      "name": "Web Search Plus",
+      "short": "Live search, extraction, and multi-source research.",
+      "description": "Performs live web search, cross-site extraction, competitor research, and fact verification for support, sales, and content work.",
+      "dispatch": "Auto-selected when a task needs current information, web evidence, multi-source comparison, or fact checking.",
+      "typicalTasks": "Competitor research, FAQ verification, market signal search, and customer background checks.",
+      "outputs": "Source lists, research summaries, key facts, and citable links."
+    },
+    "ja": {
+      "name": "Web 検索強化",
+      "short": "最新検索、抽出、複数ソース調査。",
+      "description": "最新情報の検索、複数サイト抽出、競合調査、事実確認を行い、客服・営業・コンテンツ業務を支援します。",
+      "dispatch": "最新情報、Web 証拠、複数ソース比較、事実確認が必要なとき自動で使われます。",
+      "typicalTasks": "競合調査、FAQ 確認、市場シグナル検索、顧客背景調査。",
+      "outputs": "情報源一覧、調査要約、主要事実、参照リンク。"
+    }
+  }
+}

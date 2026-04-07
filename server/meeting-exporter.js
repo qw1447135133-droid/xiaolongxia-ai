@@ -14,12 +14,12 @@ const MIME_TYPES = {
 };
 
 const AGENT_LABELS = {
-  orchestrator: "虾总管",
-  explorer: "探海龙虾",
-  writer: "执笔龙虾",
-  designer: "幻影龙虾",
-  performer: "戏精龙虾",
-  greeter: "迎客龙虾",
+  orchestrator: "鹦鹉螺",
+  explorer: "探海鲸鱼",
+  writer: "星海章鱼",
+  designer: "珊瑚水母",
+  performer: "逐浪海豚",
+  greeter: "招潮蟹",
 };
 
 const ROLE_LABELS = {
@@ -82,7 +82,7 @@ async function writeDocx(filePath, meeting) {
   const doc = new Document({
     creator: "xiaolongxia-ai",
     title: `${meeting.topic} - 会议结论`,
-    description: "小龙虾 AI 会议导出",
+    description: "STARCRAW 会议导出",
     sections: [
       {
         properties: {

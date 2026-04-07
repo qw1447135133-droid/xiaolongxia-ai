@@ -6,7 +6,7 @@
  * 3. 加载 Next.js 前端（dev 模式用 localhost:3000，生产用打包文件）
  */
 
-const { app, BrowserWindow, ipcMain, shell } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, shell } = require('electron');
 const path = require('path');
 const { spawn } = require('child_process');
 const fs = require('fs');
@@ -116,6 +116,24 @@ async function launchNativeApplication(payload) {
   }
 }
 
+async function selectNativeApplicationFile() {
+  const result = await dialog.showOpenDialog(mainWindow ?? undefined, {
+    title: '选择应用程序',
+    buttonLabel: '选择应用',
+    properties: ['openFile'],
+    filters: [
+      { name: '应用程序', extensions: ['exe', 'lnk', 'bat', 'cmd', 'com'] },
+      { name: '所有文件', extensions: ['*'] },
+    ],
+  });
+
+  if (result.canceled || !Array.isArray(result.filePaths) || result.filePaths.length === 0) {
+    return null;
+  }
+
+  return result.filePaths[0];
+}
+
 // ── 启动 WS 服务器 ──
 function startWsServer() {
   const serverScript = isDev()
@@ -185,7 +203,7 @@ function createMainWindow() {
     height: 900,
     minWidth: 900,
     minHeight: 600,
-    title: '🦞 小龙虾 AI 团队',
+    title: 'STARCRAW',
     backgroundColor: '#0d0f14',
     webPreferences: {
       nodeIntegration: false,
@@ -222,6 +240,7 @@ app.whenReady().then(async () => {
   // ── IPC：前端获取 WS 端口 ──
   ipcMain.handle('get-ws-port', () => WS_PORT);
   ipcMain.handle('launch-native-application', async (_event, payload) => launchNativeApplication(payload));
+  ipcMain.handle('select-native-application-file', async () => selectNativeApplicationFile());
 
   startWsServer();
 

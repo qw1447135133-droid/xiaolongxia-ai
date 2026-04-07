@@ -50,7 +50,7 @@ export default class TelegramAdapter {
       if (!text) return;
 
       if (text === "/start") {
-        this.bot.sendMessage(userId, "🦞 小龙虾 AI 团队已就位，直接发指令即可。");
+        this.bot.sendMessage(userId, "STARCRAW 已就位，直接发指令即可。");
         return;
       }
 

@@ -4,19 +4,15 @@ import { useEffect, useMemo, useState } from "react";
 import { useStore } from "@/store";
 import { filterByProjectScope, getRunProjectScopeKey, getSessionProjectLabel } from "@/lib/project-context";
 import { getTeamOperatingTemplate, TEAM_OPERATING_SURFACES } from "@/store/types";
-import type { ControlCenterSectionId, TeamOperatingTemplateId, UiLocale } from "@/store/types";
-import { formatAutomationModeLabel, getUiText, pickLocaleText } from "@/lib/ui-locale";
-import { ArtifactsCenter } from "./ArtifactsCenter";
+import type { ControlCenterSectionId, UiLocale } from "@/store/types";
+import { getUiText, pickLocaleText } from "@/lib/ui-locale";
 import { BusinessEntitiesCenter } from "./BusinessEntitiesCenter";
 import { ChannelsCenter } from "./ChannelsCenter";
-import { ExecutionCenter } from "./ExecutionCenter";
 import { LaunchReadinessPanel } from "./LaunchReadinessPanel";
-import { NativeAppsCenter } from "./NativeAppsCenter";
 import { PluginsCenter } from "./PluginsCenter";
 import { RemoteOpsCenter } from "./RemoteOpsCenter";
 import { SettingsPanel } from "./SettingsPanel";
 import { SkillsCenter } from "./SkillsCenter";
-import { WorkflowCenter } from "./WorkflowCenter";
 
 function truncateText(value: string, maxLength: number): string {
   if (value.length <= maxLength) return value;
@@ -33,16 +29,6 @@ function getControlCenterSections(locale: UiLocale): Array<{ id: ControlCenterSe
         "zh-TW": "工作台狀態與控制台結構",
         en: "Workbench status and shell structure",
         ja: "ワークベンチ状態とコントロール構造",
-      }),
-    },
-    {
-      id: "readiness",
-      label: pickLocaleText(locale, { "zh-CN": "上线准备度", "zh-TW": "上線準備度", en: "Launch Readiness", ja: "公開準備度" }),
-      hint: pickLocaleText(locale, {
-        "zh-CN": "上线阻断、恢复项与发布风险",
-        "zh-TW": "上線阻斷、恢復項與發布風險",
-        en: "Go-live blockers, recovery, and launch risks",
-        ja: "公開前の阻害要因、復旧項目、リスク",
       }),
     },
     {
@@ -66,36 +52,6 @@ function getControlCenterSections(locale: UiLocale): Array<{ id: ControlCenterSe
       }),
     },
     {
-      id: "workflow",
-      label: pickLocaleText(locale, { "zh-CN": "工作流中心", "zh-TW": "工作流中心", en: "Workflow Center", ja: "ワークフローセンター" }),
-      hint: pickLocaleText(locale, {
-        "zh-CN": "复用流程模板与运行队列",
-        "zh-TW": "重用流程模板與運行佇列",
-        en: "Reusable workflow templates and queues",
-        ja: "再利用できるワークフローとキュー",
-      }),
-    },
-    {
-      id: "agent-models",
-      label: pickLocaleText(locale, { "zh-CN": "Agent 模型", "zh-TW": "Agent 模型", en: "Agent Models", ja: "Agent モデル" }),
-      hint: pickLocaleText(locale, {
-        "zh-CN": "调整每个 Agent 的模型、档位与技能",
-        "zh-TW": "調整每個 Agent 的模型、檔位與技能",
-        en: "Adjust each agent's model, tier, and skills",
-        ja: "各 Agent のモデル、ティア、スキルを調整",
-      }),
-    },
-    {
-      id: "desktop",
-      label: pickLocaleText(locale, { "zh-CN": "桌面应用", "zh-TW": "桌面應用", en: "Desktop Apps", ja: "デスクトップアプリ" }),
-      hint: pickLocaleText(locale, {
-        "zh-CN": "启动本机程序与原生工具",
-        "zh-TW": "啟動本機程式與原生工具",
-        en: "Launch local programs and native tools",
-        ja: "ローカルアプリとネイティブツールを起動",
-      }),
-    },
-    {
       id: "skills",
       label: pickLocaleText(locale, { "zh-CN": "技能中心", "zh-TW": "技能中心", en: "Skills Center", ja: "スキルセンター" }),
       hint: pickLocaleText(locale, {
@@ -116,23 +72,13 @@ function getControlCenterSections(locale: UiLocale): Array<{ id: ControlCenterSe
       }),
     },
     {
-      id: "artifacts",
-      label: pickLocaleText(locale, { "zh-CN": "产物中心", "zh-TW": "產物中心", en: "Artifacts Center", ja: "成果物センター" }),
-      hint: pickLocaleText(locale, {
-        "zh-CN": "统一结果面板与输出架",
-        "zh-TW": "統一結果面板與輸出架",
-        en: "Unified output shelf and result board",
-        ja: "統合出力シェルフと結果ボード",
-      }),
-    },
-    {
       id: "settings",
       label: pickLocaleText(locale, { "zh-CN": "设置", "zh-TW": "設定", en: "Settings", ja: "設定" }),
       hint: pickLocaleText(locale, {
-        "zh-CN": "API 提供方与工作区偏好",
-        "zh-TW": "API 供應商與工作區偏好",
-        en: "API providers and workspace preferences",
-        ja: "API プロバイダーとワークスペース設定",
+        "zh-CN": "Agent 模型、API 提供方与工作区偏好",
+        "zh-TW": "Agent 模型、API 供應商與工作區偏好",
+        en: "Agent models, API providers, and workspace preferences",
+        ja: "Agent モデル、API プロバイダー、ワークスペース設定",
       }),
     },
     {
@@ -174,13 +120,37 @@ export function ControlCenter() {
   const activeSectionMeta = sections.find(item => item.id === section) ?? sections[0];
 
   useEffect(() => {
-    if (section === "api-providers" || section === "workspace") {
+    if (section === "agent-models" || section === "api-providers" || section === "workspace") {
       setActiveControlCenterSection("settings");
     }
   }, [section, setActiveControlCenterSection]);
 
   useEffect(() => {
+    if ((section as string) === "readiness") {
+      setActiveControlCenterSection("overview");
+    }
+  }, [section, setActiveControlCenterSection]);
+
+  useEffect(() => {
     if (section === "execution") {
+      setActiveControlCenterSection("overview");
+    }
+  }, [section, setActiveControlCenterSection]);
+
+  useEffect(() => {
+    if (section === "workflow") {
+      setActiveControlCenterSection("overview");
+    }
+  }, [section, setActiveControlCenterSection]);
+
+  useEffect(() => {
+    if (section === "desktop") {
+      setActiveControlCenterSection("settings");
+    }
+  }, [section, setActiveControlCenterSection]);
+
+  useEffect(() => {
+    if (section === "artifacts") {
       setActiveControlCenterSection("overview");
     }
   }, [section, setActiveControlCenterSection]);
@@ -254,59 +224,67 @@ export function ControlCenter() {
 
       <div className="settings-shell__content">
         {section === "overview" && (
-          <>
-            <ControlOverview
-              activeTemplateId={activeTeamOperatingTemplateId}
-              onSelectSection={setActiveControlCenterSection}
-            />
-            <ExecutionCenter />
-          </>
+          <div style={{ display: "grid", gap: 14 }}>
+            <ControlOverview onSelectSection={setActiveControlCenterSection} />
+            <LaunchReadinessPanel compact onSelectSection={setActiveControlCenterSection} />
+          </div>
         )}
-        {section === "readiness" && <ReadinessCenter onSelectSection={setActiveControlCenterSection} />}
         {section === "entities" && <EntitiesChannelsCenter activeTab={entitiesSubTab} onTabChange={setEntitiesSubTab} />}
         {section === "remote" && <RemoteOpsCenter />}
-        {section === "workflow" && <WorkflowCenter />}
-        {section === "agent-models" && <SettingsPanel initialSection="agents" allowedSections={["agents"]} />}
-        {section === "desktop" && <NativeAppsCenter />}
         {section === "skills" && <SkillsCenter />}
         {section === "plugins" && <PluginsCenter />}
-        {section === "artifacts" && <ArtifactsCenter />}
-        {section === "settings" && <UnifiedSettingsCenter />}
+        {(section === "settings" || section === "desktop") && (
+          <UnifiedSettingsCenter initialRuntimeSection={section === "desktop" ? "desktop" : "agents"} />
+        )}
         {section === "about" && <AboutControlCenter />}
       </div>
     </div>
   );
 }
 
-function UnifiedSettingsCenter() {
+function UnifiedSettingsCenter({
+  initialRuntimeSection = "agents",
+}: {
+  initialRuntimeSection?: "agents" | "providers" | "desktop" | "semantic" | "platforms";
+}) {
   const locale = useStore(s => s.locale);
-  const [activeTab, setActiveTab] = useState<"providers" | "workspace">("providers");
+  const [activeSection, setActiveSection] = useState<"agents" | "providers" | "desktop" | "semantic" | "platforms" | "workspace">(initialRuntimeSection);
+
+  useEffect(() => {
+    setActiveSection(initialRuntimeSection);
+  }, [initialRuntimeSection]);
 
   return (
     <div className="control-center">
-      <div className="control-center__quick-actions" style={{ marginTop: 0 }}>
-        <button
-          type="button"
-          className="btn-ghost"
-          onClick={() => setActiveTab("providers")}
-          style={activeTab === "providers" ? { borderColor: "rgba(var(--accent-rgb), 0.24)", background: "rgba(var(--accent-rgb), 0.1)", color: "var(--accent)" } : undefined}
-        >
-          {pickLocaleText(locale, { "zh-CN": "API 设置", "zh-TW": "API 設定", en: "API Settings", ja: "API 設定" })}
-        </button>
-        <button
-          type="button"
-          className="btn-ghost"
-          onClick={() => setActiveTab("workspace")}
-          style={activeTab === "workspace" ? { borderColor: "rgba(var(--accent-rgb), 0.24)", background: "rgba(var(--accent-rgb), 0.1)", color: "var(--accent)" } : undefined}
-        >
-          {pickLocaleText(locale, { "zh-CN": "工作区", "zh-TW": "工作區", en: "Workspace", ja: "ワークスペース" })}
-        </button>
+      <div className="control-center__quick-actions" style={{ marginTop: 0, flexWrap: "wrap" }}>
+        {[
+          { id: "agents", label: pickLocaleText(locale, { "zh-CN": "Agent 设置", "zh-TW": "Agent 設定", en: "Agent Settings", ja: "Agent 設定" }) },
+          { id: "providers", label: pickLocaleText(locale, { "zh-CN": "模型供应商", "zh-TW": "模型供應商", en: "Providers", ja: "モデルプロバイダー" }) },
+          { id: "desktop", label: pickLocaleText(locale, { "zh-CN": "本机程序", "zh-TW": "本機程式", en: "Desktop Programs", ja: "ローカルプログラム" }) },
+          { id: "semantic", label: pickLocaleText(locale, { "zh-CN": "语义记忆", "zh-TW": "語義記憶", en: "Semantic Memory", ja: "セマンティック記憶" }) },
+          { id: "platforms", label: pickLocaleText(locale, { "zh-CN": "消息平台", "zh-TW": "訊息平台", en: "Platforms", ja: "メッセージプラットフォーム" }) },
+          { id: "workspace", label: pickLocaleText(locale, { "zh-CN": "工作区", "zh-TW": "工作區", en: "Workspace", ja: "ワークスペース" }) },
+        ].map(item => (
+          <button
+            key={item.id}
+            type="button"
+            className="btn-ghost"
+            onClick={() => setActiveSection(item.id as typeof activeSection)}
+            style={activeSection === item.id ? { borderColor: "rgba(var(--accent-rgb), 0.24)", background: "rgba(var(--accent-rgb), 0.1)", color: "var(--accent)" } : undefined}
+          >
+            {item.label}
+          </button>
+        ))}
       </div>
 
-      {activeTab === "providers" ? (
-        <SettingsPanel initialSection="providers" allowedSections={["providers"]} />
-      ) : (
+      {activeSection === "workspace" ? (
         <WorkspacePreferences />
+      ) : (
+        <SettingsPanel
+          initialSection={activeSection}
+          allowedSections={["agents", "providers", "desktop", "semantic", "platforms"]}
+          showSectionTabs={false}
+        />
       )}
     </div>
   );
@@ -348,10 +326,8 @@ function EntitiesChannelsCenter({
 }
 
 function ControlOverview({
-  activeTemplateId,
   onSelectSection,
 }: {
-  activeTemplateId: TeamOperatingTemplateId | null;
   onSelectSection: (section: ControlCenterSectionId) => void;
 }) {
   const locale = useStore(s => s.locale);
@@ -391,6 +367,17 @@ function ControlOverview({
 
   const runningAgents = Object.values(agents).filter(agent => agent.status === "running").length;
   const enabledPlatforms = Object.values(platformConfigs).filter(platform => platform.enabled).length;
+  const businessObjectCount =
+    scopedCustomers.length +
+    scopedLeads.length +
+    scopedTickets.length +
+    scopedContentTasks.length +
+    scopedChannelSessions.length;
+  const contextAssetCount =
+    scopedDeskNotes.length +
+    scopedSavedBundles.length +
+    scopedProjectMemories.length +
+    scopedKnowledgeDocs.length;
   const pendingApprovals = scopedApprovals.filter(item => item.status === "pending").length;
   const recoveredSourceIds = new Set(scopedRuns.map(run => run.retryOfRunId).filter(Boolean));
   const recoveryRuns = scopedRuns.filter(run => {
@@ -436,8 +423,8 @@ function ControlOverview({
         en: "Failed, blocked, or resumable runs should be handled here.",
         ja: "失敗・阻害・再開待ちの run をここで人手収束します。",
       }),
-      actionLabel: pickLocaleText(locale, { "zh-CN": "去执行日志", "zh-TW": "去執行日誌", en: "Open Execution Log", ja: "実行ログを開く" }),
-      section: "execution" as const,
+      actionLabel: pickLocaleText(locale, { "zh-CN": "去远程值守", "zh-TW": "去遠程值守", en: "Open Remote Ops", ja: "遠隔運用を開く" }),
+      section: "remote" as const,
     } : null,
     pendingReplySessions > 0 ? {
       id: "sessions",
@@ -483,24 +470,53 @@ function ControlOverview({
     actionLabel: string;
     section: ControlCenterSectionId;
   }>;
+  const visibleFocusCards = manualFocusCards.slice(0, 2);
 
   return (
     <div className="control-center">
       <div className="control-center__stats">
         {[
-          { label: pickLocaleText(locale, { "zh-CN": "待审批", "zh-TW": "待審批", en: "Pending Approvals", ja: "承認待ち" }), value: pendingApprovals, color: pendingApprovals > 0 ? "var(--warning)" : "var(--success)" },
-          { label: pickLocaleText(locale, { "zh-CN": "恢复队列", "zh-TW": "恢復佇列", en: "Recovery Queue", ja: "復旧キュー" }), value: recoveryRuns, color: recoveryRuns > 0 ? "var(--warning)" : "var(--success)" },
-          { label: pickLocaleText(locale, { "zh-CN": "待回复会话", "zh-TW": "待回覆會話", en: "Pending Replies", ja: "返信待ち" }), value: pendingReplySessions, color: pendingReplySessions > 0 ? "#60a5fa" : "var(--success)" },
-          { label: pickLocaleText(locale, { "zh-CN": "桌面接管", "zh-TW": "桌面接管", en: "Desktop Takeover", ja: "デスクトップ引き継ぎ" }), value: manualTakeoverRequired ? pickLocaleText(locale, { "zh-CN": "待处理", "zh-TW": "待處理", en: "Required", ja: "対応待ち" }) : pickLocaleText(locale, { "zh-CN": "正常", "zh-TW": "正常", en: "Clear", ja: "正常" }), color: manualTakeoverRequired ? "#ef4444" : "var(--success)" },
+          {
+            label: pickLocaleText(locale, { "zh-CN": "业务对象", "zh-TW": "業務對象", en: "Business Objects", ja: "業務オブジェクト" }),
+            value: businessObjectCount,
+            color: "var(--accent)",
+          },
+          {
+            label: pickLocaleText(locale, { "zh-CN": "上下文资产", "zh-TW": "上下文資產", en: "Context Assets", ja: "コンテキスト資産" }),
+            value: contextAssetCount,
+            color: "var(--text)",
+          },
+          {
+            label: pickLocaleText(locale, { "zh-CN": "运行 Agent", "zh-TW": "運行 Agent", en: "Running Agents", ja: "稼働 Agent" }),
+            value: runningAgents,
+            color: runningAgents > 0 ? "var(--success)" : "var(--text)",
+          },
+          {
+            label: pickLocaleText(locale, { "zh-CN": "启用平台", "zh-TW": "啟用平台", en: "Enabled Platforms", ja: "有効プラットフォーム" }),
+            value: enabledPlatforms,
+            color: enabledPlatforms > 0 ? "var(--success)" : "var(--warning)",
+          },
         ].map(item => (
-          <div key={item.label} className="control-center__stat-card">
+          <div key={item.label} className="control-center__stat-card" style={{ padding: 14 }}>
             <div className="control-center__stat-label">{item.label}</div>
-            <div className="control-center__stat-value" style={{ color: item.color }}>{item.value}</div>
+            <div
+              className="control-center__stat-value"
+              style={{
+                color: item.color,
+                fontSize: 22,
+                lineHeight: 1.25,
+              }}
+            >
+              {item.value}
+            </div>
           </div>
         ))}
       </div>
 
-      <div className="control-center__columns">
+      <div
+        className="control-center__columns"
+        style={{ gridTemplateColumns: "minmax(0, 1fr) minmax(320px, 0.92fr)", alignItems: "start" }}
+      >
         <div className="control-center__panel">
           <div className="control-center__panel-title">{pickLocaleText(locale, {
             "zh-CN": "现在需要你看的",
@@ -508,15 +524,17 @@ function ControlOverview({
             en: "What Needs Your Attention",
             ja: "今見るべき項目",
           })}</div>
-          {manualFocusCards.length > 0 ? (
+          {visibleFocusCards.length > 0 ? (
             <div className="control-center__approval-list">
-              {manualFocusCards.map(card => (
+              {visibleFocusCards.map(card => (
                 <article key={card.id} className="control-center__approval-card">
-                  <div className="control-center__action-eyebrow">{card.eyebrow}</div>
-                  <div className="control-center__panel-title" style={{ fontSize: 16 }}>
+                  <div className="control-center__eyebrow">{card.eyebrow}</div>
+                  <div className="control-center__panel-title" style={{ fontSize: 15 }}>
                     {truncateText(card.title, 72)}
                   </div>
-                  <div className="control-center__copy">{truncateText(card.copy, 180)}</div>
+                  <div className="control-center__copy" style={{ marginTop: 0, fontSize: 12, lineHeight: 1.65 }}>
+                    {truncateText(card.copy, 128)}
+                  </div>
                   <div className="control-center__quick-actions">
                     <button type="button" className="btn-ghost" onClick={() => onSelectSection(card.section)}>
                       {card.actionLabel}
@@ -535,39 +553,37 @@ function ControlOverview({
               })}
             </div>
           )}
+          {manualFocusCards.length > visibleFocusCards.length ? (
+            <div className="control-center__copy" style={{ marginTop: 8, fontSize: 12 }}>
+              {pickLocaleText(locale, {
+                "zh-CN": `还有 ${manualFocusCards.length - visibleFocusCards.length} 项已折叠，进入远程值守后可查看全部。`,
+                "zh-TW": `還有 ${manualFocusCards.length - visibleFocusCards.length} 項已摺疊，進入遠程值守後可查看全部。`,
+                en: `${manualFocusCards.length - visibleFocusCards.length} more items are folded into Remote Ops.`,
+                ja: `あと ${manualFocusCards.length - visibleFocusCards.length} 件は遠隔運用に折りたたんでいます。`,
+              })}
+            </div>
+          ) : null}
         </div>
 
         <div className="control-center__panel">
           <div className="control-center__panel-title">{pickLocaleText(locale, {
-            "zh-CN": "项目快照",
-            "zh-TW": "專案快照",
-            en: "Project Snapshot",
-            ja: "プロジェクト概要",
+            "zh-CN": "项目摘要",
+            "zh-TW": "專案摘要",
+            en: "Project Summary",
+            ja: "プロジェクト要約",
           })}</div>
           <div className="control-center__list control-center__list--dense">
             <div>{pickLocaleText(locale, { "zh-CN": "当前项目", "zh-TW": "目前專案", en: "Current Project", ja: "現在のプロジェクト" })}: <strong className="control-center__strong">{activeSession ? getSessionProjectLabel(activeSession) : uiText.common.generalProject}</strong></div>
-            <div>{pickLocaleText(locale, { "zh-CN": "渠道会话", "zh-TW": "渠道會話", en: "Channel Sessions", ja: "チャネル会話" })}: <strong className="control-center__strong">{scopedChannelSessions.length}</strong></div>
+            <div>{pickLocaleText(locale, { "zh-CN": "系统链路", "zh-TW": "系統鏈路", en: "System Link", ja: "システム接続" })}: <strong className="control-center__strong">{wsStatus === "connected" ? pickLocaleText(locale, { "zh-CN": "在线", "zh-TW": "在線", en: "Online", ja: "オンライン" }) : pickLocaleText(locale, { "zh-CN": "离线", "zh-TW": "離線", en: "Offline", ja: "オフライン" })}</strong></div>
             <div>{pickLocaleText(locale, { "zh-CN": "客户 / 线索", "zh-TW": "客戶 / 線索", en: "Customers / Leads", ja: "顧客 / リード" })}: <strong className="control-center__strong">{scopedCustomers.length} / {scopedLeads.length}</strong></div>
             <div>{pickLocaleText(locale, { "zh-CN": "工单 / 内容任务", "zh-TW": "工單 / 內容任務", en: "Tickets / Content Tasks", ja: "チケット / コンテンツ" })}: <strong className="control-center__strong">{scopedTickets.length} / {scopedContentTasks.length}</strong></div>
-            <div>{pickLocaleText(locale, { "zh-CN": "上下文资产", "zh-TW": "上下文資產", en: "Context Assets", ja: "コンテキスト資産" })}: <strong className="control-center__strong">{scopedDeskNotes.length + scopedSavedBundles.length + scopedProjectMemories.length + scopedKnowledgeDocs.length}</strong></div>
+            <div>{pickLocaleText(locale, { "zh-CN": "渠道会话", "zh-TW": "渠道會話", en: "Channel Sessions", ja: "チャネル会話" })}: <strong className="control-center__strong">{scopedChannelSessions.length}</strong></div>
             <div>{pickLocaleText(locale, { "zh-CN": "运行代理 / 平台", "zh-TW": "運行代理 / 平台", en: "Running Agents / Platforms", ja: "稼働 Agent / プラットフォーム" })}: <strong className="control-center__strong">{runningAgents} / {enabledPlatforms}</strong></div>
-            <div>{pickLocaleText(locale, { "zh-CN": "实时链路", "zh-TW": "即時鏈路", en: "Realtime Link", ja: "リアルタイム接続" })}: <strong className="control-center__strong">{wsStatus === "connected" ? pickLocaleText(locale, { "zh-CN": "在线", "zh-TW": "在線", en: "Online", ja: "オンライン" }) : pickLocaleText(locale, { "zh-CN": "离线", "zh-TW": "離線", en: "Offline", ja: "オフライン" })}</strong></div>
             <div>{pickLocaleText(locale, { "zh-CN": "提供方", "zh-TW": "提供方", en: "Providers", ja: "プロバイダー" })}: <strong className="control-center__strong">{providers.length}</strong></div>
+            <div>{pickLocaleText(locale, { "zh-CN": "待人工处理", "zh-TW": "待人工處理", en: "Human Queue", ja: "手動対応待ち" })}: <strong className="control-center__strong">{pendingApprovals + pendingReplySessions + (manualTakeoverRequired ? 1 : 0)}</strong></div>
           </div>
         </div>
       </div>
-    </div>
-  );
-}
-
-function ReadinessCenter({
-  onSelectSection,
-}: {
-  onSelectSection: (section: ControlCenterSectionId) => void;
-}) {
-  return (
-    <div className="control-center">
-      <LaunchReadinessPanel onSelectSection={onSelectSection} />
     </div>
   );
 }
@@ -724,16 +740,10 @@ function AboutControlCenter() {
             ja: "6. 拡張の可視化、権限ラベル、ローカルプラグインを扱う Plugins Center。",
           })}</div>
           <div>{pickLocaleText(locale, {
-            "zh-CN": "7. Artifacts Center，把任务结果、图片、会议摘要和 Desk 上下文统一收口。",
-            "zh-TW": "7. Artifacts Center，把任務結果、圖片、會議摘要與 Desk 上下文統一收口。",
-            en: "7. An Artifacts Center for task results, images, meeting summaries, and desk context in one output shelf.",
-            ja: "7. タスク結果、画像、会議要約、Desk 文脈をひとつにまとめる Artifacts Center。",
-          })}</div>
-          <div>{pickLocaleText(locale, {
-            "zh-CN": "8. Channels Center，复用现有平台配置做多平台桥接可见性。",
-            "zh-TW": "8. Channels Center，復用現有平台配置做多平台橋接可見性。",
-            en: "8. A Channels Center for multi-platform bridge visibility using the existing platform configs.",
-            ja: "8. 既存のプラットフォーム設定を使って可視化する Channels Center。",
+            "zh-CN": "7. Channels Center，复用现有平台配置做多平台桥接可见性。",
+            "zh-TW": "7. Channels Center，復用現有平台配置做多平台橋接可見性。",
+            en: "7. A Channels Center for multi-platform bridge visibility using the existing platform configs.",
+            ja: "7. 既存のプラットフォーム設定を使って可視化する Channels Center。",
           })}</div>
         </div>
       </div>

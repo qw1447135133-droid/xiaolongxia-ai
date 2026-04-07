@@ -1,0 +1,45 @@
+{
+  "id": "channel_support_triage",
+  "order": 150,
+  "category": "channels",
+  "sourceType": "local",
+  "sourceLabel": "Local Product Skill",
+  "accent": "#3b82f6",
+  "icon": "chat",
+  "recommendedAgents": ["greeter", "orchestrator"],
+  "tags": ["support", "triage", "channel", "reply"],
+  "locales": {
+    "zh-CN": {
+      "name": "客服分流",
+      "short": "识别会话优先级、风险与回复路径。",
+      "description": "用于把渠道消息分成自动回复、待审批、人工接管和失败重试等路径，是客服值守闭环的核心技能。",
+      "dispatch": "当任务涉及渠道入站、客服问答、投诉识别、低置信度分流或人工接管时自动命中。",
+      "typicalTasks": "FAQ 自动回复、投诉升级、人工接管提醒、失败重试建议。",
+      "outputs": "会话分级、回复建议、接管结论和审计记录。"
+    },
+    "zh-TW": {
+      "name": "客服分流",
+      "short": "識別會話優先級、風險與回覆路徑。",
+      "description": "用於把渠道訊息分成自動回覆、待審批、人工接管與失敗重試等路徑，是客服值守閉環的核心技能。",
+      "dispatch": "當任務涉及渠道入站、客服問答、投訴識別、低置信度分流或人工接管時自動命中。",
+      "typicalTasks": "FAQ 自動回覆、投訴升級、人工接管提醒、失敗重試建議。",
+      "outputs": "會話分級、回覆建議、接管結論與審計記錄。"
+    },
+    "en": {
+      "name": "Support Triage",
+      "short": "Route sessions by priority, risk, and reply path.",
+      "description": "Classifies channel conversations into auto-reply, approval-needed, manual takeover, or retry paths and forms the core of the support loop.",
+      "dispatch": "Auto-selected for inbound channel handling, support QA, complaint detection, low-confidence routing, and manual takeover cases.",
+      "typicalTasks": "FAQ auto-replies, complaint escalation, takeover prompts, and retry suggestions.",
+      "outputs": "Session prioritization, reply suggestions, takeover decisions, and audit-ready records."
+    },
+    "ja": {
+      "name": "客服トリアージ",
+      "short": "会話の優先度、リスク、返信経路を判定。",
+      "description": "チャネル会話を自動返信、承認待ち、手動引き継ぎ、再試行へ振り分ける客服値守りの中核 skill です。",
+      "dispatch": "チャネル入電、客服応答、クレーム判定、低信頼分流、手動引き継ぎが必要なとき自動で使われます。",
+      "typicalTasks": "FAQ 自動返信、クレーム昇格、引き継ぎ通知、再試行提案。",
+      "outputs": "会話優先度、返信提案、引き継ぎ判断、監査記録。"
+    }
+  }
+}

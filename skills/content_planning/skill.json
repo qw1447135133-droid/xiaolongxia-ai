@@ -1,0 +1,45 @@
+{
+  "id": "content_planning",
+  "order": 170,
+  "category": "content",
+  "sourceType": "local",
+  "sourceLabel": "Local Product Skill",
+  "accent": "#8b5cf6",
+  "icon": "calendar",
+  "recommendedAgents": ["writer", "performer", "orchestrator"],
+  "tags": ["content", "calendar", "planning", "campaign"],
+  "locales": {
+    "zh-CN": {
+      "name": "内容排期",
+      "short": "选题、节奏、渠道与发布时间安排。",
+      "description": "用于规划内容主题、发布节奏、目标渠道和协作节点，让内容任务从灵感变成可执行排期单。",
+      "dispatch": "当任务涉及内容选题、日历排期、发布节奏、渠道组合或活动内容计划时自动命中。",
+      "typicalTasks": "周内容计划、栏目排期、活动预热日历、渠道分发安排。",
+      "outputs": "排期表、选题清单、发布时间建议和协作提醒。"
+    },
+    "zh-TW": {
+      "name": "內容排期",
+      "short": "選題、節奏、渠道與發佈時間安排。",
+      "description": "用於規劃內容主題、發佈節奏、目標渠道與協作節點，讓內容任務從靈感變成可執行排期單。",
+      "dispatch": "當任務涉及內容選題、日曆排期、發佈節奏、渠道組合或活動內容計畫時自動命中。",
+      "typicalTasks": "每週內容計畫、欄目排期、活動預熱日曆、渠道分發安排。",
+      "outputs": "排期表、選題清單、發佈時間建議與協作提醒。"
+    },
+    "en": {
+      "name": "Content Planning",
+      "short": "Topics, cadence, channels, and publishing slots.",
+      "description": "Plans content themes, publishing cadence, target channels, and collaboration milestones so content tasks become executable schedules.",
+      "dispatch": "Auto-selected when the task involves editorial planning, content calendars, launch cadence, channel mixes, or campaign schedules.",
+      "typicalTasks": "Weekly content plans, series calendars, campaign warm-up schedules, and channel sequencing.",
+      "outputs": "Content calendars, topic lists, publish timing suggestions, and collaboration checkpoints."
+    },
+    "ja": {
+      "name": "コンテンツ計画",
+      "short": "テーマ、頻度、チャネル、公開時期を整理。",
+      "description": "コンテンツのテーマ、公開 cadence、対象チャネル、協業タイミングを整理し、実行可能な配信計画へ落とし込みます。",
+      "dispatch": "企画立案、公開カレンダー、配信 cadence、チャネル構成、キャンペーン計画が必要なとき自動で使われます。",
+      "typicalTasks": "週次計画、連載カレンダー、イベント告知日程、チャネル別配信計画。",
+      "outputs": "公開カレンダー、テーマ一覧、推奨公開時刻、協業チェックポイント。"
+    }
+  }
+}

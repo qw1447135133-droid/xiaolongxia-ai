@@ -1,0 +1,45 @@
+{
+  "id": "content_publishing",
+  "order": 180,
+  "category": "content",
+  "sourceType": "local",
+  "sourceLabel": "Local Product Skill",
+  "accent": "#ec4899",
+  "icon": "megaphone",
+  "recommendedAgents": ["writer", "performer", "orchestrator"],
+  "tags": ["content", "publish", "review", "distribution"],
+  "locales": {
+    "zh-CN": {
+      "name": "内容发布",
+      "short": "定稿、审校、分发与发布回写。",
+      "description": "用于把内容草稿推进到定稿、审校、发布准备和结果回写，形成可监督的内容运营闭环。",
+      "dispatch": "当任务涉及内容定稿、发布准备、发布动作、结果回写或链接归档时自动命中。",
+      "typicalTasks": "定稿确认、发布检查单、渠道分发、发布结果回写。",
+      "outputs": "发布清单、审校结论、分发记录和外链归档。"
+    },
+    "zh-TW": {
+      "name": "內容發佈",
+      "short": "定稿、審校、分發與發佈回寫。",
+      "description": "用於把內容草稿推進到定稿、審校、發佈準備與結果回寫，形成可監督的內容營運閉環。",
+      "dispatch": "當任務涉及內容定稿、發佈準備、發佈動作、結果回寫或連結歸檔時自動命中。",
+      "typicalTasks": "定稿確認、發佈檢查單、渠道分發、發佈結果回寫。",
+      "outputs": "發佈清單、審校結論、分發記錄與外連歸檔。"
+    },
+    "en": {
+      "name": "Content Publishing",
+      "short": "Finalize, review, distribute, and write back results.",
+      "description": "Pushes content drafts through review, publish preparation, distribution, and result logging to complete the content operations loop.",
+      "dispatch": "Auto-selected when the task involves final review, publishing prep, outbound distribution, result write-back, or link archiving.",
+      "typicalTasks": "Final review, publish checklists, channel distribution, and post-publish logging.",
+      "outputs": "Publishing checklists, review decisions, distribution records, and archived links."
+    },
+    "ja": {
+      "name": "コンテンツ公開",
+      "short": "確定稿、校正、配信、結果記録。",
+      "description": "コンテンツ草稿を確定稿、校正、公開準備、結果記録まで進め、監督可能な運用ループを完成させます。",
+      "dispatch": "最終確認、公開準備、配信実行、結果書き戻し、リンク保管が必要なとき自動で使われます。",
+      "typicalTasks": "最終確認、公開チェックリスト、チャネル配信、公開結果記録。",
+      "outputs": "公開チェックリスト、校正結論、配信記録、リンク保管。"
+    }
+  }
+}

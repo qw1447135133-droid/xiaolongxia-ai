@@ -1,0 +1,45 @@
+{
+  "id": "quote_proposal",
+  "order": 260,
+  "category": "sales",
+  "sourceType": "local",
+  "sourceLabel": "Local Product Skill",
+  "accent": "#f59e0b",
+  "icon": "doc",
+  "recommendedAgents": ["writer", "greeter", "orchestrator"],
+  "tags": ["quote", "proposal", "sales", "deal"],
+  "locales": {
+    "zh-CN": {
+      "name": "报价方案",
+      "short": "生成报价逻辑、方案摘要与成交材料。",
+      "description": "用于把客户需求整理成报价说明、方案摘要、交付边界和成交型文案，支持销售推进与提案输出。",
+      "dispatch": "当任务涉及报价、方案书、服务边界、成交提案或客户定制说明时自动命中。",
+      "typicalTasks": "报价说明、服务套餐整理、提案摘要、成交页文案。",
+      "outputs": "报价结构、方案摘要、服务边界和提案内容。"
+    },
+    "zh-TW": {
+      "name": "報價方案",
+      "short": "生成報價邏輯、方案摘要與成交材料。",
+      "description": "用於把客戶需求整理成報價說明、方案摘要、交付邊界與成交型文案，支援銷售推進與提案輸出。",
+      "dispatch": "當任務涉及報價、方案書、服務邊界、成交提案或客戶客製說明時自動命中。",
+      "typicalTasks": "報價說明、服務套餐整理、提案摘要、成交頁文案。",
+      "outputs": "報價結構、方案摘要、服務邊界與提案內容。"
+    },
+    "en": {
+      "name": "Quotes & Proposals",
+      "short": "Build quote logic, proposal summaries, and deal material.",
+      "description": "Turns customer requirements into pricing logic, proposal summaries, delivery boundaries, and deal-supporting sales copy.",
+      "dispatch": "Auto-selected when the task involves quotes, proposals, service boundaries, closing material, or customer-tailored solution outlines.",
+      "typicalTasks": "Quote explanations, package design, proposal summaries, and close-page copy.",
+      "outputs": "Pricing structures, proposal summaries, scope boundaries, and sales-ready proposal content."
+    },
+    "ja": {
+      "name": "見積と提案",
+      "short": "見積ロジック、提案要約、成約資料を作成。",
+      "description": "顧客要件を見積説明、提案要約、納品範囲、成約向け文面へ整理し、営業前進を支援します。",
+      "dispatch": "見積、提案書、サービス境界、成約提案、顧客向け個別説明が必要なとき自動で使われます。",
+      "typicalTasks": "見積説明、サービスパッケージ整理、提案要約、成約ページ文面。",
+      "outputs": "価格構成、提案要約、範囲境界、提案コンテンツ。"
+    }
+  }
+}

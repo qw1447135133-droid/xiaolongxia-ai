@@ -1,0 +1,45 @@
+{
+  "id": "crm_hygiene",
+  "order": 330,
+  "category": "sales",
+  "sourceType": "local",
+  "sourceLabel": "Local Product Skill",
+  "accent": "#22c55e",
+  "icon": "sheet",
+  "recommendedAgents": ["explorer", "orchestrator", "writer"],
+  "tags": ["crm", "cleanup", "sales", "data"],
+  "locales": {
+    "zh-CN": {
+      "name": "CRM 整理",
+      "short": "清理字段、同步状态与保持数据干净。",
+      "description": "用于整理客户、线索和商机字段，补齐缺失信息，统一状态口径，避免销售台账越来越乱。",
+      "dispatch": "当任务涉及 CRM 清理、字段补齐、状态对齐、重复记录整理或销售数据维护时自动命中。",
+      "typicalTasks": "状态统一、字段补齐、重复清理、销售台账整理。",
+      "outputs": "清理建议、字段更新、状态规范和数据维护记录。"
+    },
+    "zh-TW": {
+      "name": "CRM 整理",
+      "short": "清理欄位、同步狀態與保持資料乾淨。",
+      "description": "用於整理客戶、線索與商機欄位，補齊缺失資訊，統一狀態口徑，避免銷售台帳越來越亂。",
+      "dispatch": "當任務涉及 CRM 清理、欄位補齊、狀態對齊、重複記錄整理或銷售資料維護時自動命中。",
+      "typicalTasks": "狀態統一、欄位補齊、重複清理、銷售台帳整理。",
+      "outputs": "清理建議、欄位更新、狀態規範與資料維護記錄。"
+    },
+    "en": {
+      "name": "CRM Hygiene",
+      "short": "Clean fields, align statuses, and keep sales data usable.",
+      "description": "Maintains cleaner customer, lead, and opportunity data by filling gaps, aligning status language, and reducing CRM drift.",
+      "dispatch": "Auto-selected when the task involves CRM cleanup, field completion, status alignment, deduplication, or sales data maintenance.",
+      "typicalTasks": "Status normalization, field completion, dedupe work, and sales ledger cleanup.",
+      "outputs": "Cleanup notes, field updates, status standards, and data maintenance records."
+    },
+    "ja": {
+      "name": "CRM 整理",
+      "short": "項目清掃、状態統一、営業データ整備。",
+      "description": "顧客、リード、商談データの欠損補完、状態統一、重複削減を行い、営業台帳を使いやすく保ちます。",
+      "dispatch": "CRM 清掃、項目補完、状態統一、重複整理、営業データ保守が必要なとき自動で使われます。",
+      "typicalTasks": "状態統一、項目補完、重複削除、営業台帳整理。",
+      "outputs": "清掃提案、項目更新、状態ルール、保守記録。"
+    }
+  }
+}

@@ -1,0 +1,45 @@
+{
+  "id": "meeting_briefing",
+  "order": 290,
+  "category": "documents",
+  "sourceType": "local",
+  "sourceLabel": "Local Product Skill",
+  "accent": "#6366f1",
+  "icon": "doc",
+  "recommendedAgents": ["writer", "orchestrator", "greeter"],
+  "tags": ["meeting", "brief", "agenda", "notes"],
+  "locales": {
+    "zh-CN": {
+      "name": "会议准备",
+      "short": "议程、提纲、纪要框架与行动项。",
+      "description": "用于整理会议议程、重点问题、沟通提纲和纪要模板，让会议前后都更高效可追踪。",
+      "dispatch": "当任务涉及会议提纲、议程设计、纪要模板、复盘行动项或沟通准备时自动命中。",
+      "typicalTasks": "会议提纲、问题清单、纪要模版、行动项整理。",
+      "outputs": "议程、发言要点、纪要框架和行动项清单。"
+    },
+    "zh-TW": {
+      "name": "會議準備",
+      "short": "議程、提綱、紀要框架與行動項。",
+      "description": "用於整理會議議程、重點問題、溝通提綱與紀要模板，讓會議前後都更高效可追蹤。",
+      "dispatch": "當任務涉及會議提綱、議程設計、紀要模板、復盤行動項或溝通準備時自動命中。",
+      "typicalTasks": "會議提綱、問題清單、紀要模板、行動項整理。",
+      "outputs": "議程、發言要點、紀要框架與行動項清單。"
+    },
+    "en": {
+      "name": "Meeting Briefing",
+      "short": "Agenda, talking points, note frames, and action items.",
+      "description": "Prepares agendas, key questions, meeting talk tracks, and note templates so meetings are easier to run and follow through.",
+      "dispatch": "Auto-selected for meeting prep, agenda design, note templates, action-item recap, or communication prep.",
+      "typicalTasks": "Meeting agendas, question lists, note templates, and action-item cleanup.",
+      "outputs": "Agendas, talking points, recap structures, and action lists."
+    },
+    "ja": {
+      "name": "会議準備",
+      "short": "議題、論点、議事録枠、アクション整理。",
+      "description": "会議の議題、重要質問、進行メモ、議事録テンプレートを整え、実施後のフォローまで追いやすくします。",
+      "dispatch": "会議準備、議題設計、議事録テンプレート、振り返りアクション整理が必要なとき自動で使われます。",
+      "typicalTasks": "アジェンダ、質問一覧、議事録枠、アクション整理。",
+      "outputs": "アジェンダ、発言要点、議事録構成、アクション一覧。"
+    }
+  }
+}

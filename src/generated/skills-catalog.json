@@ -1,0 +1,1784 @@
+[
+  {
+    "id": "frontend",
+    "order": 10,
+    "category": "automation",
+    "sourceType": "built-in",
+    "sourceLabel": "Built-in Skill",
+    "accent": "#38bdf8",
+    "icon": "layout",
+    "tags": [
+      "ui",
+      "electron",
+      "react",
+      "frontend"
+    ],
+    "recommendedAgents": [
+      "designer",
+      "orchestrator"
+    ],
+    "locales": {
+      "zh-CN": {
+        "name": "前端开发",
+        "short": "页面、组件、交互与样式实现。",
+        "description": "负责界面搭建、布局调整、样式统一和交互细节补完，适合桌面工作台、聊天页和控制台类任务。",
+        "dispatch": "当任务包含页面、组件、布局、样式、前端修复或 Electron 交互时自动优先命中。",
+        "typicalTasks": "聊天页重构、设置页整理、控制台统一、交互反馈修复。",
+        "outputs": "React 组件、页面布局、样式更新和可交付前端代码。"
+      },
+      "zh-TW": {
+        "name": "前端開發",
+        "short": "頁面、元件、互動與樣式實作。",
+        "description": "負責介面搭建、版面調整、樣式統一與互動細節補完，適合桌面工作台、聊天頁與控制台類任務。",
+        "dispatch": "當任務包含頁面、元件、版面、樣式、前端修復或 Electron 互動時自動優先命中。",
+        "typicalTasks": "聊天頁重構、設定頁整理、控制台統一、互動回饋修復。",
+        "outputs": "React 元件、頁面版面、樣式更新與可交付前端程式碼。"
+      },
+      "en": {
+        "name": "Frontend Delivery",
+        "short": "Pages, components, interactions, and styling.",
+        "description": "Handles UI builds, layout cleanup, style unification, and interaction polish across the desktop workbench, chat view, and control surfaces.",
+        "dispatch": "Auto-selected when the task mentions pages, components, layouts, styling, frontend fixes, or Electron UI work.",
+        "typicalTasks": "Chat refactors, settings cleanup, control panel polish, and interaction fixes.",
+        "outputs": "React components, page layouts, style updates, and shippable frontend code."
+      },
+      "ja": {
+        "name": "フロントエンド",
+        "short": "画面、コンポーネント、操作、スタイル実装。",
+        "description": "デスクトップ作業台、チャット画面、コントロール面の UI 構築、レイアウト調整、見た目統一、操作改善を担当します。",
+        "dispatch": "ページ、コンポーネント、レイアウト、スタイル、フロント修正、Electron UI が含まれると自動で優先されます。",
+        "typicalTasks": "チャット改修、設定整理、コントロール面の統一、操作フィードバック修正。",
+        "outputs": "React コンポーネント、画面レイアウト、スタイル更新、納品可能な UI 実装。"
+      }
+    }
+  },
+  {
+    "id": "doc_word",
+    "order": 20,
+    "category": "documents",
+    "sourceType": "built-in",
+    "sourceLabel": "Built-in Skill",
+    "accent": "#fb7185",
+    "icon": "doc",
+    "tags": [
+      "word",
+      "report",
+      "proposal",
+      "sop"
+    ],
+    "recommendedAgents": [
+      "writer",
+      "orchestrator",
+      "greeter"
+    ],
+    "locales": {
+      "zh-CN": {
+        "name": "Word 文档",
+        "short": "方案、报告、说明与正式文档。",
+        "description": "用于输出正式说明书、SOP、方案书、复盘报告和对外交付文档。",
+        "dispatch": "当任务目标是结构化表达、正式输出或沉淀规则文档时自动命中。",
+        "typicalTasks": "方案书、会议纪要、SOP、值守规则、交付总结。",
+        "outputs": "结构化文档内容、段落草稿、清单和正式文书。"
+      },
+      "zh-TW": {
+        "name": "Word 文件",
+        "short": "方案、報告、說明與正式文件。",
+        "description": "用於輸出正式說明書、SOP、方案書、復盤報告與對外交付文件。",
+        "dispatch": "當任務目標是結構化表達、正式輸出或沉澱規則文件時自動命中。",
+        "typicalTasks": "方案書、會議紀要、SOP、值守規則、交付總結。",
+        "outputs": "結構化文件內容、段落草稿、清單與正式文書。"
+      },
+      "en": {
+        "name": "Word Docs",
+        "short": "Plans, reports, briefs, and formal documents.",
+        "description": "Used for structured documentation such as SOPs, proposals, recap reports, and external-facing deliverables.",
+        "dispatch": "Auto-selected when a task needs formal writing, structured communication, or durable documentation.",
+        "typicalTasks": "Proposals, meeting notes, SOPs, supervision rules, and delivery summaries.",
+        "outputs": "Structured document drafts, sections, checklists, and polished written deliverables."
+      },
+      "ja": {
+        "name": "Word 文書",
+        "short": "提案、報告、説明、正式文書。",
+        "description": "SOP、提案書、振り返りレポート、対外文書などの構造化された正式文書を作成します。",
+        "dispatch": "構造化された表現、正式出力、ルール文書の整理が必要なとき自動で使われます。",
+        "typicalTasks": "提案書、議事録、SOP、監督ルール、納品まとめ。",
+        "outputs": "文書ドラフト、段落、一覧、正式な書面成果物。"
+      }
+    }
+  },
+  {
+    "id": "doc_ppt",
+    "order": 30,
+    "category": "documents",
+    "sourceType": "built-in",
+    "sourceLabel": "Built-in Skill",
+    "accent": "#f97316",
+    "icon": "slides",
+    "tags": [
+      "ppt",
+      "presentation",
+      "deck",
+      "pitch"
+    ],
+    "recommendedAgents": [
+      "writer",
+      "performer",
+      "orchestrator"
+    ],
+    "locales": {
+      "zh-CN": {
+        "name": "PPT 演示",
+        "short": "汇报、路演与对外演示材料。",
+        "description": "用于整理汇报逻辑、销售演示、产品介绍和路演类幻灯片内容。",
+        "dispatch": "当任务涉及汇报结构、讲解顺序、页面大纲或演示材料时自动启用。",
+        "typicalTasks": "成交版 deck、产品介绍、阶段汇报、销售路演。",
+        "outputs": "页级结构、标题层级、讲稿要点和演示文案。"
+      },
+      "zh-TW": {
+        "name": "PPT 簡報",
+        "short": "匯報、路演與對外簡報材料。",
+        "description": "用於整理匯報邏輯、銷售演示、產品介紹與路演類投影片內容。",
+        "dispatch": "當任務涉及匯報結構、講解順序、頁面大綱或簡報材料時自動啟用。",
+        "typicalTasks": "成交版 deck、產品介紹、階段匯報、銷售路演。",
+        "outputs": "頁級結構、標題層級、講稿要點與簡報文案。"
+      },
+      "en": {
+        "name": "Slide Decks",
+        "short": "Reports, pitches, and presentation material.",
+        "description": "Shapes reporting logic, sales decks, product intros, and stakeholder presentations into a clear deck flow.",
+        "dispatch": "Auto-selected when the task implies a presentation structure, talk track, or slide-by-slide outline.",
+        "typicalTasks": "Sales decks, product intros, milestone reviews, and pitch narratives.",
+        "outputs": "Slide structures, titles, talk tracks, and presentation-ready copy."
+      },
+      "ja": {
+        "name": "スライド作成",
+        "short": "報告、提案、対外プレゼン資料。",
+        "description": "報告ロジック、営業デッキ、製品紹介、ピッチ資料を分かりやすいスライド構成に整理します。",
+        "dispatch": "報告構造、説明順序、ページ構成、プレゼン資料が必要なとき自動で使われます。",
+        "typicalTasks": "受注向け deck、製品紹介、進捗報告、営業ピッチ。",
+        "outputs": "スライド構成、タイトル階層、話す要点、プレゼン用テキスト。"
+      }
+    }
+  },
+  {
+    "id": "doc_excel",
+    "order": 40,
+    "category": "documents",
+    "sourceType": "built-in",
+    "sourceLabel": "Built-in Skill",
+    "accent": "#22c55e",
+    "icon": "sheet",
+    "tags": [
+      "excel",
+      "spreadsheet",
+      "ledger",
+      "tracking"
+    ],
+    "recommendedAgents": [
+      "explorer",
+      "writer",
+      "orchestrator"
+    ],
+    "locales": {
+      "zh-CN": {
+        "name": "Excel 表格",
+        "short": "台账、统计、公式与表格整理。",
+        "description": "用于清单台账、结构化数据整理、执行追踪和统计口径输出。",
+        "dispatch": "当任务更偏结构化信息处理、字段设计、统计整理或数据回填时自动命中。",
+        "typicalTasks": "线索台账、工单列表、执行追踪、统计汇总。",
+        "outputs": "字段结构、列设计、公式逻辑和表格结果。"
+      },
+      "zh-TW": {
+        "name": "Excel 表格",
+        "short": "台帳、統計、公式與表格整理。",
+        "description": "用於清單台帳、結構化資料整理、執行追蹤與統計口徑輸出。",
+        "dispatch": "當任務偏向結構化資訊處理、欄位設計、統計整理或資料回填時自動命中。",
+        "typicalTasks": "線索台帳、工單清單、執行追蹤、統計彙總。",
+        "outputs": "欄位結構、欄設計、公式邏輯與表格結果。"
+      },
+      "en": {
+        "name": "Spreadsheets",
+        "short": "Ledgers, formulas, stats, and structured tables.",
+        "description": "Used for structured data cleanup, list design, execution tracking, and spreadsheet-style reporting.",
+        "dispatch": "Auto-selected when the task is more about structured fields, formulas, summaries, or data backfill than freeform writing.",
+        "typicalTasks": "Lead ledgers, ticket tables, execution tracking, and metrics summaries.",
+        "outputs": "Field structures, column logic, formulas, and spreadsheet-ready outputs."
+      },
+      "ja": {
+        "name": "表計算",
+        "short": "台帳、集計、数式、表整理。",
+        "description": "構造化データ整理、台帳設計、実行追跡、集計レポート向けのスプレッドシート作業を担当します。",
+        "dispatch": "自由記述よりもフィールド設計、数式、集計、データ戻し込みに近いとき自動で使われます。",
+        "typicalTasks": "リード台帳、チケット一覧、実行追跡、集計表。",
+        "outputs": "列構成、数式ロジック、表設計、スプレッドシート成果物。"
+      }
+    }
+  },
+  {
+    "id": "screenshot",
+    "order": 50,
+    "category": "visual",
+    "sourceType": "built-in",
+    "sourceLabel": "Built-in Skill",
+    "accent": "#8b5cf6",
+    "icon": "camera",
+    "tags": [
+      "screenshot",
+      "evidence",
+      "desktop",
+      "qa"
+    ],
+    "recommendedAgents": [
+      "explorer",
+      "designer",
+      "orchestrator"
+    ],
+    "locales": {
+      "zh-CN": {
+        "name": "截图处理",
+        "short": "界面留档、证据采集与问题说明。",
+        "description": "用于保存界面证据、定位异常、记录桌面接管结果和补充操作说明。",
+        "dispatch": "当任务需要看到当前界面、保留证据或验证桌面步骤时自动优先命中。",
+        "typicalTasks": "失败留档、操作证明、界面反馈、步骤说明。",
+        "outputs": "截图、证据摘要、问题定位说明和步骤记录。"
+      },
+      "zh-TW": {
+        "name": "截圖處理",
+        "short": "介面留檔、證據採集與問題說明。",
+        "description": "用於保存介面證據、定位異常、記錄桌面接管結果與補充操作說明。",
+        "dispatch": "當任務需要查看目前介面、保留證據或驗證桌面步驟時自動優先命中。",
+        "typicalTasks": "失敗留檔、操作證明、介面回饋、步驟說明。",
+        "outputs": "截圖、證據摘要、問題定位說明與步驟記錄。"
+      },
+      "en": {
+        "name": "Screenshots",
+        "short": "UI evidence, capture, and issue explanation.",
+        "description": "Captures screen evidence for UI review, desktop automation verification, and issue explanation.",
+        "dispatch": "Auto-selected when the task needs current-screen visibility, action evidence, or desktop verification.",
+        "typicalTasks": "Failure capture, action proof, UI feedback, and step-by-step evidence.",
+        "outputs": "Screenshots, evidence summaries, issue notes, and action records."
+      },
+      "ja": {
+        "name": "スクリーンショット",
+        "short": "画面記録、証拠採取、状況説明。",
+        "description": "UI 確認、デスクトップ自動化の検証、失敗証跡の保存に使う画面証拠収集スキルです。",
+        "dispatch": "現在画面の確認、操作証拠、デスクトップ検証が必要なとき自動で使われます。",
+        "typicalTasks": "失敗記録、操作証跡、UI フィードバック、手順説明。",
+        "outputs": "スクリーンショット、証拠要約、問題説明、操作記録。"
+      }
+    }
+  },
+  {
+    "id": "image_edit",
+    "order": 60,
+    "category": "visual",
+    "sourceType": "built-in",
+    "sourceLabel": "Built-in Skill",
+    "accent": "#14b8a6",
+    "icon": "image",
+    "tags": [
+      "image",
+      "asset",
+      "annotation",
+      "creative"
+    ],
+    "recommendedAgents": [
+      "designer",
+      "writer"
+    ],
+    "locales": {
+      "zh-CN": {
+        "name": "图片修改",
+        "short": "裁剪、标注、替换与素材优化。",
+        "description": "用于现有图片的裁剪、替换、注释和轻量视觉修补，适合运营素材与界面说明。",
+        "dispatch": "当任务涉及素材修整、图片替换、说明标注或轻量设计改动时自动命中。",
+        "typicalTasks": "封面修图、界面标注、营销素材修补、说明图补充。",
+        "outputs": "修订图片、标注版素材和图片修改说明。"
+      },
+      "zh-TW": {
+        "name": "圖片修改",
+        "short": "裁切、標註、替換與素材優化。",
+        "description": "用於現有圖片的裁切、替換、註解與輕量視覺修補，適合營運素材與介面說明。",
+        "dispatch": "當任務涉及素材修整、圖片替換、說明標註或輕量設計改動時自動命中。",
+        "typicalTasks": "封面修圖、介面標註、行銷素材修補、說明圖補充。",
+        "outputs": "修訂圖片、標註版素材與圖片修改說明。"
+      },
+      "en": {
+        "name": "Image Editing",
+        "short": "Crop, annotate, replace, and refine assets.",
+        "description": "Used for lightweight image edits, annotations, asset replacement, and visual cleanups for operations or UI explanation.",
+        "dispatch": "Auto-selected when the task needs asset touch-ups, image replacement, annotation, or light design fixes.",
+        "typicalTasks": "Cover edits, UI annotations, campaign asset patches, and explainer visuals.",
+        "outputs": "Revised images, annotated assets, and change notes."
+      },
+      "ja": {
+        "name": "画像編集",
+        "short": "切り抜き、注釈、差し替え、素材調整。",
+        "description": "既存画像の軽微な修正、注釈、差し替え、運用素材の見た目調整に使います。",
+        "dispatch": "素材修整、画像差し替え、注釈追加、軽いデザイン修正が必要なとき自動で使われます。",
+        "typicalTasks": "カバー修正、画面注釈、販促素材補修、説明画像の追加。",
+        "outputs": "修正版画像、注釈素材、変更説明。"
+      }
+    }
+  },
+  {
+    "id": "find_skills",
+    "order": 70,
+    "category": "ops",
+    "sourceType": "local",
+    "sourceLabel": "Session Skill · Find Skills",
+    "accent": "#60a5fa",
+    "icon": "search",
+    "tags": [
+      "skills",
+      "search",
+      "market",
+      "discovery"
+    ],
+    "recommendedAgents": [
+      "orchestrator",
+      "explorer"
+    ],
+    "locales": {
+      "zh-CN": {
+        "name": "技能搜索",
+        "short": "搜索市场中可安装的技能。",
+        "description": "用于判断是否已有现成 skill 可复用，并把适合当前业务的能力引入到本地技能目录。",
+        "dispatch": "当任务涉及扩展能力、寻找现成工作流、补齐新能力时自动命中。",
+        "typicalTasks": "搜索渠道接入 skill、搜索文档 skill、搜索浏览器自动化 skill。",
+        "outputs": "候选 skill 清单、安装建议和来源记录。"
+      },
+      "zh-TW": {
+        "name": "技能搜尋",
+        "short": "搜尋市場中可安裝的技能。",
+        "description": "用於判斷是否已有現成 skill 可重用，並把適合當前業務的能力引入本地技能目錄。",
+        "dispatch": "當任務涉及擴展能力、尋找現成工作流、補齊新能力時自動命中。",
+        "typicalTasks": "搜尋渠道接入 skill、搜尋文件 skill、搜尋瀏覽器自動化 skill。",
+        "outputs": "候選 skill 清單、安裝建議與來源記錄。"
+      },
+      "en": {
+        "name": "Skill Finder",
+        "short": "Search the market for installable skills.",
+        "description": "Used to discover reusable skills from the market and route suitable capabilities into the local skill directory.",
+        "dispatch": "Auto-selected when the task is about extending capability coverage, finding reusable workflows, or adding new skills.",
+        "typicalTasks": "Search channel connector skills, documentation skills, or browser automation skills.",
+        "outputs": "Candidate skill lists, install suggestions, and source notes."
+      },
+      "ja": {
+        "name": "スキル検索",
+        "short": "市場のインストール可能スキルを検索。",
+        "description": "再利用できる skill を市場から探し、現在の業務に合う能力をローカル技能ディレクトリへ取り込むために使います。",
+        "dispatch": "能力拡張、既成ワークフロー探索、新スキル追加が必要なとき自動で使われます。",
+        "typicalTasks": "チャネル接続 skill、文書 skill、ブラウザ自動化 skill の探索。",
+        "outputs": "候補 skill 一覧、導入提案、出典メモ。"
+      }
+    }
+  },
+  {
+    "id": "skill_creator",
+    "order": 80,
+    "category": "ops",
+    "sourceType": "local",
+    "sourceLabel": "Session Skill · Skill Creator",
+    "accent": "#a78bfa",
+    "icon": "wand",
+    "tags": [
+      "skills",
+      "authoring",
+      "template",
+      "creation"
+    ],
+    "recommendedAgents": [
+      "orchestrator",
+      "writer"
+    ],
+    "locales": {
+      "zh-CN": {
+        "name": "技能创建",
+        "short": "为缺失能力创建新的本地技能。",
+        "description": "用于把产品里反复出现的新工作流沉淀成本地 skill，并统一加入技能目录。",
+        "dispatch": "当现成 skill 不够用、需要沉淀新流程或把业务经验做成固定能力时自动命中。",
+        "typicalTasks": "创建客服话术 skill、创建销售跟进 skill、创建内容排期 skill。",
+        "outputs": "新的 skill 目录、SKILL.md、元数据和目录同步结果。"
+      },
+      "zh-TW": {
+        "name": "技能建立",
+        "short": "為缺失能力建立新的本地技能。",
+        "description": "用於把產品裡反覆出現的新工作流沉澱成本地 skill，並統一加入技能目錄。",
+        "dispatch": "當現成 skill 不夠用、需要沉澱新流程或把業務經驗做成固定能力時自動命中。",
+        "typicalTasks": "建立客服話術 skill、建立銷售跟進 skill、建立內容排期 skill。",
+        "outputs": "新的 skill 目錄、SKILL.md、中繼資料與目錄同步結果。"
+      },
+      "en": {
+        "name": "Skill Creator",
+        "short": "Create new local skills for missing capabilities.",
+        "description": "Turns repeated business workflows into local reusable skills and adds them into the product skill directory.",
+        "dispatch": "Auto-selected when existing skills are insufficient and the workflow should be captured as a reusable local capability.",
+        "typicalTasks": "Create a support reply skill, sales follow-up skill, or content scheduling skill.",
+        "outputs": "New skill folders, SKILL.md files, metadata, and refreshed catalog output."
+      },
+      "ja": {
+        "name": "スキル作成",
+        "short": "不足している能力をローカル skill として作成。",
+        "description": "繰り返し使う業務フローをローカル skill に落とし込み、製品の技能ディレクトリへ追加します。",
+        "dispatch": "既存 skill では足りず、業務知識を再利用可能な形で固定化したいとき自動で使われます。",
+        "typicalTasks": "客服応答 skill、営業フォロー skill、コンテンツ日程 skill の作成。",
+        "outputs": "新しい skill フォルダ、SKILL.md、メタデータ、更新済みカタログ。"
+      }
+    }
+  },
+  {
+    "id": "ontology",
+    "order": 90,
+    "category": "governance",
+    "sourceType": "clawhub",
+    "sourceLabel": "ClawHub · ontology",
+    "accent": "#0ea5e9",
+    "icon": "graph",
+    "tags": [
+      "knowledge graph",
+      "memory",
+      "entity",
+      "ontology"
+    ],
+    "recommendedAgents": [
+      "orchestrator",
+      "explorer"
+    ],
+    "sourceUrl": "https://clawhub.ai/skills?sort=downloads&nonSuspicious=true",
+    "locales": {
+      "zh-CN": {
+        "name": "业务本体",
+        "short": "结构化业务实体与关系记忆。",
+        "description": "把客户、线索、工单、内容任务、渠道会话等实体和关系整理成可追踪、可查询的知识结构。",
+        "dispatch": "当任务涉及实体建模、跨对象关联、长期记忆或业务关系追踪时自动命中。",
+        "typicalTasks": "客户关系建模、线索到工单映射、会话与任务关联、知识图谱沉淀。",
+        "outputs": "结构化实体关系、记忆约束、可查询的数据骨架。"
+      },
+      "zh-TW": {
+        "name": "業務本體",
+        "short": "結構化業務實體與關係記憶。",
+        "description": "把客戶、線索、工單、內容任務、渠道會話等實體與關係整理成可追蹤、可查詢的知識結構。",
+        "dispatch": "當任務涉及實體建模、跨物件關聯、長期記憶或業務關係追蹤時自動命中。",
+        "typicalTasks": "客戶關係建模、線索到工單對映、會話與任務關聯、知識圖譜沉澱。",
+        "outputs": "結構化實體關係、記憶約束與可查詢的資料骨架。"
+      },
+      "en": {
+        "name": "Ontology Memory",
+        "short": "Structured entities and relationship memory.",
+        "description": "Organizes customers, leads, tickets, content tasks, and channel sessions into a structured graph of business entities and relationships.",
+        "dispatch": "Auto-selected when the task needs entity modeling, long-term structured memory, or cross-object relationship tracking.",
+        "typicalTasks": "Customer relationship modeling, lead-to-ticket mapping, session-to-task linking, and business memory design.",
+        "outputs": "Structured entity maps, memory constraints, and queryable relationship scaffolds."
+      },
+      "ja": {
+        "name": "業務オントロジー",
+        "short": "構造化された業務エンティティ記憶。",
+        "description": "顧客、リード、チケット、コンテンツタスク、チャネル会話を関係付きの知識構造として整理します。",
+        "dispatch": "エンティティ設計、長期記憶、関係追跡、跨ぎ参照が必要なとき自動で使われます。",
+        "typicalTasks": "顧客関係モデル、リードとチケットの関連付け、会話とタスクの紐付け、知識構造設計。",
+        "outputs": "構造化エンティティ関係、記憶ルール、検索可能なデータ骨格。"
+      }
+    }
+  },
+  {
+    "id": "api_gateway",
+    "order": 100,
+    "category": "integration",
+    "sourceType": "clawhub",
+    "sourceLabel": "ClawHub · API Gateway",
+    "accent": "#22c55e",
+    "icon": "plug",
+    "tags": [
+      "api",
+      "oauth",
+      "integration",
+      "connector"
+    ],
+    "recommendedAgents": [
+      "orchestrator",
+      "explorer",
+      "greeter"
+    ],
+    "sourceUrl": "https://clawhub.ai/skills?sort=downloads&nonSuspicious=true",
+    "locales": {
+      "zh-CN": {
+        "name": "API 网关",
+        "short": "统一接入外部 API 与 SaaS。",
+        "description": "用于把消息平台、表单、CRM、邮件、文档和其他 SaaS 服务统一接入到数字员工平台。",
+        "dispatch": "当任务需要对接外部 API、配置 OAuth、连接 SaaS 或打通系统链路时自动命中。",
+        "typicalTasks": "接入 HubSpot、Notion、Google Workspace、Slack、表单和通知服务。",
+        "outputs": "连接方案、接入配置、字段映射和联调记录。"
+      },
+      "zh-TW": {
+        "name": "API 閘道",
+        "short": "統一接入外部 API 與 SaaS。",
+        "description": "用於把訊息平台、表單、CRM、郵件、文件與其他 SaaS 服務統一接入到數位員工平台。",
+        "dispatch": "當任務需要對接外部 API、配置 OAuth、連接 SaaS 或打通系統鏈路時自動命中。",
+        "typicalTasks": "接入 HubSpot、Notion、Google Workspace、Slack、表單與通知服務。",
+        "outputs": "連接方案、接入設定、欄位映射與聯調記錄。"
+      },
+      "en": {
+        "name": "API Gateway",
+        "short": "Unified access to external APIs and SaaS.",
+        "description": "Connects message platforms, forms, CRM tools, email, documents, and other SaaS systems into one integration layer.",
+        "dispatch": "Auto-selected when a task needs API integration, OAuth setup, SaaS connectivity, or system-to-system wiring.",
+        "typicalTasks": "Connect HubSpot, Notion, Google Workspace, Slack, forms, and notification services.",
+        "outputs": "Integration plans, connector configs, field mapping, and test records."
+      },
+      "ja": {
+        "name": "API ゲートウェイ",
+        "short": "外部 API と SaaS の統合接続。",
+        "description": "メッセージ基盤、フォーム、CRM、メール、文書系 SaaS を一つの接続層へ統合します。",
+        "dispatch": "外部 API 接続、OAuth 設定、SaaS 連携、システム間配線が必要なとき自動で使われます。",
+        "typicalTasks": "HubSpot、Notion、Google Workspace、Slack、フォーム、通知系の接続。",
+        "outputs": "統合設計、接続設定、フィールド対応表、疎通記録。"
+      }
+    }
+  },
+  {
+    "id": "playwright_automation",
+    "order": 110,
+    "category": "automation",
+    "sourceType": "clawhub",
+    "sourceLabel": "ClawHub · Playwright (Automation + MCP + Scraper)",
+    "accent": "#f59e0b",
+    "icon": "browser",
+    "tags": [
+      "browser",
+      "playwright",
+      "automation",
+      "scraping"
+    ],
+    "recommendedAgents": [
+      "explorer",
+      "greeter",
+      "orchestrator"
+    ],
+    "sourceUrl": "https://clawhub.ai/skills?sort=downloads&nonSuspicious=true",
+    "locales": {
+      "zh-CN": {
+        "name": "浏览器自动化",
+        "short": "网页点击、表单、抓取与真实浏览器流程。",
+        "description": "用于在真实浏览器中完成点击、输入、抓取、截图和网页流程验证，适合客服、销售和内容运营场景。",
+        "dispatch": "当任务涉及网页操作、表单填写、站点抓取、流程复现或在线调研时自动命中。",
+        "typicalTasks": "网页登录、表单录入、网页搜索、后台录入、页面验证。",
+        "outputs": "浏览器操作记录、页面数据、截图证据和流程结果。"
+      },
+      "zh-TW": {
+        "name": "瀏覽器自動化",
+        "short": "網頁點擊、表單、抓取與真實瀏覽器流程。",
+        "description": "用於在真實瀏覽器中完成點擊、輸入、抓取、截圖與網頁流程驗證，適合客服、銷售與內容營運場景。",
+        "dispatch": "當任務涉及網頁操作、表單填寫、站點抓取、流程重現或在線調研時自動命中。",
+        "typicalTasks": "網站登入、表單錄入、網頁搜尋、後台錄入、頁面驗證。",
+        "outputs": "瀏覽器操作記錄、頁面資料、截圖證據與流程結果。"
+      },
+      "en": {
+        "name": "Browser Automation",
+        "short": "Clicks, forms, extraction, and real browser flows.",
+        "description": "Runs tasks in a real browser for clicking, typing, scraping, screenshots, and end-to-end web workflow verification.",
+        "dispatch": "Auto-selected when a task involves site navigation, form filling, web extraction, repro steps, or online workflow execution.",
+        "typicalTasks": "Site login, form entry, web search, admin console entry, and UI verification.",
+        "outputs": "Browser action traces, extracted data, screenshots, and workflow results."
+      },
+      "ja": {
+        "name": "ブラウザ自動化",
+        "short": "クリック、フォーム、抽出、実ブラウザ操作。",
+        "description": "実ブラウザでクリック、入力、取得、スクリーンショット、Web ワークフロー検証を行います。",
+        "dispatch": "サイト操作、フォーム入力、Web 抽出、再現手順、オンライン処理が必要なとき自動で使われます。",
+        "typicalTasks": "ログイン、フォーム登録、Web 検索、管理画面入力、UI 検証。",
+        "outputs": "ブラウザ操作ログ、取得データ、スクリーンショット、実行結果。"
+      }
+    }
+  },
+  {
+    "id": "web_search_plus",
+    "order": 120,
+    "category": "research",
+    "sourceType": "clawhub",
+    "sourceLabel": "ClawHub · Web Search Plus",
+    "accent": "#06b6d4",
+    "icon": "compass",
+    "tags": [
+      "search",
+      "research",
+      "web",
+      "news"
+    ],
+    "recommendedAgents": [
+      "explorer",
+      "writer",
+      "greeter"
+    ],
+    "sourceUrl": "https://clawhub.ai/skills?sort=downloads&nonSuspicious=true",
+    "locales": {
+      "zh-CN": {
+        "name": "网页搜索增强",
+        "short": "实时搜索、资料提取与多源调研。",
+        "description": "用于进行联网检索、跨站资料提取、竞品查找和问题求证，适合客服答复、销售调研和内容选题。",
+        "dispatch": "当任务需要最新资料、网页证据、多源对比或事实核实时自动命中。",
+        "typicalTasks": "竞品调研、FAQ 查证、市场信号搜索、客户背景补充。",
+        "outputs": "来源清单、调研摘要、关键信息和可引用链接。"
+      },
+      "zh-TW": {
+        "name": "網頁搜尋增強",
+        "short": "即時搜尋、資料提取與多源調研。",
+        "description": "用於進行聯網檢索、跨站資料提取、競品查找與問題求證，適合客服答覆、銷售調研與內容選題。",
+        "dispatch": "當任務需要最新資料、網頁證據、多源對比或事實核實時自動命中。",
+        "typicalTasks": "競品調研、FAQ 查證、市場訊號搜尋、客戶背景補充。",
+        "outputs": "來源清單、調研摘要、關鍵資訊與可引用連結。"
+      },
+      "en": {
+        "name": "Web Search Plus",
+        "short": "Live search, extraction, and multi-source research.",
+        "description": "Performs live web search, cross-site extraction, competitor research, and fact verification for support, sales, and content work.",
+        "dispatch": "Auto-selected when a task needs current information, web evidence, multi-source comparison, or fact checking.",
+        "typicalTasks": "Competitor research, FAQ verification, market signal search, and customer background checks.",
+        "outputs": "Source lists, research summaries, key facts, and citable links."
+      },
+      "ja": {
+        "name": "Web 検索強化",
+        "short": "最新検索、抽出、複数ソース調査。",
+        "description": "最新情報の検索、複数サイト抽出、競合調査、事実確認を行い、客服・営業・コンテンツ業務を支援します。",
+        "dispatch": "最新情報、Web 証拠、複数ソース比較、事実確認が必要なとき自動で使われます。",
+        "typicalTasks": "競合調査、FAQ 確認、市場シグナル検索、顧客背景調査。",
+        "outputs": "情報源一覧、調査要約、主要事実、参照リンク。"
+      }
+    }
+  },
+  {
+    "id": "self_improving_agent",
+    "order": 130,
+    "category": "governance",
+    "sourceType": "clawhub",
+    "sourceLabel": "ClawHub · self-improving-agent",
+    "accent": "#ec4899",
+    "icon": "spark",
+    "tags": [
+      "improvement",
+      "reflection",
+      "memory",
+      "quality"
+    ],
+    "recommendedAgents": [
+      "orchestrator",
+      "explorer",
+      "greeter"
+    ],
+    "sourceUrl": "https://clawhub.ai/skills?sort=downloads&nonSuspicious=true",
+    "locales": {
+      "zh-CN": {
+        "name": "自我改进",
+        "short": "记录错误、修正与长期改进。",
+        "description": "把失败案例、用户纠正、流程偏差和经验沉淀成可复用的改进记忆，让数字员工越跑越稳。",
+        "dispatch": "当任务涉及复盘、纠错、失败恢复、质量提升或经验沉淀时自动命中。",
+        "typicalTasks": "记录失败原因、沉淀修复经验、更新操作注意事项、形成长期改进项。",
+        "outputs": "改进记录、复盘摘要、注意事项和后续优化建议。"
+      },
+      "zh-TW": {
+        "name": "自我改進",
+        "short": "記錄錯誤、修正與長期改進。",
+        "description": "把失敗案例、使用者修正、流程偏差與經驗沉澱成可重用的改進記憶，讓數位員工越跑越穩。",
+        "dispatch": "當任務涉及復盤、糾錯、失敗恢復、品質提升或經驗沉澱時自動命中。",
+        "typicalTasks": "記錄失敗原因、沉澱修復經驗、更新操作注意事項、形成長期改進項。",
+        "outputs": "改進記錄、復盤摘要、注意事項與後續優化建議。"
+      },
+      "en": {
+        "name": "Self Improvement",
+        "short": "Capture errors, corrections, and durable improvements.",
+        "description": "Turns failures, user corrections, and workflow drift into reusable improvement memory so the digital workforce becomes more stable over time.",
+        "dispatch": "Auto-selected when the task is about retrospection, error correction, recovery, quality uplift, or operational learning.",
+        "typicalTasks": "Record failure causes, capture repair lessons, update runbook notes, and define improvement actions.",
+        "outputs": "Improvement logs, recap summaries, caution notes, and follow-up optimization suggestions."
+      },
+      "ja": {
+        "name": "自己改善",
+        "short": "失敗、修正、長期改善を記録。",
+        "description": "失敗事例、ユーザー修正、運用のズレを改善記憶として蓄積し、デジタル社員の安定性を高めます。",
+        "dispatch": "振り返り、修正、失敗復旧、品質向上、運用学習が必要なとき自動で使われます。",
+        "typicalTasks": "失敗原因の記録、修復知見の蓄積、注意事項の更新、改善項目の整理。",
+        "outputs": "改善ログ、振り返り要約、注意メモ、次の最適化提案。"
+      }
+    }
+  },
+  {
+    "id": "market_research",
+    "order": 140,
+    "category": "research",
+    "sourceType": "clawhub",
+    "sourceLabel": "ClawHub · Market Research",
+    "accent": "#10b981",
+    "icon": "trend",
+    "tags": [
+      "market",
+      "research",
+      "competitor",
+      "demand"
+    ],
+    "recommendedAgents": [
+      "explorer",
+      "writer",
+      "performer"
+    ],
+    "sourceUrl": "https://clawhub.ai/skills?sort=downloads&nonSuspicious=true",
+    "locales": {
+      "zh-CN": {
+        "name": "市场调研",
+        "short": "竞品、定价、需求与市场判断。",
+        "description": "用于行业观察、竞品比较、市场规模判断、需求验证和销售切入点分析。",
+        "dispatch": "当任务需要做行业调研、用户需求验证、竞品比较或产品包装分析时自动命中。",
+        "typicalTasks": "市场规模估算、竞品地图、卖点整理、定价参考。",
+        "outputs": "调研摘要、竞品表、判断依据和行动建议。"
+      },
+      "zh-TW": {
+        "name": "市場調研",
+        "short": "競品、定價、需求與市場判斷。",
+        "description": "用於產業觀察、競品比較、市場規模判斷、需求驗證與銷售切入點分析。",
+        "dispatch": "當任務需要做產業調研、使用者需求驗證、競品比較或產品包裝分析時自動命中。",
+        "typicalTasks": "市場規模估算、競品地圖、賣點整理、定價參考。",
+        "outputs": "調研摘要、競品表、判斷依據與行動建議。"
+      },
+      "en": {
+        "name": "Market Research",
+        "short": "Competitors, pricing, demand, and market signals.",
+        "description": "Supports industry scans, competitor comparison, market sizing, demand validation, and go-to-market positioning analysis.",
+        "dispatch": "Auto-selected when the task needs industry research, demand validation, competitor comparison, or packaging analysis.",
+        "typicalTasks": "Market sizing, competitor maps, value proposition cleanup, and pricing references.",
+        "outputs": "Research summaries, competitor tables, rationale, and recommended actions."
+      },
+      "ja": {
+        "name": "市場調査",
+        "short": "競合、価格、需要、市場判断。",
+        "description": "業界観察、競合比較、市場規模推定、需要検証、営業切り口の整理を支援します。",
+        "dispatch": "業界調査、需要確認、競合比較、製品包装分析が必要なとき自動で使われます。",
+        "typicalTasks": "市場規模推定、競合マップ、価値訴求整理、価格参考。",
+        "outputs": "調査要約、競合表、判断根拠、次アクション提案。"
+      }
+    }
+  },
+  {
+    "id": "channel_support_triage",
+    "order": 150,
+    "category": "channels",
+    "sourceType": "local",
+    "sourceLabel": "Local Product Skill",
+    "accent": "#3b82f6",
+    "icon": "chat",
+    "tags": [
+      "support",
+      "triage",
+      "channel",
+      "reply"
+    ],
+    "recommendedAgents": [
+      "greeter",
+      "orchestrator"
+    ],
+    "locales": {
+      "zh-CN": {
+        "name": "客服分流",
+        "short": "识别会话优先级、风险与回复路径。",
+        "description": "用于把渠道消息分成自动回复、待审批、人工接管和失败重试等路径，是客服值守闭环的核心技能。",
+        "dispatch": "当任务涉及渠道入站、客服问答、投诉识别、低置信度分流或人工接管时自动命中。",
+        "typicalTasks": "FAQ 自动回复、投诉升级、人工接管提醒、失败重试建议。",
+        "outputs": "会话分级、回复建议、接管结论和审计记录。"
+      },
+      "zh-TW": {
+        "name": "客服分流",
+        "short": "識別會話優先級、風險與回覆路徑。",
+        "description": "用於把渠道訊息分成自動回覆、待審批、人工接管與失敗重試等路徑，是客服值守閉環的核心技能。",
+        "dispatch": "當任務涉及渠道入站、客服問答、投訴識別、低置信度分流或人工接管時自動命中。",
+        "typicalTasks": "FAQ 自動回覆、投訴升級、人工接管提醒、失敗重試建議。",
+        "outputs": "會話分級、回覆建議、接管結論與審計記錄。"
+      },
+      "en": {
+        "name": "Support Triage",
+        "short": "Route sessions by priority, risk, and reply path.",
+        "description": "Classifies channel conversations into auto-reply, approval-needed, manual takeover, or retry paths and forms the core of the support loop.",
+        "dispatch": "Auto-selected for inbound channel handling, support QA, complaint detection, low-confidence routing, and manual takeover cases.",
+        "typicalTasks": "FAQ auto-replies, complaint escalation, takeover prompts, and retry suggestions.",
+        "outputs": "Session prioritization, reply suggestions, takeover decisions, and audit-ready records."
+      },
+      "ja": {
+        "name": "客服トリアージ",
+        "short": "会話の優先度、リスク、返信経路を判定。",
+        "description": "チャネル会話を自動返信、承認待ち、手動引き継ぎ、再試行へ振り分ける客服値守りの中核 skill です。",
+        "dispatch": "チャネル入電、客服応答、クレーム判定、低信頼分流、手動引き継ぎが必要なとき自動で使われます。",
+        "typicalTasks": "FAQ 自動返信、クレーム昇格、引き継ぎ通知、再試行提案。",
+        "outputs": "会話優先度、返信提案、引き継ぎ判断、監査記録。"
+      }
+    }
+  },
+  {
+    "id": "sales_follow_up",
+    "order": 160,
+    "category": "sales",
+    "sourceType": "local",
+    "sourceLabel": "Local Product Skill",
+    "accent": "#f97316",
+    "icon": "handshake",
+    "tags": [
+      "sales",
+      "follow-up",
+      "lead",
+      "crm"
+    ],
+    "recommendedAgents": [
+      "greeter",
+      "writer",
+      "orchestrator"
+    ],
+    "locales": {
+      "zh-CN": {
+        "name": "销售跟进",
+        "short": "推进线索、跟进节奏与转化动作。",
+        "description": "用于根据线索阶段安排下一步动作、生成跟进话术、提醒回访并把销售推进变成可监督的节奏。",
+        "dispatch": "当任务涉及线索回访、成交推进、话术拟定、提醒补触达或转化节奏安排时自动命中。",
+        "typicalTasks": "首触达、二次跟进、报价提醒、沉默客户唤醒。",
+        "outputs": "跟进文案、下一步动作、节奏建议和线索状态更新。"
+      },
+      "zh-TW": {
+        "name": "銷售跟進",
+        "short": "推進線索、跟進節奏與轉化動作。",
+        "description": "用於根據線索階段安排下一步動作、生成跟進話術、提醒回訪並把銷售推進變成可監督的節奏。",
+        "dispatch": "當任務涉及線索回訪、成交推進、話術擬定、提醒補觸達或轉化節奏安排時自動命中。",
+        "typicalTasks": "首觸達、二次跟進、報價提醒、沉默客戶喚醒。",
+        "outputs": "跟進文案、下一步動作、節奏建議與線索狀態更新。"
+      },
+      "en": {
+        "name": "Sales Follow-up",
+        "short": "Move leads forward with planned follow-up cadence.",
+        "description": "Plans next-step sales actions by lead stage, drafts outreach copy, reminds revisit timing, and keeps conversion work observable.",
+        "dispatch": "Auto-selected for lead nurture, deal progression, follow-up copy, reminder scheduling, or conversion cadence planning.",
+        "typicalTasks": "First outreach, second touch, quote reminders, and silent lead reactivation.",
+        "outputs": "Follow-up copy, next actions, cadence suggestions, and lead status updates."
+      },
+      "ja": {
+        "name": "営業フォロー",
+        "short": "リードを前に進める追客と転換動作。",
+        "description": "リード段階に応じて次アクション、連絡文面、再訪時期を整理し、営業進行を監督可能な形にします。",
+        "dispatch": "リード育成、案件前進、追客文面、再接触予定、転換リズム設計が必要なとき自動で使われます。",
+        "typicalTasks": "初回接触、再フォロー、見積もり催促、沈黙顧客の再活性化。",
+        "outputs": "追客文面、次アクション、推奨 cadence、リード状態更新。"
+      }
+    }
+  },
+  {
+    "id": "content_planning",
+    "order": 170,
+    "category": "content",
+    "sourceType": "local",
+    "sourceLabel": "Local Product Skill",
+    "accent": "#8b5cf6",
+    "icon": "calendar",
+    "tags": [
+      "content",
+      "calendar",
+      "planning",
+      "campaign"
+    ],
+    "recommendedAgents": [
+      "writer",
+      "performer",
+      "orchestrator"
+    ],
+    "locales": {
+      "zh-CN": {
+        "name": "内容排期",
+        "short": "选题、节奏、渠道与发布时间安排。",
+        "description": "用于规划内容主题、发布节奏、目标渠道和协作节点，让内容任务从灵感变成可执行排期单。",
+        "dispatch": "当任务涉及内容选题、日历排期、发布节奏、渠道组合或活动内容计划时自动命中。",
+        "typicalTasks": "周内容计划、栏目排期、活动预热日历、渠道分发安排。",
+        "outputs": "排期表、选题清单、发布时间建议和协作提醒。"
+      },
+      "zh-TW": {
+        "name": "內容排期",
+        "short": "選題、節奏、渠道與發佈時間安排。",
+        "description": "用於規劃內容主題、發佈節奏、目標渠道與協作節點，讓內容任務從靈感變成可執行排期單。",
+        "dispatch": "當任務涉及內容選題、日曆排期、發佈節奏、渠道組合或活動內容計畫時自動命中。",
+        "typicalTasks": "每週內容計畫、欄目排期、活動預熱日曆、渠道分發安排。",
+        "outputs": "排期表、選題清單、發佈時間建議與協作提醒。"
+      },
+      "en": {
+        "name": "Content Planning",
+        "short": "Topics, cadence, channels, and publishing slots.",
+        "description": "Plans content themes, publishing cadence, target channels, and collaboration milestones so content tasks become executable schedules.",
+        "dispatch": "Auto-selected when the task involves editorial planning, content calendars, launch cadence, channel mixes, or campaign schedules.",
+        "typicalTasks": "Weekly content plans, series calendars, campaign warm-up schedules, and channel sequencing.",
+        "outputs": "Content calendars, topic lists, publish timing suggestions, and collaboration checkpoints."
+      },
+      "ja": {
+        "name": "コンテンツ計画",
+        "short": "テーマ、頻度、チャネル、公開時期を整理。",
+        "description": "コンテンツのテーマ、公開 cadence、対象チャネル、協業タイミングを整理し、実行可能な配信計画へ落とし込みます。",
+        "dispatch": "企画立案、公開カレンダー、配信 cadence、チャネル構成、キャンペーン計画が必要なとき自動で使われます。",
+        "typicalTasks": "週次計画、連載カレンダー、イベント告知日程、チャネル別配信計画。",
+        "outputs": "公開カレンダー、テーマ一覧、推奨公開時刻、協業チェックポイント。"
+      }
+    }
+  },
+  {
+    "id": "content_publishing",
+    "order": 180,
+    "category": "content",
+    "sourceType": "local",
+    "sourceLabel": "Local Product Skill",
+    "accent": "#ec4899",
+    "icon": "megaphone",
+    "tags": [
+      "content",
+      "publish",
+      "review",
+      "distribution"
+    ],
+    "recommendedAgents": [
+      "writer",
+      "performer",
+      "orchestrator"
+    ],
+    "locales": {
+      "zh-CN": {
+        "name": "内容发布",
+        "short": "定稿、审校、分发与发布回写。",
+        "description": "用于把内容草稿推进到定稿、审校、发布准备和结果回写，形成可监督的内容运营闭环。",
+        "dispatch": "当任务涉及内容定稿、发布准备、发布动作、结果回写或链接归档时自动命中。",
+        "typicalTasks": "定稿确认、发布检查单、渠道分发、发布结果回写。",
+        "outputs": "发布清单、审校结论、分发记录和外链归档。"
+      },
+      "zh-TW": {
+        "name": "內容發佈",
+        "short": "定稿、審校、分發與發佈回寫。",
+        "description": "用於把內容草稿推進到定稿、審校、發佈準備與結果回寫，形成可監督的內容營運閉環。",
+        "dispatch": "當任務涉及內容定稿、發佈準備、發佈動作、結果回寫或連結歸檔時自動命中。",
+        "typicalTasks": "定稿確認、發佈檢查單、渠道分發、發佈結果回寫。",
+        "outputs": "發佈清單、審校結論、分發記錄與外連歸檔。"
+      },
+      "en": {
+        "name": "Content Publishing",
+        "short": "Finalize, review, distribute, and write back results.",
+        "description": "Pushes content drafts through review, publish preparation, distribution, and result logging to complete the content operations loop.",
+        "dispatch": "Auto-selected when the task involves final review, publishing prep, outbound distribution, result write-back, or link archiving.",
+        "typicalTasks": "Final review, publish checklists, channel distribution, and post-publish logging.",
+        "outputs": "Publishing checklists, review decisions, distribution records, and archived links."
+      },
+      "ja": {
+        "name": "コンテンツ公開",
+        "short": "確定稿、校正、配信、結果記録。",
+        "description": "コンテンツ草稿を確定稿、校正、公開準備、結果記録まで進め、監督可能な運用ループを完成させます。",
+        "dispatch": "最終確認、公開準備、配信実行、結果書き戻し、リンク保管が必要なとき自動で使われます。",
+        "typicalTasks": "最終確認、公開チェックリスト、チャネル配信、公開結果記録。",
+        "outputs": "公開チェックリスト、校正結論、配信記録、リンク保管。"
+      }
+    }
+  },
+  {
+    "id": "ticket_resolution",
+    "order": 190,
+    "category": "service",
+    "sourceType": "local",
+    "sourceLabel": "Local Product Skill",
+    "accent": "#2563eb",
+    "icon": "headset",
+    "tags": [
+      "ticket",
+      "service",
+      "resolution",
+      "support"
+    ],
+    "recommendedAgents": [
+      "greeter",
+      "orchestrator",
+      "writer"
+    ],
+    "locales": {
+      "zh-CN": {
+        "name": "工单处置",
+        "short": "诊断工单、安排动作并推动结案。",
+        "description": "用于识别工单优先级、整理处理步骤、生成回复建议并推进到解决或转派状态。",
+        "dispatch": "当任务涉及工单分析、服务恢复、问题解释、结案说明或转派判断时自动命中。",
+        "typicalTasks": "问题归类、处理步骤建议、客户更新、结案记录。",
+        "outputs": "工单摘要、处置方案、回复文案和结案说明。"
+      },
+      "zh-TW": {
+        "name": "工單處置",
+        "short": "診斷工單、安排動作並推動結案。",
+        "description": "用於識別工單優先級、整理處理步驟、生成回覆建議並推進到解決或轉派狀態。",
+        "dispatch": "當任務涉及工單分析、服務恢復、問題解釋、結案說明或轉派判斷時自動命中。",
+        "typicalTasks": "問題分類、處理步驟建議、客戶更新、結案記錄。",
+        "outputs": "工單摘要、處置方案、回覆文案與結案說明。"
+      },
+      "en": {
+        "name": "Ticket Resolution",
+        "short": "Diagnose tickets, plan actions, and drive closure.",
+        "description": "Handles ticket priority, resolution steps, customer-facing updates, and closeout logic so service work is easier to supervise.",
+        "dispatch": "Auto-selected when the task is about ticket diagnosis, service recovery, issue explanation, closeout messaging, or reassignment judgment.",
+        "typicalTasks": "Issue categorization, resolution steps, customer updates, and closure notes.",
+        "outputs": "Ticket summaries, action plans, reply copy, and closeout records."
+      },
+      "ja": {
+        "name": "チケット対応",
+        "short": "チケット診断、対処計画、クローズ推進。",
+        "description": "チケット優先度、解決ステップ、顧客向け更新、クローズ判断を整理し、監督しやすい対応フローへ整えます。",
+        "dispatch": "チケット分析、復旧対応、問題説明、クローズ文面、再割当判断が必要なとき自動で使われます。",
+        "typicalTasks": "問題分類、対処手順、顧客更新、クローズ記録。",
+        "outputs": "チケット要約、対処計画、返信文面、クローズ記録。"
+      }
+    }
+  },
+  {
+    "id": "approval_guardrails",
+    "order": 200,
+    "category": "governance",
+    "sourceType": "local",
+    "sourceLabel": "Local Product Skill",
+    "accent": "#ef4444",
+    "icon": "shield",
+    "tags": [
+      "approval",
+      "risk",
+      "governance",
+      "guardrails"
+    ],
+    "recommendedAgents": [
+      "orchestrator",
+      "greeter",
+      "explorer"
+    ],
+    "locales": {
+      "zh-CN": {
+        "name": "审批护栏",
+        "short": "识别高风险动作并停到人工边界。",
+        "description": "用于判断哪些动作必须审批、哪些内容可以自动继续，以及失败或低置信度时该如何停在人工边界。",
+        "dispatch": "当任务涉及外发、发布、转账、高风险桌面操作或越权动作判断时自动命中。",
+        "typicalTasks": "审批判断、风险提示、阻断条件、人工接管建议。",
+        "outputs": "审批结论、风险等级、阻断原因和下一步建议。"
+      },
+      "zh-TW": {
+        "name": "審批護欄",
+        "short": "識別高風險動作並停到人工邊界。",
+        "description": "用於判斷哪些動作必須審批、哪些內容可以自動繼續，以及失敗或低置信度時該如何停在人工邊界。",
+        "dispatch": "當任務涉及外發、發佈、轉帳、高風險桌面操作或越權動作判斷時自動命中。",
+        "typicalTasks": "審批判斷、風險提示、阻斷條件、人工接管建議。",
+        "outputs": "審批結論、風險等級、阻斷原因與下一步建議。"
+      },
+      "en": {
+        "name": "Approval Guardrails",
+        "short": "Detect risky actions and stop at a human boundary.",
+        "description": "Decides which actions must wait for approval, which can proceed automatically, and how to stop safely when confidence or risk is low.",
+        "dispatch": "Auto-selected for outbound sends, publishing, money movement, risky desktop actions, or privilege-sensitive decisions.",
+        "typicalTasks": "Approval gating, risk prompts, blocking conditions, and manual takeover advice.",
+        "outputs": "Approval decisions, risk levels, stop reasons, and recommended next actions."
+      },
+      "ja": {
+        "name": "承認ガードレール",
+        "short": "高リスク操作を検出し人手境界で停止。",
+        "description": "どの操作が承認必須か、どこまで自動継続できるか、低信頼や失敗時にどのように安全停止するかを判断します。",
+        "dispatch": "外部送信、公開、送金、高リスクなデスクトップ操作、権限判断が必要なとき自動で使われます。",
+        "typicalTasks": "承認判定、リスク通知、停止条件、手動引き継ぎ提案。",
+        "outputs": "承認結論、リスクレベル、停止理由、次アクション提案。"
+      }
+    }
+  },
+  {
+    "id": "desktop_takeover",
+    "order": 210,
+    "category": "automation",
+    "sourceType": "local",
+    "sourceLabel": "Local Product Skill",
+    "accent": "#0ea5e9",
+    "icon": "desktop",
+    "tags": [
+      "desktop",
+      "takeover",
+      "mouse",
+      "keyboard"
+    ],
+    "recommendedAgents": [
+      "explorer",
+      "orchestrator",
+      "greeter"
+    ],
+    "locales": {
+      "zh-CN": {
+        "name": "桌面接管",
+        "short": "截图、定位、点击与人工续跑。",
+        "description": "用于在代码接口不够时切换到桌面交互模式，通过截图识别、鼠标键盘操作和人工接管实现任务续跑。",
+        "dispatch": "当任务涉及桌面应用、鼠标键盘模拟、截图定位、验证码边界或人工接管恢复时自动命中。",
+        "typicalTasks": "桌面端点击、界面定位、失败重试、人工接管后续跑。",
+        "outputs": "桌面动作记录、截图证据、定位结果和恢复建议。"
+      },
+      "zh-TW": {
+        "name": "桌面接管",
+        "short": "截圖、定位、點擊與人工續跑。",
+        "description": "用於在程式介面不足時切換到桌面互動模式，透過截圖識別、滑鼠鍵盤操作與人工接管實現任務續跑。",
+        "dispatch": "當任務涉及桌面應用、滑鼠鍵盤模擬、截圖定位、驗證碼邊界或人工接管恢復時自動命中。",
+        "typicalTasks": "桌面端點擊、介面定位、失敗重試、人工接管後續跑。",
+        "outputs": "桌面動作記錄、截圖證據、定位結果與恢復建議。"
+      },
+      "en": {
+        "name": "Desktop Takeover",
+        "short": "Screens, targeting, clicks, and human-assisted resume.",
+        "description": "Switches into desktop interaction mode when code APIs are insufficient, using screenshots, targeting, mouse/keyboard actions, and human-assisted resume.",
+        "dispatch": "Auto-selected for desktop apps, mouse-keyboard simulation, screenshot targeting, captcha boundaries, or manual takeover recovery.",
+        "typicalTasks": "Desktop clicks, UI targeting, retry loops, and post-takeover continuation.",
+        "outputs": "Desktop action logs, screenshot evidence, targeting results, and recovery suggestions."
+      },
+      "ja": {
+        "name": "デスクトップ引き継ぎ",
+        "short": "画面認識、位置決め、クリック、人手再開。",
+        "description": "コード API では足りないときにデスクトップ操作モードへ切り替え、画面認識、位置決め、マウスキー操作、人手再開でタスクを継続します。",
+        "dispatch": "デスクトップアプリ、マウスキーボード操作、画面位置決め、認証境界、人手引き継ぎ復旧が必要なとき自動で使われます。",
+        "typicalTasks": "デスクトップクリック、UI 位置決め、失敗再試行、引き継ぎ後の再開。",
+        "outputs": "操作ログ、画面証跡、位置決め結果、復旧提案。"
+      }
+    }
+  },
+  {
+    "id": "local_app_operator",
+    "order": 220,
+    "category": "automation",
+    "sourceType": "local",
+    "sourceLabel": "Local Product Skill",
+    "accent": "#14b8a6",
+    "icon": "app-window",
+    "tags": [
+      "desktop",
+      "app",
+      "launcher",
+      "whitelist"
+    ],
+    "recommendedAgents": [
+      "explorer",
+      "orchestrator",
+      "greeter"
+    ],
+    "locales": {
+      "zh-CN": {
+        "name": "本机程序操作",
+        "short": "扫描、白名单、收藏与程序调用。",
+        "description": "用于管理本机程序扫描结果、白名单策略、收藏应用和桌面任务所需的程序调用入口。",
+        "dispatch": "当任务涉及本机程序搜索、白名单判断、程序路径选择或启动目标应用时自动命中。",
+        "typicalTasks": "搜索程序、加入白名单、选择程序路径、启动指定应用。",
+        "outputs": "程序候选、白名单变更、调用目标和操作记录。"
+      },
+      "zh-TW": {
+        "name": "本機程式操作",
+        "short": "掃描、白名單、收藏與程式呼叫。",
+        "description": "用於管理本機程式掃描結果、白名單策略、收藏應用與桌面任務所需的程式呼叫入口。",
+        "dispatch": "當任務涉及本機程式搜尋、白名單判斷、程式路徑選擇或啟動目標應用時自動命中。",
+        "typicalTasks": "搜尋程式、加入白名單、選擇程式路徑、啟動指定應用。",
+        "outputs": "程式候選、白名單變更、呼叫目標與操作記錄。"
+      },
+      "en": {
+        "name": "Local App Operator",
+        "short": "Scan, whitelist, favorite, and launch local programs.",
+        "description": "Manages installed app discovery, whitelist policy, favorite presets, and local program launch entry points for desktop tasks.",
+        "dispatch": "Auto-selected for local app search, whitelist checks, path picking, or launching a target desktop application.",
+        "typicalTasks": "Search programs, add to whitelist, choose executable paths, and launch selected apps.",
+        "outputs": "Program candidates, whitelist updates, launch targets, and action logs."
+      },
+      "ja": {
+        "name": "ローカルアプリ操作",
+        "short": "スキャン、許可一覧、お気に入り、起動。",
+        "description": "インストール済みアプリ検出、ホワイトリスト方針、お気に入り登録、デスクトップ作業向け起動入口を管理します。",
+        "dispatch": "ローカルアプリ検索、許可判断、パス選択、対象アプリ起動が必要なとき自動で使われます。",
+        "typicalTasks": "アプリ検索、許可一覧追加、実行パス選択、指定アプリ起動。",
+        "outputs": "候補アプリ、許可一覧更新、起動対象、操作ログ。"
+      }
+    }
+  },
+  {
+    "id": "knowledge_maintenance",
+    "order": 230,
+    "category": "ops",
+    "sourceType": "local",
+    "sourceLabel": "Local Product Skill",
+    "accent": "#22c55e",
+    "icon": "book",
+    "tags": [
+      "knowledge",
+      "faq",
+      "memory",
+      "rules"
+    ],
+    "recommendedAgents": [
+      "explorer",
+      "writer",
+      "orchestrator"
+    ],
+    "locales": {
+      "zh-CN": {
+        "name": "知识维护",
+        "short": "FAQ、规则、记忆与上下文更新。",
+        "description": "用于维护客服 FAQ、项目规则、禁忌事项和上下文记忆，确保自动回复和执行行为持续对齐。",
+        "dispatch": "当任务涉及 FAQ 整理、知识更新、规则变更、上下文补充或记忆修订时自动命中。",
+        "typicalTasks": "FAQ 更新、项目注意事项、标准回复模板、记忆清理。",
+        "outputs": "知识条目、规则摘要、回复模板和更新记录。"
+      },
+      "zh-TW": {
+        "name": "知識維護",
+        "short": "FAQ、規則、記憶與上下文更新。",
+        "description": "用於維護客服 FAQ、專案規則、禁忌事項與上下文記憶，確保自動回覆與執行行為持續對齊。",
+        "dispatch": "當任務涉及 FAQ 整理、知識更新、規則變更、上下文補充或記憶修訂時自動命中。",
+        "typicalTasks": "FAQ 更新、專案注意事項、標準回覆模板、記憶清理。",
+        "outputs": "知識條目、規則摘要、回覆模板與更新記錄。"
+      },
+      "en": {
+        "name": "Knowledge Maintenance",
+        "short": "Update FAQ, rules, memory, and working context.",
+        "description": "Maintains support FAQ, project rules, caution notes, and working memory so automated replies and execution behavior stay aligned.",
+        "dispatch": "Auto-selected when the task involves FAQ refresh, knowledge updates, rule changes, context expansion, or memory revisions.",
+        "typicalTasks": "FAQ updates, project caution notes, standard reply templates, and memory cleanup.",
+        "outputs": "Knowledge entries, rule summaries, reply templates, and update logs."
+      },
+      "ja": {
+        "name": "知識メンテナンス",
+        "short": "FAQ、ルール、記憶、文脈の更新。",
+        "description": "客服 FAQ、案件ルール、注意事項、作業記憶を更新し、自動返信と実行挙動を継続的に整合させます。",
+        "dispatch": "FAQ 更新、知識修正、ルール変更、文脈追加、記憶更新が必要なとき自動で使われます。",
+        "typicalTasks": "FAQ 更新、注意事項整理、返信テンプレート、記憶クリーンアップ。",
+        "outputs": "知識項目、ルール要約、返信テンプレート、更新ログ。"
+      }
+    }
+  },
+  {
+    "id": "workflow_restage",
+    "order": 240,
+    "category": "automation",
+    "sourceType": "local",
+    "sourceLabel": "Local Product Skill",
+    "accent": "#6366f1",
+    "icon": "refresh",
+    "tags": [
+      "workflow",
+      "restage",
+      "resume",
+      "execution"
+    ],
+    "recommendedAgents": [
+      "orchestrator",
+      "explorer",
+      "writer"
+    ],
+    "locales": {
+      "zh-CN": {
+        "name": "流程续跑",
+        "short": "从失败、阻断或人工接管点继续执行。",
+        "description": "用于把失败执行、阻断节点或人工接管后的上下文重新整理成可续跑的 workflow 或聊天任务。",
+        "dispatch": "当任务涉及执行恢复、失败重试、流程续跑、回到聊天接管或 restage 时自动命中。",
+        "typicalTasks": "失败后续跑、从审批后恢复、接管后继续、重新分配执行入口。",
+        "outputs": "恢复上下文、续跑指令、下一阶段动作和重试建议。"
+      },
+      "zh-TW": {
+        "name": "流程續跑",
+        "short": "從失敗、阻斷或人工接管點繼續執行。",
+        "description": "用於把失敗執行、阻斷節點或人工接管後的上下文重新整理成可續跑的 workflow 或聊天任務。",
+        "dispatch": "當任務涉及執行恢復、失敗重試、流程續跑、回到聊天接管或 restage 時自動命中。",
+        "typicalTasks": "失敗後續跑、從審批後恢復、接管後繼續、重新分配執行入口。",
+        "outputs": "恢復上下文、續跑指令、下一階段動作與重試建議。"
+      },
+      "en": {
+        "name": "Workflow Restage",
+        "short": "Resume execution from failure, block, or takeover points.",
+        "description": "Repackages failed, blocked, or manually-taken-over execution context into a resumable workflow or chat handoff.",
+        "dispatch": "Auto-selected for execution recovery, retries, workflow restaging, chat handoff continuation, or blocked-run recovery.",
+        "typicalTasks": "Resume after failure, recover after approval, continue after takeover, and re-enter a run path.",
+        "outputs": "Recovery context, resume prompts, next-stage actions, and retry suggestions."
+      },
+      "ja": {
+        "name": "ワークフロー再開",
+        "short": "失敗、停止、引き継ぎ点から続行。",
+        "description": "失敗実行、停止ノード、人手引き継ぎ後の文脈を、再開可能な workflow またはチャット引き継ぎへ再整理します。",
+        "dispatch": "実行復旧、再試行、workflow restage、チャット再開、停止 run 復旧が必要なとき自動で使われます。",
+        "typicalTasks": "失敗後再開、承認後復旧、引き継ぎ後続行、再入場指示整理。",
+        "outputs": "復旧文脈、再開指示、次段階アクション、再試行提案。"
+      }
+    }
+  },
+  {
+    "id": "remote_supervision",
+    "order": 250,
+    "category": "governance",
+    "sourceType": "local",
+    "sourceLabel": "Local Product Skill",
+    "accent": "#f59e0b",
+    "icon": "radar",
+    "tags": [
+      "remote",
+      "supervision",
+      "ops",
+      "monitoring"
+    ],
+    "recommendedAgents": [
+      "orchestrator",
+      "greeter",
+      "performer"
+    ],
+    "locales": {
+      "zh-CN": {
+        "name": "远程监督",
+        "short": "值守看板、缺口判断与人工决策。",
+        "description": "用于整理远程值守面板上的待办、风险、接管和恢复入口，让人工监督能快速做出决策。",
+        "dispatch": "当任务涉及远程值守、异常提醒、人工监督、批量待办判断或值守看板整理时自动命中。",
+        "typicalTasks": "人工决策、队列收口、待办优先级、监督摘要。",
+        "outputs": "值守摘要、优先级判断、接管建议和待办清单。"
+      },
+      "zh-TW": {
+        "name": "遠程監督",
+        "short": "值守看板、缺口判斷與人工決策。",
+        "description": "用於整理遠程值守面板上的待辦、風險、接管與恢復入口，讓人工監督能快速做出決策。",
+        "dispatch": "當任務涉及遠程值守、異常提醒、人工監督、批量待辦判斷或值守看板整理時自動命中。",
+        "typicalTasks": "人工決策、隊列收口、待辦優先級、監督摘要。",
+        "outputs": "值守摘要、優先級判斷、接管建議與待辦清單。"
+      },
+      "en": {
+        "name": "Remote Supervision",
+        "short": "Supervision boards, gap checks, and human decisions.",
+        "description": "Organizes remote-ops backlogs, risks, takeover needs, and recovery entry points so human supervisors can decide quickly.",
+        "dispatch": "Auto-selected for remote supervision, alerts, human oversight, bulk queue judgment, or supervision dashboard cleanup.",
+        "typicalTasks": "Human decisions, queue cleanup, backlog prioritization, and supervision summaries.",
+        "outputs": "Ops summaries, priority decisions, takeover suggestions, and action lists."
+      },
+      "ja": {
+        "name": "遠隔監督",
+        "short": "監督ボード、ギャップ判断、人手決定。",
+        "description": "遠隔運用パネル上の backlog、リスク、引き継ぎ、復旧入口を整理し、人手監督がすばやく判断できるようにします。",
+        "dispatch": "遠隔監督、異常通知、人手監視、キュー一括判断、監督ボード整理が必要なとき自動で使われます。",
+        "typicalTasks": "人手判断、キュー整理、優先度付け、監督要約。",
+        "outputs": "運用要約、優先度判断、引き継ぎ提案、作業一覧。"
+      }
+    }
+  },
+  {
+    "id": "quote_proposal",
+    "order": 260,
+    "category": "sales",
+    "sourceType": "local",
+    "sourceLabel": "Local Product Skill",
+    "accent": "#f59e0b",
+    "icon": "doc",
+    "tags": [
+      "quote",
+      "proposal",
+      "sales",
+      "deal"
+    ],
+    "recommendedAgents": [
+      "writer",
+      "greeter",
+      "orchestrator"
+    ],
+    "locales": {
+      "zh-CN": {
+        "name": "报价方案",
+        "short": "生成报价逻辑、方案摘要与成交材料。",
+        "description": "用于把客户需求整理成报价说明、方案摘要、交付边界和成交型文案，支持销售推进与提案输出。",
+        "dispatch": "当任务涉及报价、方案书、服务边界、成交提案或客户定制说明时自动命中。",
+        "typicalTasks": "报价说明、服务套餐整理、提案摘要、成交页文案。",
+        "outputs": "报价结构、方案摘要、服务边界和提案内容。"
+      },
+      "zh-TW": {
+        "name": "報價方案",
+        "short": "生成報價邏輯、方案摘要與成交材料。",
+        "description": "用於把客戶需求整理成報價說明、方案摘要、交付邊界與成交型文案，支援銷售推進與提案輸出。",
+        "dispatch": "當任務涉及報價、方案書、服務邊界、成交提案或客戶客製說明時自動命中。",
+        "typicalTasks": "報價說明、服務套餐整理、提案摘要、成交頁文案。",
+        "outputs": "報價結構、方案摘要、服務邊界與提案內容。"
+      },
+      "en": {
+        "name": "Quotes & Proposals",
+        "short": "Build quote logic, proposal summaries, and deal material.",
+        "description": "Turns customer requirements into pricing logic, proposal summaries, delivery boundaries, and deal-supporting sales copy.",
+        "dispatch": "Auto-selected when the task involves quotes, proposals, service boundaries, closing material, or customer-tailored solution outlines.",
+        "typicalTasks": "Quote explanations, package design, proposal summaries, and close-page copy.",
+        "outputs": "Pricing structures, proposal summaries, scope boundaries, and sales-ready proposal content."
+      },
+      "ja": {
+        "name": "見積と提案",
+        "short": "見積ロジック、提案要約、成約資料を作成。",
+        "description": "顧客要件を見積説明、提案要約、納品範囲、成約向け文面へ整理し、営業前進を支援します。",
+        "dispatch": "見積、提案書、サービス境界、成約提案、顧客向け個別説明が必要なとき自動で使われます。",
+        "typicalTasks": "見積説明、サービスパッケージ整理、提案要約、成約ページ文面。",
+        "outputs": "価格構成、提案要約、範囲境界、提案コンテンツ。"
+      }
+    }
+  },
+  {
+    "id": "lead_enrichment",
+    "order": 270,
+    "category": "sales",
+    "sourceType": "local",
+    "sourceLabel": "Local Product Skill",
+    "accent": "#0ea5e9",
+    "icon": "search",
+    "tags": [
+      "lead",
+      "research",
+      "crm",
+      "enrichment"
+    ],
+    "recommendedAgents": [
+      "explorer",
+      "greeter",
+      "orchestrator"
+    ],
+    "locales": {
+      "zh-CN": {
+        "name": "线索补全",
+        "short": "补齐客户背景、需求线索与跟进依据。",
+        "description": "用于收集客户背景、公司信息、公开动态和需求线索，帮助销售或客服更精准地推进下一步动作。",
+        "dispatch": "当任务涉及线索背景调查、客户画像、补全跟进依据或触达前准备时自动命中。",
+        "typicalTasks": "客户背景补充、公司信息梳理、触达前准备、线索字段补全。",
+        "outputs": "客户画像、补全字段、跟进依据和触达建议。"
+      },
+      "zh-TW": {
+        "name": "線索補全",
+        "short": "補齊客戶背景、需求線索與跟進依據。",
+        "description": "用於收集客戶背景、公司資訊、公開動態與需求線索，幫助銷售或客服更精準地推進下一步動作。",
+        "dispatch": "當任務涉及線索背景調查、客戶畫像、補全跟進依據或觸達前準備時自動命中。",
+        "typicalTasks": "客戶背景補充、公司資訊整理、觸達前準備、線索欄位補全。",
+        "outputs": "客戶畫像、補全欄位、跟進依據與觸達建議。"
+      },
+      "en": {
+        "name": "Lead Enrichment",
+        "short": "Complete customer context, intent clues, and outreach basis.",
+        "description": "Collects company context, public signals, and customer hints so sales or support can make better next-step decisions.",
+        "dispatch": "Auto-selected when the task needs lead background research, account profiling, pre-outreach prep, or missing CRM field completion.",
+        "typicalTasks": "Customer background collection, company summaries, outreach prep, and field completion.",
+        "outputs": "Lead profiles, filled fields, outreach rationale, and next-step suggestions."
+      },
+      "ja": {
+        "name": "リード補完",
+        "short": "顧客背景、需要兆候、追客根拠を補う。",
+        "description": "企業情報、公開シグナル、顧客手がかりを集め、営業や客服が次アクションを判断しやすくします。",
+        "dispatch": "リード背景調査、顧客プロファイル、事前接触準備、CRM 欠損補完が必要なとき自動で使われます。",
+        "typicalTasks": "顧客背景収集、企業要約、接触前準備、項目補完。",
+        "outputs": "リードプロファイル、補完項目、接触根拠、次アクション提案。"
+      }
+    }
+  },
+  {
+    "id": "customer_research",
+    "order": 280,
+    "category": "research",
+    "sourceType": "local",
+    "sourceLabel": "Local Product Skill",
+    "accent": "#10b981",
+    "icon": "compass",
+    "tags": [
+      "customer",
+      "research",
+      "background",
+      "insight"
+    ],
+    "recommendedAgents": [
+      "explorer",
+      "writer",
+      "greeter"
+    ],
+    "locales": {
+      "zh-CN": {
+        "name": "客户调研",
+        "short": "调研客户背景、关注点与合作切入点。",
+        "description": "用于快速理解客户所在行业、业务重点、近期动态和潜在诉求，帮助客服与销售提升应对质量。",
+        "dispatch": "当任务涉及客户背景研究、访前准备、客户分析或合作切入点梳理时自动命中。",
+        "typicalTasks": "客户背景调研、访谈准备、合作切入点整理、客户摘要。",
+        "outputs": "客户摘要、关键关注点、背景资料和切入建议。"
+      },
+      "zh-TW": {
+        "name": "客戶調研",
+        "short": "調研客戶背景、關注點與合作切入點。",
+        "description": "用於快速理解客戶所在產業、業務重點、近期動態與潛在訴求，幫助客服與銷售提升應對品質。",
+        "dispatch": "當任務涉及客戶背景研究、會前準備、客戶分析或合作切入點整理時自動命中。",
+        "typicalTasks": "客戶背景調研、訪談準備、合作切入點整理、客戶摘要。",
+        "outputs": "客戶摘要、關鍵關注點、背景資料與切入建議。"
+      },
+      "en": {
+        "name": "Customer Research",
+        "short": "Study customer background, priorities, and entry points.",
+        "description": "Quickly builds a usable picture of the customer's industry, business priorities, recent activity, and likely needs for better support or sales handling.",
+        "dispatch": "Auto-selected when the task involves customer research, prep before a meeting, account analysis, or partnership entry-point planning.",
+        "typicalTasks": "Customer background research, briefing prep, entry-point analysis, and customer summaries.",
+        "outputs": "Customer briefs, priority signals, background notes, and suggested entry points."
+      },
+      "ja": {
+        "name": "顧客調査",
+        "short": "顧客背景、関心、提案切り口を把握。",
+        "description": "顧客の業界、重点業務、最近の動き、潜在ニーズを素早く整理し、客服や営業の対応品質を上げます。",
+        "dispatch": "顧客背景調査、打合せ前準備、アカウント分析、提案切り口整理が必要なとき自動で使われます。",
+        "typicalTasks": "背景調査、事前ブリーフ、切り口整理、顧客要約。",
+        "outputs": "顧客ブリーフ、重要関心、背景メモ、提案切り口。"
+      }
+    }
+  },
+  {
+    "id": "meeting_briefing",
+    "order": 290,
+    "category": "documents",
+    "sourceType": "local",
+    "sourceLabel": "Local Product Skill",
+    "accent": "#6366f1",
+    "icon": "doc",
+    "tags": [
+      "meeting",
+      "brief",
+      "agenda",
+      "notes"
+    ],
+    "recommendedAgents": [
+      "writer",
+      "orchestrator",
+      "greeter"
+    ],
+    "locales": {
+      "zh-CN": {
+        "name": "会议准备",
+        "short": "议程、提纲、纪要框架与行动项。",
+        "description": "用于整理会议议程、重点问题、沟通提纲和纪要模板，让会议前后都更高效可追踪。",
+        "dispatch": "当任务涉及会议提纲、议程设计、纪要模板、复盘行动项或沟通准备时自动命中。",
+        "typicalTasks": "会议提纲、问题清单、纪要模版、行动项整理。",
+        "outputs": "议程、发言要点、纪要框架和行动项清单。"
+      },
+      "zh-TW": {
+        "name": "會議準備",
+        "short": "議程、提綱、紀要框架與行動項。",
+        "description": "用於整理會議議程、重點問題、溝通提綱與紀要模板，讓會議前後都更高效可追蹤。",
+        "dispatch": "當任務涉及會議提綱、議程設計、紀要模板、復盤行動項或溝通準備時自動命中。",
+        "typicalTasks": "會議提綱、問題清單、紀要模板、行動項整理。",
+        "outputs": "議程、發言要點、紀要框架與行動項清單。"
+      },
+      "en": {
+        "name": "Meeting Briefing",
+        "short": "Agenda, talking points, note frames, and action items.",
+        "description": "Prepares agendas, key questions, meeting talk tracks, and note templates so meetings are easier to run and follow through.",
+        "dispatch": "Auto-selected for meeting prep, agenda design, note templates, action-item recap, or communication prep.",
+        "typicalTasks": "Meeting agendas, question lists, note templates, and action-item cleanup.",
+        "outputs": "Agendas, talking points, recap structures, and action lists."
+      },
+      "ja": {
+        "name": "会議準備",
+        "short": "議題、論点、議事録枠、アクション整理。",
+        "description": "会議の議題、重要質問、進行メモ、議事録テンプレートを整え、実施後のフォローまで追いやすくします。",
+        "dispatch": "会議準備、議題設計、議事録テンプレート、振り返りアクション整理が必要なとき自動で使われます。",
+        "typicalTasks": "アジェンダ、質問一覧、議事録枠、アクション整理。",
+        "outputs": "アジェンダ、発言要点、議事録構成、アクション一覧。"
+      }
+    }
+  },
+  {
+    "id": "executive_reporting",
+    "order": 300,
+    "category": "documents",
+    "sourceType": "local",
+    "sourceLabel": "Local Product Skill",
+    "accent": "#7c3aed",
+    "icon": "slides",
+    "tags": [
+      "report",
+      "summary",
+      "management",
+      "dashboard"
+    ],
+    "recommendedAgents": [
+      "writer",
+      "performer",
+      "orchestrator"
+    ],
+    "locales": {
+      "zh-CN": {
+        "name": "经营汇报",
+        "short": "阶段进展、问题、风险与下一步汇总。",
+        "description": "用于把客服、销售、内容、交付等运行结果整理成管理层可快速阅读的经营汇报和阶段摘要。",
+        "dispatch": "当任务涉及周报、阶段汇报、经营摘要、进展同步或管理层视角总结时自动命中。",
+        "typicalTasks": "周报、月报、阶段经营摘要、管理层同步材料。",
+        "outputs": "经营摘要、关键指标、风险事项和下一步计划。"
+      },
+      "zh-TW": {
+        "name": "經營彙報",
+        "short": "階段進展、問題、風險與下一步彙總。",
+        "description": "用於把客服、銷售、內容、交付等運行結果整理成管理層可快速閱讀的經營彙報與階段摘要。",
+        "dispatch": "當任務涉及週報、階段彙報、經營摘要、進展同步或管理層視角總結時自動命中。",
+        "typicalTasks": "週報、月報、階段經營摘要、管理層同步材料。",
+        "outputs": "經營摘要、關鍵指標、風險事項與下一步計畫。"
+      },
+      "en": {
+        "name": "Executive Reporting",
+        "short": "Summarize progress, issues, risks, and next moves.",
+        "description": "Turns operational outcomes across support, sales, content, and delivery into management-friendly reports and milestone summaries.",
+        "dispatch": "Auto-selected for weekly reports, milestone updates, management summaries, progress syncs, or executive-facing recaps.",
+        "typicalTasks": "Weekly updates, monthly summaries, operating recaps, and leadership sync material.",
+        "outputs": "Executive summaries, key metrics, risk notes, and next-step plans."
+      },
+      "ja": {
+        "name": "経営レポート",
+        "short": "進捗、課題、リスク、次アクションを整理。",
+        "description": "客服、営業、コンテンツ、納品の運用結果を、管理層がすぐ読める経営サマリーと段階報告へ変換します。",
+        "dispatch": "週報、段階報告、経営要約、進捗共有、管理者向け総括が必要なとき自動で使われます。",
+        "typicalTasks": "週報、月報、運営要約、マネジメント共有資料。",
+        "outputs": "経営要約、主要指標、リスク項目、次の計画。"
+      }
+    }
+  },
+  {
+    "id": "campaign_review",
+    "order": 310,
+    "category": "content",
+    "sourceType": "local",
+    "sourceLabel": "Local Product Skill",
+    "accent": "#e11d48",
+    "icon": "trend",
+    "tags": [
+      "campaign",
+      "review",
+      "content",
+      "analysis"
+    ],
+    "recommendedAgents": [
+      "writer",
+      "explorer",
+      "performer"
+    ],
+    "locales": {
+      "zh-CN": {
+        "name": "活动复盘",
+        "short": "复盘传播、执行、反馈与改进方向。",
+        "description": "用于汇总一轮活动或内容发布后的结果、问题、反馈和下次优化方向，帮助形成稳定运营闭环。",
+        "dispatch": "当任务涉及活动复盘、内容表现分析、渠道反馈汇总或下轮优化建议时自动命中。",
+        "typicalTasks": "活动复盘、内容表现总结、渠道反馈整理、下轮优化建议。",
+        "outputs": "复盘摘要、问题清单、亮点总结和优化动作。"
+      },
+      "zh-TW": {
+        "name": "活動復盤",
+        "short": "復盤傳播、執行、回饋與改進方向。",
+        "description": "用於彙總一輪活動或內容發佈後的結果、問題、回饋和下次優化方向，幫助形成穩定營運閉環。",
+        "dispatch": "當任務涉及活動復盤、內容表現分析、渠道回饋彙總或下一輪優化建議時自動命中。",
+        "typicalTasks": "活動復盤、內容表現總結、渠道回饋整理、下一輪優化建議。",
+        "outputs": "復盤摘要、問題清單、亮點總結與優化動作。"
+      },
+      "en": {
+        "name": "Campaign Review",
+        "short": "Review distribution, execution, feedback, and improvements.",
+        "description": "Summarizes campaign or content-release outcomes, issues, feedback, and the next round of improvements so operations can keep learning.",
+        "dispatch": "Auto-selected for campaign retros, content performance review, channel feedback aggregation, or next-cycle optimization work.",
+        "typicalTasks": "Campaign retros, content review, channel feedback summaries, and next-step optimization proposals.",
+        "outputs": "Review summaries, issue lists, highlights, and improvement actions."
+      },
+      "ja": {
+        "name": "施策レビュー",
+        "short": "配信、実行、反応、改善方向を振り返る。",
+        "description": "施策やコンテンツ配信の結果、問題、反応、次回改善方向を整理し、運用ループを強くします。",
+        "dispatch": "施策振り返り、コンテンツ評価、チャネル反応整理、次回改善提案が必要なとき自動で使われます。",
+        "typicalTasks": "施策レビュー、内容評価、反応整理、次回改善提案。",
+        "outputs": "振り返り要約、課題一覧、良かった点、改善アクション。"
+      }
+    }
+  },
+  {
+    "id": "incident_response",
+    "order": 320,
+    "category": "service",
+    "sourceType": "local",
+    "sourceLabel": "Local Product Skill",
+    "accent": "#dc2626",
+    "icon": "shield",
+    "tags": [
+      "incident",
+      "alert",
+      "failure",
+      "response"
+    ],
+    "recommendedAgents": [
+      "orchestrator",
+      "explorer",
+      "greeter"
+    ],
+    "locales": {
+      "zh-CN": {
+        "name": "异常响应",
+        "short": "告警判断、应对步骤与恢复沟通。",
+        "description": "用于接住运行异常、失败告警、服务中断和高风险问题，并整理应对步骤与恢复沟通口径。",
+        "dispatch": "当任务涉及异常告警、运行失败、服务中断、风险升级或恢复沟通时自动命中。",
+        "typicalTasks": "异常分级、恢复步骤、对外说明、事后记录。",
+        "outputs": "告警摘要、应对动作、恢复话术和事件记录。"
+      },
+      "zh-TW": {
+        "name": "異常響應",
+        "short": "告警判斷、應對步驟與恢復溝通。",
+        "description": "用於接住運行異常、失敗告警、服務中斷與高風險問題，並整理應對步驟與恢復溝通口徑。",
+        "dispatch": "當任務涉及異常告警、運行失敗、服務中斷、風險升級或恢復溝通時自動命中。",
+        "typicalTasks": "異常分級、恢復步驟、對外說明、事後記錄。",
+        "outputs": "告警摘要、應對動作、恢復話術與事件記錄。"
+      },
+      "en": {
+        "name": "Incident Response",
+        "short": "Alert judgment, response steps, and recovery communication.",
+        "description": "Handles runtime alerts, failures, outages, and high-risk problems by organizing response steps and recovery messaging.",
+        "dispatch": "Auto-selected for alerts, failures, outages, escalation situations, or recovery communication work.",
+        "typicalTasks": "Severity triage, recovery steps, stakeholder messaging, and incident notes.",
+        "outputs": "Alert summaries, response actions, recovery messaging, and incident records."
+      },
+      "ja": {
+        "name": "障害対応",
+        "short": "アラート判断、対応手順、復旧連絡。",
+        "description": "実行異常、失敗通知、停止、高リスク問題を受け止め、対応手順と復旧連絡の整理を行います。",
+        "dispatch": "アラート、失敗、停止、リスク昇格、復旧連絡が必要なとき自動で使われます。",
+        "typicalTasks": "深刻度判断、復旧手順、対外説明、障害記録。",
+        "outputs": "アラート要約、対応アクション、復旧文面、障害記録。"
+      }
+    }
+  },
+  {
+    "id": "crm_hygiene",
+    "order": 330,
+    "category": "sales",
+    "sourceType": "local",
+    "sourceLabel": "Local Product Skill",
+    "accent": "#22c55e",
+    "icon": "sheet",
+    "tags": [
+      "crm",
+      "cleanup",
+      "sales",
+      "data"
+    ],
+    "recommendedAgents": [
+      "explorer",
+      "orchestrator",
+      "writer"
+    ],
+    "locales": {
+      "zh-CN": {
+        "name": "CRM 整理",
+        "short": "清理字段、同步状态与保持数据干净。",
+        "description": "用于整理客户、线索和商机字段，补齐缺失信息，统一状态口径，避免销售台账越来越乱。",
+        "dispatch": "当任务涉及 CRM 清理、字段补齐、状态对齐、重复记录整理或销售数据维护时自动命中。",
+        "typicalTasks": "状态统一、字段补齐、重复清理、销售台账整理。",
+        "outputs": "清理建议、字段更新、状态规范和数据维护记录。"
+      },
+      "zh-TW": {
+        "name": "CRM 整理",
+        "short": "清理欄位、同步狀態與保持資料乾淨。",
+        "description": "用於整理客戶、線索與商機欄位，補齊缺失資訊，統一狀態口徑，避免銷售台帳越來越亂。",
+        "dispatch": "當任務涉及 CRM 清理、欄位補齊、狀態對齊、重複記錄整理或銷售資料維護時自動命中。",
+        "typicalTasks": "狀態統一、欄位補齊、重複清理、銷售台帳整理。",
+        "outputs": "清理建議、欄位更新、狀態規範與資料維護記錄。"
+      },
+      "en": {
+        "name": "CRM Hygiene",
+        "short": "Clean fields, align statuses, and keep sales data usable.",
+        "description": "Maintains cleaner customer, lead, and opportunity data by filling gaps, aligning status language, and reducing CRM drift.",
+        "dispatch": "Auto-selected when the task involves CRM cleanup, field completion, status alignment, deduplication, or sales data maintenance.",
+        "typicalTasks": "Status normalization, field completion, dedupe work, and sales ledger cleanup.",
+        "outputs": "Cleanup notes, field updates, status standards, and data maintenance records."
+      },
+      "ja": {
+        "name": "CRM 整理",
+        "short": "項目清掃、状態統一、営業データ整備。",
+        "description": "顧客、リード、商談データの欠損補完、状態統一、重複削減を行い、営業台帳を使いやすく保ちます。",
+        "dispatch": "CRM 清掃、項目補完、状態統一、重複整理、営業データ保守が必要なとき自動で使われます。",
+        "typicalTasks": "状態統一、項目補完、重複削除、営業台帳整理。",
+        "outputs": "清掃提案、項目更新、状態ルール、保守記録。"
+      }
+    }
+  }
+]

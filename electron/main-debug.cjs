@@ -112,7 +112,7 @@ function createMainWindow() {
   mainWindow = new BrowserWindow({
     width: 1400,
     height: 900,
-    title: '🦞 小龙虾 AI 团队',
+    title: 'STARCRAW',
     backgroundColor: '#0d0f14',
     webPreferences: {
       nodeIntegration: false,

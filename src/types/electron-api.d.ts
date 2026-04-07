@@ -192,6 +192,7 @@ declare global {
         results: VerificationStepResult[];
       }>;
       launchNativeApplication?: (payload: NativeAppLaunchPayload) => Promise<NativeAppLaunchResult>;
+      selectNativeApplicationFile?: () => Promise<string | null>;
       controlDesktopInput?: (payload: DesktopInputControlPayload) => Promise<DesktopInputControlResult>;
       captureDesktopScreenshot?: (payload?: DesktopScreenshotPayload) => Promise<DesktopScreenshotResult>;
       listInstalledApplications?: (forceRefresh?: boolean) => Promise<NativeInstalledApplication[]>;

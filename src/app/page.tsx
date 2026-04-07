@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactNode, type SVGProps } from "react";
 import { useWebSocket, sendWs } from "@/hooks/useWebSocket";
 import { useStore } from "@/store";
 import {
@@ -15,11 +15,9 @@ import {
   type BusinessAutomationQueueItem,
 } from "@/lib/business-operations";
 import { checkAndExecuteTasks } from "@/lib/scheduled-tasks";
-import { ChatSessionsPanel } from "@/components/ChatSessionsPanel";
 import { TaskPipeline } from "@/components/TaskPipeline";
 import { ActivityPanel } from "@/components/ActivityPanel";
 import { CommandInput } from "@/components/CommandInput";
-import { PresetTasksPanel } from "@/components/PresetTasksPanel";
 import { ScheduledTasksPanel } from "@/components/ScheduledTasksPanel";
 import { MeetingRecordPanel } from "@/components/MeetingRecordPanel";
 import { AgentGrid } from "@/components/AgentGrid";
@@ -38,10 +36,10 @@ import {
   registerSemanticMemoryProvider,
   resetSemanticMemoryProvider,
 } from "@/lib/semantic-memory";
-import { timeAgo } from "@/lib/utils";
+import { randomId, timeAgo } from "@/lib/utils";
 import { AGENT_META, getTeamOperatingTemplate, PLATFORM_DEFINITIONS, TEAM_OPERATING_SURFACES } from "@/store/types";
 import type { AppTab, ControlCenterSectionId, UiLocale } from "@/store/types";
-import { retryExecutionDispatch, sendExecutionDispatch } from "@/lib/execution-dispatch";
+import { sendExecutionDispatch } from "@/lib/execution-dispatch";
 import { detectElectronRuntimeWindow } from "@/lib/electron-runtime";
 import { runExecutionVerification } from "@/lib/execution-verification";
 import { syncRuntimeSettings } from "@/lib/runtime-settings-sync";
@@ -50,11 +48,11 @@ import {
   formatAutomationModeLabel,
   formatWsStatusLabel,
   getDefaultChatStarters,
-  getDefaultHomePrompts,
   getPrimaryNavItems,
   getUiText,
   pickLocaleText,
 } from "@/lib/ui-locale";
+import { DEFAULT_CHAT_TITLE, sortChatSessions } from "@/lib/chat-sessions";
 
 function detectElectronRuntime() {
   if (typeof window === "undefined") return false;
@@ -225,7 +223,6 @@ export default function App() {
   const toggleLeft = useStore(s => s.toggleLeft);
   const activeTab = useStore(s => s.activeTab);
   const setTab = useStore(s => s.setTab);
-  const createChatSession = useStore(s => s.createChatSession);
   const wsStatus = useStore(s => s.wsStatus);
   const cost = useStore(s => s.cost);
   const agents = useStore(s => s.agents);
@@ -240,6 +237,12 @@ export default function App() {
   const setBusinessApprovalDecision = useStore(s => s.setBusinessApprovalDecision);
   const activeControlCenterSectionId = useStore(s => s.activeControlCenterSectionId);
   const setActiveControlCenterSection = useStore(s => s.setActiveControlCenterSection);
+
+  useEffect(() => {
+    if (activeTab === "workspace") {
+      setTab("tasks");
+    }
+  }, [activeTab, setTab]);
 
   useEffect(() => {
     registerSemanticMemoryProvider(createSemanticMemoryProvider(semanticMemoryConfig));
@@ -264,6 +267,23 @@ export default function App() {
     if (desktopRuntimeTone.tone === "partial") return uiText.common.partial;
     return uiText.common.offline;
   }, [desktopRuntimeTone.tone, uiText.common.offline, uiText.common.online, uiText.common.partial]);
+  const sidebarSummary = useMemo(
+    () => [
+      {
+        label: uiText.common.connection,
+        value: formatWsStatusLabel(locale, wsStatus),
+      },
+      {
+        label: uiText.common.mode,
+        value: formatAutomationModeLabel(locale, automationPaused, automationMode),
+      },
+      {
+        label: uiText.common.running,
+        value: String(runningCount),
+      },
+    ],
+    [automationMode, automationPaused, locale, runningCount, uiText.common.connection, uiText.common.mode, uiText.common.running, wsStatus],
+  );
 
   const activeNav = navItems.find(item => item.id === activeTab) ?? navItems[0];
   const preferredControlSection = activeTeamOperatingTemplateId
@@ -300,138 +320,76 @@ export default function App() {
 
       <div className="ios-chat-shell__layout animate-fade-in">
         <aside className={`ios-chat-shell__sidebar ${leftOpen ? "" : "is-collapsed"}`}>
-          <div className="ios-chat-shell__sidebar-head">
-            <div className="ios-chat-shell__brand">
-              <div className="ios-chat-shell__brand-mark">龙</div>
-              <div>
-                <div className="ios-chat-shell__brand-eyebrow">{uiText.common.brandEyebrow}</div>
-                <div className="ios-chat-shell__brand-title">
-                  {pickLocaleText(locale, {
-                    "zh-CN": "小龙虾 AI",
-                    "zh-TW": "小龍蝦 AI",
-                    en: "Lobster AI",
-                    ja: "ロブスター AI",
-                  })}
+          {leftOpen ? (
+            <>
+              <div className="ios-chat-shell__sidebar-top">
+                <div className="ios-chat-shell__brand ios-chat-shell__brand--minimal">
+                  <div className="ios-chat-shell__brand-mark" aria-hidden="true" />
+                  <div className="ios-chat-shell__brand-copy">
+                    <div className="ios-chat-shell__brand-eyebrow">{uiText.common.brandEyebrow}</div>
+                    <div className="ios-chat-shell__brand-title">
+                      {pickLocaleText(locale, {
+                        "zh-CN": "STARCRAW",
+                        "zh-TW": "STARCRAW",
+                        en: "STARCRAW",
+                        ja: "STARCRAW",
+                      })}
+                    </div>
+                  </div>
                 </div>
+
+                <button
+                  type="button"
+                  className="ios-chat-shell__sidebar-collapse"
+                  onClick={() => toggleLeft()}
+                  aria-label={uiText.common.hideSidebar}
+                  title={uiText.common.hideSidebar}
+                >
+                  <SidebarPanelIcon />
+                </button>
               </div>
-            </div>
 
-            <button
-              type="button"
-              className="ios-chat-shell__new-chat"
-              onClick={() => {
-                createChatSession();
-                setTab("tasks");
-              }}
-            >
-              {uiText.common.newChat}
-            </button>
-          </div>
+              <nav className="ios-chat-shell__nav">
+                {navItems.map(item => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    className={`ios-chat-shell__nav-item ${activeTab === item.id ? "is-active" : ""}`}
+                    onClick={() => setTab(item.id)}
+                  >
+                    <span className="ios-chat-shell__nav-icon"><NavItemIcon id={item.id} /></span>
+                    <span className="ios-chat-shell__nav-label">{item.label}</span>
+                  </button>
+                ))}
+              </nav>
 
-          <nav className="ios-chat-shell__nav">
-            {navItems.map(item => (
+              <div className="ios-chat-shell__sidebar-footer">
+                {sidebarSummary.map(item => (
+                  <div key={item.label} className="ios-chat-shell__sidebar-mini">
+                    <span>{item.label}</span>
+                    <strong>{item.value}</strong>
+                  </div>
+                ))}
+              </div>
+            </>
+          ) : (
+            <div className="ios-chat-shell__sidebar-rail">
               <button
-                key={item.id}
                 type="button"
-                className={`ios-chat-shell__nav-item ${activeTab === item.id ? "is-active" : ""}`}
-                onClick={() => setTab(item.id)}
+                className="ios-chat-shell__sidebar-collapse"
+                onClick={() => toggleLeft()}
+                aria-label={uiText.common.showSidebar}
+                title={uiText.common.showSidebar}
               >
-                <span className="ios-chat-shell__nav-eyebrow">{item.eyebrow}</span>
-                <strong>{item.label}</strong>
+                <SidebarPanelIcon />
               </button>
-            ))}
-          </nav>
-
-          <div className="ios-chat-shell__status-grid">
-            <StatusPill label={uiText.common.connection} value={formatWsStatusLabel(locale, wsStatus)} />
-            <StatusPill label={uiText.common.desktop} value={desktopRuntimeSummary} />
-            <StatusPill label={uiText.common.running} value={String(runningCount)} />
-            <StatusPill label={uiText.common.mode} value={formatAutomationModeLabel(locale, automationPaused, automationMode)} />
-            <StatusPill label={uiText.common.tokens} value={cost.totalTokens.toLocaleString(locale)} />
-            <StatusPill label={uiText.common.workflows} value={String(workflowRuns.length)} />
-          </div>
-
-          <div className="ios-chat-shell__sidebar-scroll">
-            <SidebarSection title={uiText.common.currentProject} subtitle={uiText.common.currentProjectSubtitle}>
-              <ProjectHubCard compact />
-            </SidebarSection>
-
-            <SidebarSection title={uiText.common.sessions} subtitle={uiText.common.sessionsSubtitle}>
-              <ChatSessionsPanel showHeader={false} />
-            </SidebarSection>
-
-            {activeTab === "tasks" && (
-              <>
-                <SidebarSection title={uiText.common.quickTasks} subtitle={uiText.common.quickTasksSubtitle}>
-                  <PresetTasksPanel onSelectTask={dispatchInstruction} />
-                </SidebarSection>
-                <SidebarSection title={uiText.common.scheduledTasks} subtitle={uiText.common.scheduledTasksSubtitle}>
-                  <ScheduledTasksPanel onExecuteTask={dispatchInstruction} />
-                </SidebarSection>
-              </>
-            )}
-
-            {activeTab === "dashboard" && (
-              <>
-                <SidebarSection title={uiText.common.teamStatus} subtitle={uiText.common.teamStatusSubtitle}>
-                  <AgentGrid />
-                </SidebarSection>
-                <SidebarSection title={uiText.common.activity} subtitle={uiText.common.activitySubtitle}>
-                  <ActivityPanel />
-                </SidebarSection>
-              </>
-            )}
-
-            {activeTab === "meeting" && (
-              <SidebarSection
-                title={pickLocaleText(locale, {
-                  "zh-CN": "会议记录",
-                  "zh-TW": "會議記錄",
-                  en: "Meeting Notes",
-                  ja: "会議記録",
-                })}
-                subtitle={pickLocaleText(locale, {
-                  "zh-CN": "最近一轮结论",
-                  "zh-TW": "最近一輪結論",
-                  en: "Latest round summary",
-                  ja: "直近ラウンドの結論",
-                })}
-              >
-                <MeetingRecordPanel />
-              </SidebarSection>
-            )}
-
-            {activeTab === "dispatch" && (
-              <SidebarSection title={uiText.common.executionTrail} subtitle={uiText.common.executionTrailSubtitle}>
-                <ExecutionCenter compact />
-              </SidebarSection>
-            )}
-
-            <SidebarSection title={uiText.common.systemSummary} subtitle={uiText.common.systemSummarySubtitle}>
-              <div className="ios-chat-shell__summary-list">
-                <div className="ios-chat-shell__summary-item">
-                  <span>{uiText.common.provider}</span>
-                  <strong>{providers.length}</strong>
-                </div>
-                <div className="ios-chat-shell__summary-item">
-                  <span>{uiText.common.platforms}</span>
-                  <strong>{enabledPlatforms}</strong>
-                </div>
-                <div className="ios-chat-shell__summary-item">
-                  <span>{uiText.common.currentMode}</span>
-                  <strong>{activeNav.label}</strong>
-                </div>
-              </div>
-            </SidebarSection>
-          </div>
+            </div>
+          )}
         </aside>
 
         <main className="ios-chat-shell__main">
           <div className="ios-chat-shell__topbar">
             <div className="ios-chat-shell__topbar-left">
-              <button type="button" className="ios-chat-shell__menu-btn" onClick={() => toggleLeft()}>
-                {leftOpen ? uiText.common.hideSidebar : uiText.common.openSidebar}
-              </button>
               <div>
                 <div className="ios-chat-shell__page-eyebrow">{activeNav.eyebrow}</div>
                 <div className="ios-chat-shell__page-title">{activeNav.label}</div>
@@ -452,7 +410,6 @@ export default function App() {
           <div className="ios-chat-shell__canvas">
             {activeTab === "dashboard" && <DashboardTab onOpenTab={setTab} />}
             {activeTab === "tasks" && <TasksTab />}
-            {activeTab === "workspace" && <WorkspaceTab />}
             {activeTab === "dispatch" && <DispatchTab />}
             {activeTab === "meeting" && <MeetingTab />}
             {activeTab === "settings" && <SettingsTab />}
@@ -469,7 +426,6 @@ function DesktopWorkspaceApp() {
   const activeTab = useStore(s => s.activeTab);
   const locale = useStore(s => s.locale);
   const setTab = useStore(s => s.setTab);
-  const createChatSession = useStore(s => s.createChatSession);
   const wsStatus = useStore(s => s.wsStatus);
   const leftOpen = useStore(s => s.leftOpen);
   const toggleLeft = useStore(s => s.toggleLeft);
@@ -489,7 +445,58 @@ function DesktopWorkspaceApp() {
     () => Object.values(agents).filter(agent => agent.status === "running").length,
     [agents],
   );
+  const sidebarSummary = useMemo(
+    () => [
+      {
+        label: uiText.common.connection,
+        value: formatWsStatusLabel(locale, wsStatus),
+      },
+      {
+        label: uiText.common.desktop,
+        value: desktopRuntimeLabel,
+      },
+      {
+        label: uiText.common.running,
+        value: String(runningCount),
+      },
+    ],
+    [desktopRuntimeLabel, locale, runningCount, uiText.common.connection, uiText.common.desktop, uiText.common.running, wsStatus],
+  );
+  useEffect(() => {
+    if (activeTab === "workspace") {
+      setTab("tasks");
+    }
+  }, [activeTab, setTab]);
+
   const offline = wsStatus !== "connected";
+  const shouldShowPipelineAlert = (offline || desktopRuntimeTone.tone !== "ready") && activeTab !== "settings";
+  const sidebarAlert = shouldShowPipelineAlert ? (
+    <section className="desktop-workspace-shell__section desktop-workspace-shell__section--sidebar-alert">
+      <div className="desktop-workspace-shell__alert desktop-workspace-shell__alert--sidebar">
+        <div>
+          <strong>{offline ? uiText.common.pipelineRecoveryTitle : uiText.common.desktopCapabilityTitle}</strong>
+          <p>
+            {offline
+              ? pickLocaleText(locale, {
+                  "zh-CN": "当前 WebSocket 未在线，自动派发和执行状态同步会受影响。",
+                  "zh-TW": "目前 WebSocket 未在線，自動派發與執行同步會受到影響。",
+                  en: "WebSocket is offline, so auto-dispatch and execution sync are affected.",
+                  ja: "現在 WebSocket がオフラインのため、自動配信と実行同期に影響があります。",
+                })
+              : desktopRuntimeTone.detail}
+          </p>
+        </div>
+        <div className="desktop-workspace-shell__alert-actions">
+          <button type="button" className="desktop-workspace-shell__hero-action" onClick={() => setTab("settings")}>
+            {uiText.common.checkSettings}
+          </button>
+          <button type="button" className="desktop-workspace-shell__hero-action" onClick={() => setTab("tasks")}>
+            {uiText.common.manualTakeover}
+          </button>
+        </div>
+      </div>
+    </section>
+  ) : null;
 
   return (
     <div className="desktop-workspace-shell">
@@ -499,15 +506,8 @@ function DesktopWorkspaceApp() {
 
       <header className="desktop-workspace-shell__topbar">
         <div className="desktop-workspace-shell__topbar-left">
-          <button
-            type="button"
-            className="desktop-workspace-shell__menu-btn"
-            onClick={() => toggleLeft()}
-          >
-            {leftOpen ? uiText.common.hideSidebar : uiText.common.showSidebar}
-          </button>
           <div className="desktop-workspace-shell__brand">
-            <div className="desktop-workspace-shell__brand-mark">龙</div>
+            <div className="desktop-workspace-shell__brand-mark" aria-hidden="true" />
             <div>
               <div className="desktop-workspace-shell__eyebrow">{uiText.common.desktopBrandEyebrow}</div>
               <div className="desktop-workspace-shell__title">{uiText.common.desktopBrandTitle}</div>
@@ -516,17 +516,6 @@ function DesktopWorkspaceApp() {
         </div>
 
         <div className="desktop-workspace-shell__topbar-right">
-          <LanguageSwitcher />
-          <button
-            type="button"
-            className="desktop-workspace-shell__new-chat"
-            onClick={() => {
-              createChatSession();
-              setTab("tasks");
-            }}
-          >
-            {uiText.common.newChat}
-          </button>
           <div className="desktop-workspace-shell__status-rail">
             <div className={`desktop-workspace-shell__pill ${offline ? "is-warning" : "is-good"}`}>
               <span>{uiText.common.connection}</span>
@@ -549,10 +538,28 @@ function DesktopWorkspaceApp() {
       </header>
 
       <div className={`desktop-workspace-shell__layout ${leftOpen ? "" : "is-sidebar-collapsed"}`}>
-        {leftOpen ? (
-          <aside className="desktop-workspace-shell__sidebar">
-            <section className="desktop-workspace-shell__section">
-              <div className="desktop-workspace-shell__section-eyebrow">{uiText.common.navigation}</div>
+        <aside className={`desktop-workspace-shell__sidebar ${leftOpen ? "" : "is-collapsed"}`}>
+          {leftOpen ? (
+            <>
+              <div className="desktop-workspace-shell__sidebar-top">
+                <div className="desktop-workspace-shell__sidebar-brand">
+                  <div className="desktop-workspace-shell__brand-mark" aria-hidden="true" />
+                  <div className="desktop-workspace-shell__sidebar-brand-copy">
+                    <span>{uiText.common.desktopBrandEyebrow}</span>
+                    <strong>{uiText.common.desktopBrandTitle}</strong>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  className="desktop-workspace-shell__sidebar-collapse"
+                  onClick={() => toggleLeft()}
+                  aria-label={uiText.common.hideSidebar}
+                  title={uiText.common.hideSidebar}
+                >
+                  <SidebarPanelIcon />
+                </button>
+              </div>
+
               <div className="desktop-workspace-shell__nav">
                 {navItems.map(item => (
                   <button
@@ -561,66 +568,37 @@ function DesktopWorkspaceApp() {
                     onClick={() => setTab(item.id)}
                     className={`desktop-workspace-shell__nav-item ${activeTab === item.id ? "is-active" : ""}`}
                   >
-                    <span>{item.eyebrow}</span>
+                    <span className="desktop-workspace-shell__nav-icon"><NavItemIcon id={item.id} /></span>
                     <strong>{item.label}</strong>
                   </button>
                 ))}
               </div>
-            </section>
 
-            <section className="desktop-workspace-shell__section">
-              <div className="desktop-workspace-shell__section-eyebrow">{uiText.common.sessions}</div>
-              <div className="desktop-workspace-shell__panel">
-                <ChatSessionsPanel showHeader={false} />
+              <div className="desktop-workspace-shell__sidebar-footer">
+                {sidebarSummary.map(item => (
+                  <div key={item.label} className="desktop-workspace-shell__sidebar-mini">
+                    <span>{item.label}</span>
+                    <strong>{item.value}</strong>
+                  </div>
+                ))}
+                <DesktopSidebarQuickSettings />
+                {sidebarAlert ? <div className="desktop-workspace-shell__sidebar-alert-mini">{sidebarAlert}</div> : null}
               </div>
-            </section>
-
-            {activeTab === "tasks" ? (
-              <section className="desktop-workspace-shell__section">
-                <div className="desktop-workspace-shell__section-eyebrow">{uiText.common.quickTasks}</div>
-                <div className="desktop-workspace-shell__panel">
-                  <PresetTasksPanel onSelectTask={dispatchInstruction} />
-                </div>
-              </section>
-            ) : null}
-
-            {activeTab === "dashboard" ? (
-              <section className="desktop-workspace-shell__section">
-                <div className="desktop-workspace-shell__section-eyebrow">{uiText.common.activity}</div>
-                <div className="desktop-workspace-shell__panel">
-                  <ActivityPanel />
-                </div>
-              </section>
-            ) : null}
-
-            {activeTab === "dispatch" ? (
-              <section className="desktop-workspace-shell__section">
-                <div className="desktop-workspace-shell__section-eyebrow">{uiText.common.executionTrail}</div>
-                <div className="desktop-workspace-shell__panel">
-                  <ExecutionCenter compact />
-                </div>
-              </section>
-            ) : null}
-
-            <section className="desktop-workspace-shell__section">
-              <div className="desktop-workspace-shell__section-eyebrow">{uiText.common.desktopSummary}</div>
-              <div className="desktop-workspace-shell__summary-grid">
-                <article className="desktop-workspace-shell__summary-card">
-                  <span>{uiText.common.currentScene}</span>
-                  <strong>{activeNav.label}</strong>
-                </article>
-                <article className="desktop-workspace-shell__summary-card">
-                  <span>{uiText.common.sidebar}</span>
-                  <strong>{leftOpen ? uiText.common.expanded : uiText.common.collapsed}</strong>
-                </article>
-                <article className="desktop-workspace-shell__summary-card">
-                  <span>{uiText.common.workingMode}</span>
-                  <strong>{desktopRuntimeTone.tone === "ready" ? uiText.common.desktopOnline : uiText.common.waitingTakeover}</strong>
-                </article>
-              </div>
-            </section>
-          </aside>
-        ) : null}
+            </>
+          ) : (
+            <div className="desktop-workspace-shell__sidebar-rail">
+              <button
+                type="button"
+                className="desktop-workspace-shell__sidebar-collapse"
+                onClick={() => toggleLeft()}
+                aria-label={uiText.common.showSidebar}
+                title={uiText.common.showSidebar}
+              >
+                <SidebarPanelIcon />
+              </button>
+            </div>
+          )}
+        </aside>
 
         <main className="desktop-workspace-shell__main">
           {activeTab !== "tasks" && activeTab !== "dispatch" && activeTab !== "settings" ? (
@@ -650,39 +628,8 @@ function DesktopWorkspaceApp() {
             </section>
           ) : null}
 
-          {(offline || desktopRuntimeTone.tone !== "ready") && activeTab !== "settings" ? (
-            <section className="desktop-workspace-shell__alert">
-              <div>
-                <strong>{offline ? uiText.common.pipelineRecoveryTitle : uiText.common.desktopCapabilityTitle}</strong>
-                <p>
-                  {offline
-                    ? pickLocaleText(locale, {
-                        "zh-CN": "当前 WebSocket 未在线，自动派发和执行状态同步会受影响。",
-                        "zh-TW": "目前 WebSocket 未在線，自動派發與執行同步會受到影響。",
-                        en: "WebSocket is offline, so auto-dispatch and execution sync are affected.",
-                        ja: "現在 WebSocket がオフラインのため、自動配信と実行同期に影響があります。",
-                      })
-                    : desktopRuntimeTone.detail}
-                </p>
-              </div>
-              <div className="desktop-workspace-shell__alert-actions">
-                <button type="button" className="desktop-workspace-shell__hero-action" onClick={() => setTab("settings")}>
-                  {uiText.common.checkSettings}
-                </button>
-                <button type="button" className="desktop-workspace-shell__hero-action" onClick={() => setTab("tasks")}>
-                  {uiText.common.manualTakeover}
-                </button>
-              </div>
-            </section>
-          ) : null}
-
           {activeTab === "dashboard" ? <DashboardTab onOpenTab={setTab} /> : null}
           {activeTab === "tasks" ? <DesktopChatWorkspace /> : null}
-          {activeTab === "workspace" ? (
-            <section className="desktop-workspace-shell__content-panel">
-              <WorkspaceTab />
-            </section>
-          ) : null}
           {activeTab === "dispatch" ? (
             <section className="desktop-workspace-shell__content-panel">
               <DispatchTab />
@@ -738,8 +685,10 @@ function DashboardTab({ onOpenTab }: { onOpenTab: (tab: AppTab) => void }) {
   const automationPaused = useStore(s => s.automationPaused);
   const automationMode = useStore(s => s.automationMode);
   const remoteSupervisorEnabled = useStore(s => s.remoteSupervisorEnabled);
+  const setAutomationMode = useStore(s => s.setAutomationMode);
   const setAutomationPaused = useStore(s => s.setAutomationPaused);
   const setRemoteSupervisorEnabled = useStore(s => s.setRemoteSupervisorEnabled);
+  const setAutoDispatchScheduledTasks = useStore(s => s.setAutoDispatchScheduledTasks);
   const setBusinessApprovalDecision = useStore(s => s.setBusinessApprovalDecision);
   const recordBusinessOperation = useStore(s => s.recordBusinessOperation);
   const setActiveExecutionRun = useStore(s => s.setActiveExecutionRun);
@@ -807,7 +756,6 @@ function DashboardTab({ onOpenTab }: { onOpenTab: (tab: AppTab) => void }) {
     ? TEAM_OPERATING_SURFACES[activeTeamOperatingTemplateId]
     : null;
   const uiText = useMemo(() => getUiText(locale), [locale]);
-  const homePrompts = activeSurface?.homePrompts ?? getDefaultHomePrompts(locale);
   const businessFocusCards = useMemo(
     () => getDashboardBusinessFocus(locale, activeTeamOperatingTemplateId, {
       customers: scopedCustomers.length,
@@ -892,7 +840,6 @@ function DashboardTab({ onOpenTab }: { onOpenTab: (tab: AppTab) => void }) {
   );
   const highlightedAgents = (runningAgents.length > 0 ? agentSnapshots.filter(agent => agent.status === "running") : agentSnapshots).slice(0, 4);
   const workflowRunCount = workflowRuns.filter(run => run.status === "queued" || run.status === "staged" || run.status === "in-progress").length;
-  const latestRunAgentMeta = latestRun?.currentAgentId ? AGENT_META[latestRun.currentAgentId] : null;
   const desktopRuntimeTone = getDesktopRuntimeTone(desktopRuntime);
   const desktopRuntimeSummary = desktopRuntimeTone.tone === "ready"
     ? pickLocaleText(locale, { "zh-CN": "桌面可用", "zh-TW": "桌面可用", en: "Desktop Ready", ja: "デスクトップ準備完了" })
@@ -914,113 +861,32 @@ function DashboardTab({ onOpenTab }: { onOpenTab: (tab: AppTab) => void }) {
       ].slice(0, 2),
     [activeSurface, activeTemplate, businessFocusCards],
   );
-  const [homeRailFeedback, setHomeRailFeedback] = useState<string | null>(null);
-
-  const approveDashboardItem = (item: BusinessAutomationQueueItem) => {
-    setBusinessApprovalDecision({
-      entityType: item.entityType,
-      entityId: item.entityId,
-      status: "approved",
-    });
-
-    const canAutoDispatch =
-      wsStatus === "connected"
-      && !automationPaused
-      && automationMode !== "manual"
-      && remoteSupervisorEnabled
-      && item.decision.autoRunEligible;
-
-    if (!canAutoDispatch) {
-      const blockedReason = getDispatchBlockedReason(locale, wsStatus, automationPaused, automationMode, remoteSupervisorEnabled);
-      setHomeRailFeedback(formatApprovalFeedback(locale, "blocked", item.title, blockedReason));
-      return;
-    }
-
-    const { ok, executionRunId } = sendExecutionDispatch({
-      instruction: item.instruction,
-      source: "remote-ops",
-      includeUserMessage: true,
-      taskDescription: item.taskDescription,
-      includeActiveProjectMemory: true,
-    });
-
-    recordBusinessOperation({
-      entityType: item.entityType,
-      entityId: item.entityId,
-      eventType: "dispatch",
-      trigger: "manual",
-      status: ok ? "sent" : "blocked",
-      title: item.title,
-      detail: ok
-        ? pickLocaleText(locale, {
-            "zh-CN": "人工在桌面首页监督侧轨批准后立即派发了该业务对象。",
-            "zh-TW": "人工在桌面首頁監督側軌批准後立即派發了該業務對象。",
-            en: "The item was dispatched immediately after approval from the desktop home supervision rail.",
-            ja: "デスクトップホームの監督レールで承認後、すぐにこの業務対象が派信されました。",
-          })
-        : pickLocaleText(locale, {
-            "zh-CN": "人工在桌面首页监督侧轨批准了该业务对象，但发送链路未成功建立。",
-            "zh-TW": "人工在桌面首頁監督側軌批准了該業務對象，但發送鏈路未成功建立。",
-            en: "The item was approved from the desktop home supervision rail, but the dispatch link was not established.",
-            ja: "デスクトップホームの監督レールで承認されましたが、配信リンクの確立に失敗しました。",
-          }),
-      executionRunId: ok ? executionRunId : undefined,
-    });
-
-    if (ok && executionRunId) {
-      setActiveExecutionRun(executionRunId);
-      setHomeRailFeedback(formatApprovalFeedback(locale, "sent", item.title));
-      return;
-    }
-
-    setHomeRailFeedback(formatApprovalFeedback(locale, "failed", item.title));
-  };
-
-  const rejectDashboardItem = (item: BusinessAutomationQueueItem) => {
-    setBusinessApprovalDecision({
-      entityType: item.entityType,
-      entityId: item.entityId,
-      status: "rejected",
-    });
-    setHomeRailFeedback(formatApprovalFeedback(locale, "rejected", item.title));
-  };
-
-  const retryLatestExecution = (run: NonNullable<typeof latestRun>) => {
-    const { ok, executionRunId } = retryExecutionDispatch(run, {
-      includeUserMessage: true,
-      includeActiveProjectMemory: true,
-      taskDescription: pickLocaleText(locale, {
-        "zh-CN": `[重试执行] ${run.instruction}`,
-        "zh-TW": `[重試執行] ${run.instruction}`,
-        en: `[Retry Run] ${run.instruction}`,
-        ja: `[実行を再試行] ${run.instruction}`,
-      }),
-      lastRecoveryHint: pickLocaleText(locale, {
-        "zh-CN": "从首页监督轨重新发起失败执行。",
-        "zh-TW": "從首頁監督軌重新發起失敗執行。",
-        en: "Retry the failed run again from the home supervision rail.",
-        ja: "ホーム監督レールから失敗した実行を再度開始します。",
-      }),
-    });
-
-    if (ok && executionRunId) {
-      setActiveExecutionRun(executionRunId);
-      setHomeRailFeedback(pickLocaleText(locale, {
-        "zh-CN": "已重新发起这条执行指令。",
-        "zh-TW": "已重新發起這條執行指令。",
-        en: "The execution instruction has been sent again.",
-        ja: "実行指示を再送しました。",
-      }));
-      return;
-    }
-
-    setHomeRailFeedback(pickLocaleText(locale, {
-      "zh-CN": "重试已发起，但发送链路没有成功建立。",
-      "zh-TW": "重試已發起，但發送鏈路沒有成功建立。",
-      en: "Retry was requested, but the dispatch link was not established.",
-      ja: "再試行を要求しましたが、配信リンクの確立に失敗しました。",
-    }));
-  };
+  const compactMetrics = [
+    {
+      label: pickLocaleText(locale, { "zh-CN": "Agent", "zh-TW": "Agent", en: "Agents", ja: "Agents" }),
+      value: `${runningCount}/${totalAgentCount}`,
+    },
+    {
+      label: pickLocaleText(locale, { "zh-CN": "执行", "zh-TW": "執行", en: "Runs", ja: "実行" }),
+      value: String(activeRunCount),
+    },
+    {
+      label: pickLocaleText(locale, { "zh-CN": "审批", "zh-TW": "審批", en: "Approvals", ja: "承認" }),
+      value: String(pendingApprovalsCount),
+    },
+    {
+      label: pickLocaleText(locale, { "zh-CN": "平台", "zh-TW": "平台", en: "Platforms", ja: "接続" }),
+      value: String(enabledPlatformEntries.length),
+    },
+    {
+      label: pickLocaleText(locale, { "zh-CN": "上下文", "zh-TW": "上下文", en: "Context", ja: "文脈" }),
+      value: String(deskContextCount),
+    },
+    {
+      label: pickLocaleText(locale, { "zh-CN": "业务", "zh-TW": "業務", en: "Entities", ja: "業務" }),
+      value: String(businessEntityCount),
+    },
+  ];
 
   return (
     <div className="ios-home ios-home--desktop">
@@ -1032,14 +898,6 @@ function DashboardTab({ onOpenTab }: { onOpenTab: (tab: AppTab) => void }) {
                 <span className="ios-home__hero-meta-pill">
                   {uiText.common.currentProject}: {activeSession ? getSessionProjectLabel(activeSession) : uiText.common.generalProject}
                 </span>
-                <span className="ios-home__hero-meta-pill">
-                  {pickLocaleText(locale, {
-                    "zh-CN": `值守模式 ${supervisionModeLabel}`,
-                    "zh-TW": `值守模式 ${supervisionModeLabel}`,
-                    en: `Supervision ${supervisionModeLabel}`,
-                    ja: `監督 ${supervisionModeLabel}`,
-                  })}
-                </span>
                 {activeTemplate && activeSurface ? (
                   <span className="ios-home__hero-meta-pill ios-home__hero-meta-pill--accent">
                     {uiText.dashboard.teamModePrefix} · {activeTemplate.label}
@@ -1048,172 +906,14 @@ function DashboardTab({ onOpenTab }: { onOpenTab: (tab: AppTab) => void }) {
               </div>
             </div>
 
-            <div className="ios-home__status">
-              <StatusCard
-                label={pickLocaleText(locale, { "zh-CN": "在岗 Agent", "zh-TW": "在線 Agent", en: "Active Agents", ja: "稼働 Agent" })}
-                value={pickLocaleText(locale, {
-                  "zh-CN": `${runningCount}/${totalAgentCount}`,
-                  "zh-TW": `${runningCount}/${totalAgentCount}`,
-                  en: `${runningCount}/${totalAgentCount}`,
-                  ja: `${runningCount}/${totalAgentCount}`,
-                })}
-                hint={pickLocaleText(locale, {
-                  "zh-CN": runningCount > 0 ? `${runningCount} 个 agent 正在处理任务` : "当前没有 agent 在主动处理任务",
-                  "zh-TW": runningCount > 0 ? `${runningCount} 個 agent 正在處理任務` : "目前沒有 agent 在主動處理任務",
-                  en: runningCount > 0 ? `${runningCount} agents are actively processing work` : "No agent is actively processing work",
-                  ja: runningCount > 0 ? `${runningCount} 体の agent が作業中です` : "現在アクティブに作業中の agent はいません",
-                })}
-              />
-              <StatusCard
-                label={pickLocaleText(locale, { "zh-CN": "执行链路", "zh-TW": "執行鏈路", en: "Execution Flow", ja: "実行フロー" })}
-                value={pickLocaleText(locale, {
-                  "zh-CN": `${activeRunCount} 运行中`,
-                  "zh-TW": `${activeRunCount} 運行中`,
-                  en: `${activeRunCount} running`,
-                  ja: `${activeRunCount} 件実行中`,
-                })}
-                hint={latestRun
-                  ? pickLocaleText(locale, {
-                      "zh-CN": `最近一条：${latestRun.instruction}`,
-                      "zh-TW": `最近一條：${latestRun.instruction}`,
-                      en: `Latest: ${latestRun.instruction}`,
-                      ja: `最新: ${latestRun.instruction}`,
-                    })
-                  : pickLocaleText(locale, {
-                      "zh-CN": "当前项目还没有执行 run",
-                      "zh-TW": "目前專案還沒有執行 run",
-                      en: "There is no execution run in this project yet",
-                      ja: "このプロジェクトにはまだ実行 run がありません",
-                    })}
-              />
-              <StatusCard
-                label={pickLocaleText(locale, { "zh-CN": "审批与值守", "zh-TW": "審批與值守", en: "Approvals", ja: "承認と監督" })}
-                value={pickLocaleText(locale, {
-                  "zh-CN": `${pendingApprovalsCount} 待处理`,
-                  "zh-TW": `${pendingApprovalsCount} 待處理`,
-                  en: `${pendingApprovalsCount} pending`,
-                  ja: `${pendingApprovalsCount} 件待ち`,
-                })}
-                hint={pickLocaleText(locale, {
-                  "zh-CN": `当前模式 ${supervisionModeLabel}，远程值守 ${remoteSupervisorEnabled ? "开启" : "关闭"}`,
-                  "zh-TW": `目前模式 ${supervisionModeLabel}，遠程值守 ${remoteSupervisorEnabled ? "開啟" : "關閉"}`,
-                  en: `Mode ${supervisionModeLabel}, remote supervision ${remoteSupervisorEnabled ? "enabled" : "disabled"}`,
-                  ja: `モード ${supervisionModeLabel}、遠隔監督 ${remoteSupervisorEnabled ? "有効" : "無効"}`,
-                })}
-              />
-              <StatusCard
-                label={pickLocaleText(locale, { "zh-CN": "系统接入", "zh-TW": "系統接入", en: "System Access", ja: "接続状況" })}
-                value={pickLocaleText(locale, {
-                  "zh-CN": `${enabledPlatformEntries.length} 平台 / ${workflowRunCount} 工作流`,
-                  "zh-TW": `${enabledPlatformEntries.length} 平台 / ${workflowRunCount} 工作流`,
-                  en: `${enabledPlatformEntries.length} platforms / ${workflowRunCount} workflows`,
-                  ja: `${enabledPlatformEntries.length} プラットフォーム / ${workflowRunCount} ワークフロー`,
-                })}
-                hint={pickLocaleText(locale, {
-                  "zh-CN": `${formatWsStatusLabel(locale, wsStatus)} · ${desktopRuntimeSummary}`,
-                  "zh-TW": `${formatWsStatusLabel(locale, wsStatus)} · ${desktopRuntimeSummary}`,
-                  en: `${formatWsStatusLabel(locale, wsStatus)} · ${desktopRuntimeSummary}`,
-                  ja: `${formatWsStatusLabel(locale, wsStatus)} · ${desktopRuntimeSummary}`,
-                })}
-              />
+            <div className="ios-home__metric-strip">
+              {compactMetrics.map(metric => (
+                <article key={metric.label} className="ios-home__metric-tile">
+                  <span>{metric.label}</span>
+                  <strong>{metric.value}</strong>
+                </article>
+              ))}
             </div>
-
-            <section className="ios-home__mission-card">
-              <div className="ios-home__mission-head">
-                <div>
-                  <div className="ios-home__eyebrow">{pickLocaleText(locale, {
-                    "zh-CN": "当前主任务",
-                    "zh-TW": "目前主任務",
-                    en: "Current Priority Run",
-                    ja: "現在の優先実行",
-                  })}</div>
-                  <div className="ios-home__mission-title">
-                    {latestRun?.instruction ?? pickLocaleText(locale, {
-                      "zh-CN": "当前还没有需要推进的执行任务",
-                      "zh-TW": "目前還沒有需要推進的執行任務",
-                      en: "There is no active priority execution yet",
-                      ja: "まだ進行中の優先実行はありません",
-                    })}
-                  </div>
-                </div>
-                <button type="button" className="btn-ghost" onClick={() => openControlCenterSection("execution")}>
-                  {pickLocaleText(locale, {
-                    "zh-CN": "打开执行中心",
-                    "zh-TW": "打開執行中心",
-                    en: "Open Execution",
-                    ja: "実行センターを開く",
-                  })}
-                </button>
-              </div>
-              <div className="ios-home__mission-meta">
-                <span>{pickLocaleText(locale, {
-                  "zh-CN": `链路 ${formatWsStatusLabel(locale, wsStatus)}`,
-                  "zh-TW": `鏈路 ${formatWsStatusLabel(locale, wsStatus)}`,
-                  en: `Link ${formatWsStatusLabel(locale, wsStatus)}`,
-                  ja: `経路 ${formatWsStatusLabel(locale, wsStatus)}`,
-                })}</span>
-                <span>{pickLocaleText(locale, {
-                  "zh-CN": `桌面 ${desktopRuntimeSummary}`,
-                  "zh-TW": `桌面 ${desktopRuntimeSummary}`,
-                  en: `Desktop ${desktopRuntimeSummary}`,
-                  ja: `デスクトップ ${desktopRuntimeSummary}`,
-                })}</span>
-                <span>{pickLocaleText(locale, {
-                  "zh-CN": `来源 ${latestRun?.source ?? "home"}`,
-                  "zh-TW": `來源 ${latestRun?.source ?? "home"}`,
-                  en: `Source ${latestRun?.source ?? "home"}`,
-                  ja: `ソース ${latestRun?.source ?? "home"}`,
-                })}</span>
-                <span>{latestRunAgentMeta ? `${latestRunAgentMeta.emoji} ${latestRunAgentMeta.name}` : pickLocaleText(locale, {
-                  "zh-CN": "待分配 Agent",
-                  "zh-TW": "待分配 Agent",
-                  en: "Awaiting agent",
-                  ja: "Agent 割当待ち",
-                })}</span>
-                <span>{latestRun ? `${pickLocaleText(locale, {
-                  "zh-CN": "更新",
-                  "zh-TW": "更新",
-                  en: "Updated",
-                  ja: "更新",
-                })} ${timeAgo(latestRun.updatedAt, locale)}` : pickLocaleText(locale, {
-                  "zh-CN": "等待首条执行",
-                  "zh-TW": "等待首條執行",
-                  en: "Waiting for the first run",
-                  ja: "最初の実行を待機中",
-                })}</span>
-              </div>
-              <div className="ios-home__mission-copy">
-                {latestOperation
-                  ? pickLocaleText(locale, {
-                      "zh-CN": `最近结果：${latestOperation.title}`,
-                      "zh-TW": `最近結果：${latestOperation.title}`,
-                      en: `Latest outcome: ${latestOperation.title}`,
-                      ja: `最新結果: ${latestOperation.title}`,
-                    })
-                  : activeSurface?.statusCopy ?? uiText.dashboard.copy}
-              </div>
-              <div className="ios-home__mission-actions">
-                <button type="button" className="btn-ghost" onClick={() => onOpenTab("tasks")}>
-                  {pickLocaleText(locale, {
-                    "zh-CN": "去聊天接管",
-                    "zh-TW": "去聊天接管",
-                    en: "Take Over in Chat",
-                    ja: "チャットで引き継ぐ",
-                  })}
-                </button>
-                {latestRun?.status === "failed" ? (
-                  <button type="button" className="btn-ghost" onClick={() => retryLatestExecution(latestRun)}>
-                    {pickLocaleText(locale, {
-                      "zh-CN": "失败后重试",
-                      "zh-TW": "失敗後重試",
-                      en: "Retry Failed Run",
-                      ja: "失敗実行を再試行",
-                    })}
-                  </button>
-                ) : null}
-              </div>
-              {homeRailFeedback ? <div className="ios-home__mission-feedback">{homeRailFeedback}</div> : null}
-            </section>
 
             <div className="ios-home__overview-grid">
               <section className="ios-home__overview-card">
@@ -1222,168 +922,99 @@ function DashboardTab({ onOpenTab }: { onOpenTab: (tab: AppTab) => void }) {
                     <div className="ios-home__eyebrow">{pickLocaleText(locale, { "zh-CN": "Agent 实时状态", "zh-TW": "Agent 即時狀態", en: "Live Agent Status", ja: "Agent の現在状況" })}</div>
                     <div className="ios-home__overview-title">{pickLocaleText(locale, { "zh-CN": "谁在工作、正在做什么", "zh-TW": "誰在工作、正在做什麼", en: "Who is working and what they are doing", ja: "誰が何をしているか" })}</div>
                   </div>
-                  <button type="button" className="btn-ghost" onClick={() => onOpenTab("settings")}>
-                    {pickLocaleText(locale, { "zh-CN": "看控制台", "zh-TW": "看控制台", en: "Open Control", ja: "コントロールを見る" })}
-                  </button>
                 </div>
-                <div className="ios-home__agent-list">
-                  {highlightedAgents.slice(0, 3).map(agent => (
-                    <article key={agent.id} className="ios-home__agent-row">
-                      <div className="ios-home__agent-meta">
+                <div className="ios-home__agent-compact-grid">
+                  {agentSnapshots.map(agent => (
+                    <article key={agent.id} className="ios-home__agent-compact-card">
+                      <div className="ios-home__agent-compact-head">
                         <div className="ios-home__agent-avatar">
                           {AGENT_META[agent.id].emoji}
                         </div>
-                        <div className="ios-home__agent-copy">
-                          <div className="ios-home__agent-name-row">
-                            <strong>{AGENT_META[agent.id].name}</strong>
-                            <span className={`ios-home__agent-badge is-${agent.status === "running" ? "running" : agent.status === "error" ? "error" : "idle"}`}>
-                              {getAgentStatusLabel(locale, agent.status)}
-                            </span>
-                          </div>
-                          <div className="ios-home__agent-task">{agent.summary}</div>
-                          <div className="ios-home__agent-hint">
-                            {agent.latestAgentActivity
-                              ? `${timeAgo(agent.latestAgentActivity.timestamp, locale)} · ${agent.latestAgentActivity.detail || agent.latestAgentActivity.summary}`
-                              : pickLocaleText(locale, {
-                                  "zh-CN": "当前没有新的活动记录",
-                                  "zh-TW": "目前沒有新的活動記錄",
-                                  en: "No recent activity yet",
-                                  ja: "直近のアクティビティはありません",
-                                })}
-                          </div>
+                        <div className="ios-home__agent-compact-name">
+                          <strong>{AGENT_META[agent.id].name}</strong>
+                          <span className={`ios-home__agent-badge is-${agent.status === "running" ? "running" : agent.status === "error" ? "error" : "idle"}`}>
+                            {getAgentStatusLabel(locale, agent.status)}
+                          </span>
                         </div>
                       </div>
+                      <div className="ios-home__agent-compact-task" title={agent.summary}>{agent.summary}</div>
                     </article>
                   ))}
                 </div>
                 <div className="ios-home__overview-footer">
                   <span>{pickLocaleText(locale, {
-                    "zh-CN": `总计 ${totalAgentCount} 个 agent，优先展示最近在工作的成员`,
-                    "zh-TW": `總計 ${totalAgentCount} 個 agent，優先顯示最近在工作的成員`,
-                    en: `${totalAgentCount} agents total, prioritizing the ones currently doing work`,
-                    ja: `合計 ${totalAgentCount} 体。現在動いている agent を優先表示しています`,
+                    "zh-CN": `总计 ${totalAgentCount} 个 agent，状态全部在这里展示`,
+                    "zh-TW": `總計 ${totalAgentCount} 個 agent，狀態全部在這裡展示`,
+                    en: `${totalAgentCount} agents are all shown here`,
+                    ja: `${totalAgentCount} 体の agent 状態をここにまとめて表示しています`,
                   })}</span>
-                  <button type="button" className="btn-ghost" onClick={() => onOpenTab("settings")}>
-                    {pickLocaleText(locale, {
-                      "zh-CN": "看控制台",
-                      "zh-TW": "看控制台",
-                      en: "Open Control",
-                      ja: "コントロールを見る",
-                    })}
-                  </button>
-                </div>
-              </section>
-
-              <section className="ios-home__overview-card">
-                <div className="ios-home__overview-head">
-                  <div>
-                    <div className="ios-home__eyebrow">{pickLocaleText(locale, { "zh-CN": "平台态势", "zh-TW": "平台態勢", en: "Platform Snapshot", ja: "プラットフォーム概況" })}</div>
-                    <div className="ios-home__overview-title">{pickLocaleText(locale, { "zh-CN": "整个软件现在处于什么状态", "zh-TW": "整個軟體現在處於什麼狀態", en: "What state the whole platform is in now", ja: "今このソフト全体がどういう状態か" })}</div>
-                  </div>
-                </div>
-                <div className="ios-home__overview-metrics">
-                  <div className="ios-home__overview-metric">
-                    <span>{pickLocaleText(locale, { "zh-CN": "消息链路", "zh-TW": "消息鏈路", en: "Message Link", ja: "メッセージ経路" })}</span>
-                    <strong>{formatWsStatusLabel(locale, wsStatus)}</strong>
-                  </div>
-                  <div className="ios-home__overview-metric">
-                    <span>{pickLocaleText(locale, { "zh-CN": "桌面能力", "zh-TW": "桌面能力", en: "Desktop", ja: "デスクトップ" })}</span>
-                    <strong>{desktopRuntimeSummary}</strong>
-                  </div>
-                  <div className="ios-home__overview-metric">
-                    <span>{pickLocaleText(locale, { "zh-CN": "工作区上下文", "zh-TW": "工作區上下文", en: "Desk Context", ja: "Desk コンテキスト" })}</span>
-                    <strong>{pickLocaleText(locale, {
-                      "zh-CN": `${deskContextCount} 项`,
-                      "zh-TW": `${deskContextCount} 項`,
-                      en: `${deskContextCount} assets`,
-                      ja: `${deskContextCount} 件`,
-                    })}</strong>
-                  </div>
-                  <div className="ios-home__overview-metric">
-                    <span>{pickLocaleText(locale, { "zh-CN": "业务对象", "zh-TW": "業務對象", en: "Business Objects", ja: "業務オブジェクト" })}</span>
-                    <strong>{pickLocaleText(locale, {
-                      "zh-CN": `${businessEntityCount} 项`,
-                      "zh-TW": `${businessEntityCount} 項`,
-                      en: `${businessEntityCount} items`,
-                      ja: `${businessEntityCount} 件`,
-                    })}</strong>
-                  </div>
-                </div>
-                <div className="ios-home__overview-summary">
-                  <div className="ios-home__overview-summary-item">
-                    <span>{pickLocaleText(locale, { "zh-CN": "最新处理结果", "zh-TW": "最新處理結果", en: "Latest Outcome", ja: "最新の処理結果" })}</span>
-                    <strong>{latestOperation?.title ?? pickLocaleText(locale, { "zh-CN": "还没有新的业务操作记录", "zh-TW": "還沒有新的業務操作記錄", en: "No recent business operation yet", ja: "直近の業務操作記録はありません" })}</strong>
-                  </div>
-                  <div className="ios-home__overview-platforms">
-                    {(enabledPlatformEntries.length > 0 ? enabledPlatformEntries : PLATFORM_DEFINITIONS.slice(0, 3)).slice(0, 4).map(platform => (
-                      <span key={platform.id} className={`ios-home__platform-pill ${platformConfigs[platform.id]?.enabled ? "is-enabled" : ""}`}>
-                        {platform.name}
-                      </span>
-                    ))}
-                  </div>
                 </div>
               </section>
             </div>
 
-            <div className="ios-home__composer">
-              <CommandInput
-                variant="panel"
-                title={uiText.dashboard.startTitle}
-                hint={uiText.dashboard.startHint}
-              />
-            </div>
-
-            <div className="ios-home__prompt-row">
-              {homePrompts.slice(0, 2).map(prompt => (
-                <button
-                  key={prompt}
-                  type="button"
-                  className="ios-home__prompt"
-                  onClick={() => {
-                    const { setCommandDraft, setTab } = useStore.getState();
-                    setCommandDraft(prompt);
-                    setTab("tasks");
-                  }}
-                >
-                  {prompt}
-                </button>
-              ))}
-            </div>
-          </section>
-
-          <section className="ios-home__focus-section">
-            <div className="ios-home__focus-head">
-              <div>
-                <div className="ios-home__eyebrow">{uiText.dashboard.continueEyebrow}</div>
-                <div className="ios-home__copy" style={{ margin: 0 }}>
-                  {pickLocaleText(locale, {
-                    "zh-CN": "只保留两个最值得立刻进入的入口，避免首页再次堆满内容。",
-                    "zh-TW": "只保留兩個最值得立刻進入的入口，避免首頁再次堆滿內容。",
-                    en: "Only keep the next two most useful entries here so the home surface stays readable.",
-                    ja: "ホームが再び情報で埋まらないよう、すぐ入るべき入口だけを二つ残します。",
-                  })}
-                </div>
+            <div className="ios-home__inline-summary">
+              <div className="ios-home__inline-summary-item">
+                <span>{pickLocaleText(locale, { "zh-CN": "消息链路", "zh-TW": "消息鏈路", en: "Message Link", ja: "メッセージ経路" })}</span>
+                <strong>{formatWsStatusLabel(locale, wsStatus)}</strong>
+              </div>
+              <div className="ios-home__inline-summary-item">
+                <span>{pickLocaleText(locale, { "zh-CN": "桌面能力", "zh-TW": "桌面能力", en: "Desktop", ja: "デスクトップ" })}</span>
+                <strong>{desktopRuntimeSummary}</strong>
+              </div>
+              <div className="ios-home__inline-summary-item">
+                <span>{pickLocaleText(locale, { "zh-CN": "工作区上下文", "zh-TW": "工作區上下文", en: "Desk Context", ja: "Desk コンテキスト" })}</span>
+                <strong>{pickLocaleText(locale, {
+                  "zh-CN": `${deskContextCount} 项`,
+                  "zh-TW": `${deskContextCount} 項`,
+                  en: `${deskContextCount} assets`,
+                  ja: `${deskContextCount} 件`,
+                })}</strong>
+              </div>
+              <div className="ios-home__inline-summary-item">
+                <span>{pickLocaleText(locale, { "zh-CN": "业务对象", "zh-TW": "業務對象", en: "Business Objects", ja: "業務オブジェクト" })}</span>
+                <strong>{pickLocaleText(locale, {
+                  "zh-CN": `${businessEntityCount} 项`,
+                  "zh-TW": `${businessEntityCount} 項`,
+                  en: `${businessEntityCount} items`,
+                  ja: `${businessEntityCount} 件`,
+                })}</strong>
+              </div>
+              <div className="ios-home__inline-summary-item ios-home__inline-summary-item--wide">
+                <span>{pickLocaleText(locale, { "zh-CN": "最新处理结果", "zh-TW": "最新處理結果", en: "Latest Outcome", ja: "最新の処理結果" })}</span>
+                <strong>{latestOperation?.title ?? pickLocaleText(locale, { "zh-CN": "还没有新的业务操作记录", "zh-TW": "還沒有新的業務操作記錄", en: "No recent business operation yet", ja: "直近の業務操作記録はありません" })}</strong>
+              </div>
+              <div className="ios-home__overview-platforms">
+                {(enabledPlatformEntries.length > 0 ? enabledPlatformEntries : PLATFORM_DEFINITIONS.slice(0, 3)).slice(0, 4).map(platform => (
+                  <span key={platform.id} className={`ios-home__platform-pill ${platformConfigs[platform.id]?.enabled ? "is-enabled" : ""}`}>
+                    {platform.name}
+                  </span>
+                ))}
               </div>
             </div>
 
-            <div className="ios-home__grid ios-home__grid--compact">
-              {homeActionCards.map(card => (
-                <ActionCard
-                  key={card.id}
-                  eyebrow={card.eyebrow}
-                  title={card.title}
-                  copy={card.copy}
-                  actionLabel={card.actionLabel}
-                  onClick={() => {
-                    if (card.tab === "settings" && card.controlCenterSectionId) {
-                      openControlCenterSection(card.controlCenterSectionId);
-                      return;
-                    }
-                    onOpenTab(card.tab);
-                  }}
-                />
-              ))}
-            </div>
+            {homeActionCards.length > 0 ? (
+              <div className="ios-home__hero-actions-block">
+                <div className="ios-home__grid ios-home__grid--compact">
+                  {homeActionCards.map(card => (
+                    <ActionCard
+                      key={card.id}
+                      eyebrow={card.eyebrow}
+                      title={card.title}
+                      copy={card.copy}
+                      actionLabel={card.actionLabel}
+                      onClick={() => {
+                        if (card.tab === "settings" && card.controlCenterSectionId) {
+                          openControlCenterSection(card.controlCenterSectionId);
+                          return;
+                        }
+                        onOpenTab(card.tab);
+                      }}
+                    />
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
           </section>
         </div>
 
@@ -1392,8 +1023,6 @@ function DashboardTab({ onOpenTab }: { onOpenTab: (tab: AppTab) => void }) {
             locale={locale}
             approvalCount={pendingApprovalsCount}
             activeRunCount={activeRunCount}
-            latestRun={latestRun}
-            latestOperation={latestOperation}
             approvalItems={mobileApprovalQueue.slice(0, 3)}
             automationPaused={automationPaused}
             automationMode={automationMode}
@@ -1474,51 +1103,31 @@ function DashboardTab({ onOpenTab }: { onOpenTab: (tab: AppTab) => void }) {
               entityId: item.entityId,
               status: "rejected",
             })}
-            onToggleAutomationPaused={() => setAutomationPaused(!automationPaused)}
-            onToggleRemoteSupervisor={() => setRemoteSupervisorEnabled(!remoteSupervisorEnabled)}
-            onOpenRemoteOps={() => openControlCenterSection("remote")}
-            onOpenExecution={() => openControlCenterSection("execution")}
-            onOpenChat={() => onOpenTab("tasks")}
-            onRetryExecution={(run) => {
-              const { ok, executionRunId } = retryExecutionDispatch(run, {
-                includeUserMessage: true,
-                includeActiveProjectMemory: true,
-                taskDescription: pickLocaleText(locale, {
-                  "zh-CN": `[重试执行] ${run.instruction}`,
-                  "zh-TW": `[重試執行] ${run.instruction}`,
-                  en: `[Retry Run] ${run.instruction}`,
-                  ja: `[実行を再試行] ${run.instruction}`,
-                }),
-                lastRecoveryHint: pickLocaleText(locale, {
-                  "zh-CN": "从移动监督面板重新发起失败执行。",
-                  "zh-TW": "從移動監督面板重新發起失敗執行。",
-                  en: "Retry the failed run again from the mobile supervision panel.",
-                  ja: "モバイル監督パネルから失敗した実行を再試行します。",
-                }),
-              });
-
-              if (ok && executionRunId) {
-                setActiveExecutionRun(executionRunId);
-                return {
-                  message: pickLocaleText(locale, {
-                    "zh-CN": "已重新发起这条执行指令。",
-                    "zh-TW": "已重新發起這條執行指令。",
-                    en: "The execution instruction was sent again.",
-                    ja: "実行指示を再送しました。",
-                  }),
-                  executionRunId,
-                };
-              }
-
-              return {
-                message: pickLocaleText(locale, {
-                  "zh-CN": "重试已发起，但发送链路没有成功建立。",
-                  "zh-TW": "重試已發起，但發送鏈路沒有成功建立。",
-                  en: "Retry was requested, but the dispatch link was not established.",
-                  ja: "再試行は要求されましたが、配信リンクの確立に失敗しました。",
-                }),
-              };
+            onSetAutomationMode={(mode) => {
+              const modePresets = {
+                manual: {
+                  remoteSupervisorEnabled: false,
+                  automationPaused: true,
+                  autoDispatchScheduledTasks: false,
+                },
+                supervised: {
+                  remoteSupervisorEnabled: true,
+                  automationPaused: false,
+                  autoDispatchScheduledTasks: false,
+                },
+                autonomous: {
+                  remoteSupervisorEnabled: true,
+                  automationPaused: false,
+                  autoDispatchScheduledTasks: true,
+                },
+              } as const;
+              const preset = modePresets[mode];
+              setAutomationMode(mode);
+              setRemoteSupervisorEnabled(preset.remoteSupervisorEnabled);
+              setAutomationPaused(preset.automationPaused);
+              setAutoDispatchScheduledTasks(preset.autoDispatchScheduledTasks);
             }}
+            onOpenRemoteOps={() => openControlCenterSection("remote")}
           />
         </aside>
       </div>
@@ -1530,61 +1139,41 @@ function DashboardSupervisionRail({
   locale,
   approvalCount,
   activeRunCount,
-  latestRun,
-  latestOperation,
   approvalItems,
   automationPaused,
   automationMode,
   remoteSupervisorEnabled,
   onApproveItem,
   onRejectItem,
-  onToggleAutomationPaused,
-  onToggleRemoteSupervisor,
+  onSetAutomationMode,
   onOpenRemoteOps,
-  onOpenExecution,
-  onOpenChat,
-  onRetryExecution,
 }: {
   locale: UiLocale;
   approvalCount: number;
   activeRunCount: number;
-  latestRun: ReturnType<typeof useStore.getState>["executionRuns"][number] | null;
-  latestOperation: ReturnType<typeof useStore.getState>["businessOperationLogs"][number] | null;
   approvalItems: BusinessAutomationQueueItem[];
   automationPaused: ReturnType<typeof useStore.getState>["automationPaused"];
   automationMode: ReturnType<typeof useStore.getState>["automationMode"];
   remoteSupervisorEnabled: boolean;
   onApproveItem: (item: BusinessAutomationQueueItem) => { message: string; executionRunId?: string };
   onRejectItem: (item: BusinessAutomationQueueItem) => void;
-  onToggleAutomationPaused: () => void;
-  onToggleRemoteSupervisor: () => void;
+  onSetAutomationMode: (mode: ReturnType<typeof useStore.getState>["automationMode"]) => void;
   onOpenRemoteOps: () => void;
-  onOpenExecution: () => void;
-  onOpenChat: () => void;
-  onRetryExecution: (
-    run: NonNullable<ReturnType<typeof useStore.getState>["executionRuns"][number]>,
-  ) => { message: string; executionRunId?: string };
 }) {
-  const [approvalExpanded, setApprovalExpanded] = useState(false);
   const [approvalFeedback, setApprovalFeedback] = useState<string | null>(null);
   const [approvalExecutionRunId, setApprovalExecutionRunId] = useState<string | null>(null);
-  const [executionFeedback, setExecutionFeedback] = useState<string | null>(null);
-  const [retriedExecutionRunId, setRetriedExecutionRunId] = useState<string | null>(null);
-  const latestRunEvents = latestRun ? [...latestRun.events].slice(-3).reverse() : [];
-  const latestRunAgent = latestRun?.currentAgentId ? AGENT_META[latestRun.currentAgentId] : null;
   const modeLabel = formatAutomationModeLabel(locale, automationPaused, automationMode);
   const approvalPreviewItems = approvalItems.slice(0, 2);
+  const modeOptions = [
+    { id: "manual", label: pickLocaleText(locale, { "zh-CN": "人工", "zh-TW": "人工", en: "Manual", ja: "手動" }) },
+    { id: "supervised", label: pickLocaleText(locale, { "zh-CN": "监督", "zh-TW": "監督", en: "Supervised", ja: "監督" }) },
+    { id: "autonomous", label: pickLocaleText(locale, { "zh-CN": "自治", "zh-TW": "自治", en: "Autonomous", ja: "自律" }) },
+  ] as const;
 
   return (
     <section className="ios-home__mobile-supervision">
       <div className="ios-home__mobile-supervision-head">
         <div>
-          <div className="ios-home__eyebrow">{pickLocaleText(locale, {
-            "zh-CN": "Mobile Supervision",
-            "zh-TW": "Mobile Supervision",
-            en: "Mobile Supervision",
-            ja: "Mobile Supervision",
-          })}</div>
           <div className="ios-home__action-title">{pickLocaleText(locale, {
             "zh-CN": "值守总览",
             "zh-TW": "值守總覽",
@@ -1599,20 +1188,6 @@ function DashboardSupervisionRail({
 
       <div className="ios-home__mobile-supervision-stack">
         <article className="ios-home__mobile-supervision-card">
-          <div className="ios-home__mobile-supervision-label">{pickLocaleText(locale, {
-            "zh-CN": "自动化状态",
-            "zh-TW": "自動化狀態",
-            en: "Automation Status",
-            ja: "自動化ステータス",
-          })}</div>
-          <div className="ios-home__mobile-supervision-note">
-            {pickLocaleText(locale, {
-              "zh-CN": "这里保留值守开关、审批压力和失败恢复入口。",
-              "zh-TW": "這裡保留值守開關、審批壓力與失敗恢復入口。",
-              en: "This rail keeps the supervision switches, approval pressure, and failure recovery paths together.",
-              ja: "このレールには監督スイッチ、承認負荷、失敗復旧の入口だけをまとめています。",
-            })}
-          </div>
           <div className="ios-home__mobile-supervision-meta">
             <span>{pickLocaleText(locale, {
               "zh-CN": `待审批 ${approvalCount}`,
@@ -1631,19 +1206,16 @@ function DashboardSupervisionRail({
               : pickLocaleText(locale, { "zh-CN": "远程值守关闭", "zh-TW": "遠程值守關閉", en: "Remote off", ja: "遠隔監督オフ" })}</span>
           </div>
           <div className="ios-home__mobile-supervision-actions">
-            <button type="button" className="btn-ghost" onClick={onToggleAutomationPaused}>
-              {automationPaused
-                ? pickLocaleText(locale, { "zh-CN": "恢复自动化", "zh-TW": "恢復自動化", en: "Resume Automation", ja: "自動化を再開" })
-                : pickLocaleText(locale, { "zh-CN": "暂停自动化", "zh-TW": "暫停自動化", en: "Pause Automation", ja: "自動化を一時停止" })}
-            </button>
-            <button type="button" className="btn-ghost" onClick={onToggleRemoteSupervisor}>
-              {remoteSupervisorEnabled
-                ? pickLocaleText(locale, { "zh-CN": "关闭值守", "zh-TW": "關閉值守", en: "Disable Supervision", ja: "監督をオフ" })
-                : pickLocaleText(locale, { "zh-CN": "开启值守", "zh-TW": "開啟值守", en: "Enable Supervision", ja: "監督をオン" })}
-            </button>
-            <button type="button" className="btn-ghost" onClick={onOpenRemoteOps}>
-              {pickLocaleText(locale, { "zh-CN": "打开值守中心", "zh-TW": "打開值守中心", en: "Open Remote Ops", ja: "遠隔運營を開く" })}
-            </button>
+            {modeOptions.map(mode => (
+              <button
+                key={mode.id}
+                type="button"
+                className={automationMode === mode.id ? "btn-primary" : "btn-ghost"}
+                onClick={() => onSetAutomationMode(mode.id)}
+              >
+                {mode.label}
+              </button>
+            ))}
           </div>
         </article>
 
@@ -1656,52 +1228,28 @@ function DashboardSupervisionRail({
                 en: "Approval Queue",
                 ja: "承認キュー",
               })}</div>
-              <div className="ios-home__mobile-supervision-note">
-                {approvalCount > 0
-                  ? pickLocaleText(locale, {
-                      "zh-CN": "优先展示最靠前的待审批对象，避免先进入深层面板。",
-                      "zh-TW": "優先顯示最靠前的待審批對象，避免先進入深層面板。",
-                      en: "Show the first approval items here so you do not need a deeper panel first.",
-                      ja: "先頭の承認対象だけをここに表示し、最初から深いパネルへ入らずに済むようにします。",
-                    })
-                  : pickLocaleText(locale, {
-                      "zh-CN": "当前没有等待人工确认的业务对象。",
-                      "zh-TW": "目前沒有等待人工確認的業務對象。",
-                      en: "No business items are waiting for manual review.",
-                      ja: "手動確認待ちの業務項目はありません。",
-                    })}
-              </div>
             </div>
             <button
               type="button"
               className="btn-ghost"
-              onClick={() => setApprovalExpanded(current => !current)}
+              onClick={onOpenRemoteOps}
             >
-              {approvalExpanded
-                ? pickLocaleText(locale, { "zh-CN": "收起", "zh-TW": "收起", en: "Collapse", ja: "折りたたむ" })
-                : approvalCount > 0
-                  ? pickLocaleText(locale, {
-                      "zh-CN": `查看全部 ${approvalCount}`,
-                      "zh-TW": `查看全部 ${approvalCount}`,
-                      en: `View All ${approvalCount}`,
-                      ja: `すべて表示 ${approvalCount}`,
-                    })
-                  : pickLocaleText(locale, { "zh-CN": "查看", "zh-TW": "查看", en: "View", ja: "表示" })}
+              {approvalCount > 0
+                ? pickLocaleText(locale, {
+                    "zh-CN": `查看全部 ${approvalCount}`,
+                    "zh-TW": `查看全部 ${approvalCount}`,
+                    en: `View All ${approvalCount}`,
+                    ja: `すべて表示 ${approvalCount}`,
+                  })
+                : pickLocaleText(locale, { "zh-CN": "打开值守", "zh-TW": "打開值守", en: "Open Ops", ja: "値守りを開く" })}
             </button>
           </div>
           {approvalFeedback ? (
             <div className="ios-home__mobile-supervision-feedback">
               <div>{approvalFeedback}</div>
-              {approvalExecutionRunId ? (
-                <div className="ios-home__mobile-supervision-actions" style={{ marginTop: 8 }}>
-                  <button type="button" className="btn-ghost" onClick={onOpenExecution}>
-                    {pickLocaleText(locale, { "zh-CN": "查看刚刚执行", "zh-TW": "查看剛剛執行", en: "Open Latest Run", ja: "直近の実行を見る" })}
-                  </button>
-                </div>
-              ) : null}
             </div>
           ) : null}
-          {!approvalExpanded && approvalPreviewItems.length > 0 ? (
+          {approvalPreviewItems.length > 0 ? (
             <div className="ios-home__mobile-supervision-approval-list">
               {approvalPreviewItems.map(item => (
                 <article key={`${item.entityType}-${item.entityId}`} className="ios-home__mobile-supervision-approval-item">
@@ -1737,149 +1285,16 @@ function DashboardSupervisionRail({
               ))}
             </div>
           ) : null}
-          {approvalExpanded ? (
-            <div className="ios-home__mobile-supervision-approval-list">
-              {approvalItems.length > 0 ? approvalItems.map(item => (
-                <article key={`${item.entityType}-${item.entityId}`} className="ios-home__mobile-supervision-approval-item">
-                  <div style={{ display: "grid", gap: 4 }}>
-                    <strong style={{ fontSize: 13 }}>{item.title}</strong>
-                    <div className="ios-home__mobile-supervision-note">{item.subtitle}</div>
-                    <div className="ios-home__mobile-supervision-note">{item.summary}</div>
-                  </div>
-                  <div className="ios-home__mobile-supervision-actions">
-                    <button
-                      type="button"
-                      className="btn-ghost"
-                      onClick={() => {
-                        const result = onApproveItem(item);
-                        setApprovalFeedback(result.message);
-                        setApprovalExecutionRunId(result.executionRunId ?? null);
-                      }}
-                    >
-                      {pickLocaleText(locale, { "zh-CN": "批准", "zh-TW": "批准", en: "Approve", ja: "承認" })}
-                    </button>
-                    <button
-                      type="button"
-                      className="btn-ghost"
-                      onClick={() => {
-                        onRejectItem(item);
-                        setApprovalFeedback(formatApprovalFeedback(locale, "rejected", item.title));
-                        setApprovalExecutionRunId(null);
-                      }}
-                    >
-                      {pickLocaleText(locale, { "zh-CN": "驳回", "zh-TW": "駁回", en: "Reject", ja: "却下" })}
-                    </button>
-                  </div>
-                </article>
-              )) : (
-                <div className="ios-home__mobile-supervision-note">
-                  {pickLocaleText(locale, {
-                    "zh-CN": "当前项目没有待审批对象，可以直接盯执行和远程值守状态。",
-                    "zh-TW": "目前專案沒有待審批對象，可以直接盯執行和遠程值守狀態。",
-                    en: "No approval items are waiting in this project.",
-                    ja: "このプロジェクトで承認待ちの項目はありません。",
-                  })}
-                </div>
-              )}
+          {approvalPreviewItems.length === 0 ? (
+            <div className="ios-home__mobile-supervision-note">
+              {pickLocaleText(locale, {
+                "zh-CN": "当前没有待审批对象",
+                "zh-TW": "目前沒有待審批對象",
+                en: "No pending approvals",
+                ja: "承認待ちはありません",
+              })}
             </div>
           ) : null}
-        </article>
-
-        <article className="ios-home__mobile-supervision-card">
-          <div className="ios-home__mobile-supervision-inline-head">
-            <div>
-              <div className="ios-home__mobile-supervision-label">{pickLocaleText(locale, {
-                "zh-CN": "最近执行",
-                "zh-TW": "最近執行",
-                en: "Latest Run",
-                ja: "最新の実行",
-              })}</div>
-              <div className="ios-home__mobile-supervision-note">
-                {latestRun ? latestRun.instruction : pickLocaleText(locale, {
-                  "zh-CN": "当前项目还没有执行 run。",
-                  "zh-TW": "目前專案還沒有執行 run。",
-                  en: "There is no execution run in the current project yet.",
-                  ja: "現在のプロジェクトにはまだ実行 run がありません。",
-                })}
-              </div>
-            </div>
-            {latestRun ? (
-              <span className={`control-center__scenario-badge is-${getMobileExecutionTone(latestRun.status)}`}>
-                {getMobileExecutionLabel(locale, latestRun.status)}
-              </span>
-            ) : null}
-          </div>
-          {latestRun ? (
-            <>
-              <div className="ios-home__mobile-supervision-meta">
-                <span>{pickLocaleText(locale, { "zh-CN": "来源", "zh-TW": "來源", en: "Source", ja: "ソース" })} {latestRun.source}</span>
-                <span>{latestRunAgent ? `${latestRunAgent.emoji} ${latestRunAgent.name}` : pickLocaleText(locale, {
-                  "zh-CN": "待分配",
-                  "zh-TW": "待分配",
-                  en: "Unassigned",
-                  ja: "未割当",
-                })}</span>
-                <span>{pickLocaleText(locale, { "zh-CN": "更新于", "zh-TW": "更新於", en: "Updated", ja: "更新" })} {timeAgo(latestRun.updatedAt, locale)}</span>
-              </div>
-              {latestOperation ? (
-                <div className="ios-home__mobile-supervision-note">
-                  {pickLocaleText(locale, {
-                    "zh-CN": `最近结果：${latestOperation.title}`,
-                    "zh-TW": `最近結果：${latestOperation.title}`,
-                    en: `Latest outcome: ${latestOperation.title}`,
-                    ja: `最新結果: ${latestOperation.title}`,
-                  })}
-                </div>
-              ) : null}
-              {latestRunEvents.length > 0 ? (
-                <div className="ios-home__mobile-supervision-event-list">
-                  {latestRunEvents.map(event => (
-                    <div key={event.id} className="ios-home__mobile-supervision-event">
-                      <div className="ios-home__mobile-supervision-event-title">{event.title}</div>
-                      {event.detail ? (
-                        <div className="ios-home__mobile-supervision-note">{event.detail}</div>
-                      ) : null}
-                    </div>
-                  ))}
-                </div>
-              ) : null}
-              {executionFeedback ? (
-                <div className="ios-home__mobile-supervision-feedback">
-                  <div>{executionFeedback}</div>
-                  {retriedExecutionRunId ? (
-                    <div className="ios-home__mobile-supervision-actions" style={{ marginTop: 8 }}>
-                      <button type="button" className="btn-ghost" onClick={onOpenExecution}>
-                        {pickLocaleText(locale, { "zh-CN": "查看重试执行", "zh-TW": "查看重試執行", en: "Open Retried Run", ja: "再試行した実行を見る" })}
-                      </button>
-                    </div>
-                  ) : null}
-                </div>
-              ) : null}
-            </>
-          ) : null}
-          <div className="ios-home__mobile-supervision-actions">
-            <button type="button" className="btn-ghost" onClick={onOpenExecution}>
-              {pickLocaleText(locale, { "zh-CN": "打开执行中心", "zh-TW": "打開執行中心", en: "Open Execution", ja: "実行センターを開く" })}
-            </button>
-            {latestRun?.status === "failed" ? (
-              <button
-                type="button"
-                className="btn-ghost"
-                onClick={() => {
-                  const result = onRetryExecution(latestRun);
-                  setExecutionFeedback(result.message);
-                  setRetriedExecutionRunId(result.executionRunId ?? null);
-                }}
-              >
-                {pickLocaleText(locale, { "zh-CN": "一键重试", "zh-TW": "一鍵重試", en: "Retry", ja: "再試行" })}
-              </button>
-            ) : null}
-            <button type="button" className="btn-ghost" onClick={onOpenChat}>
-              {latestRun?.status === "failed"
-                ? pickLocaleText(locale, { "zh-CN": "回到聊天接管", "zh-TW": "回到聊天接管", en: "Back to Chat", ja: "チャットへ戻る" })
-                : pickLocaleText(locale, { "zh-CN": "去聊天接管", "zh-TW": "去聊天接管", en: "Take Over in Chat", ja: "チャットで引き継ぐ" })}
-            </button>
-          </div>
         </article>
 
       </div>
@@ -1902,21 +1317,9 @@ function TasksTab() {
     <div className="ios-chat-page">
       <section className="ios-chat-page__surface">
         <div className="ios-chat-page__header">
-          <div>
+          <div className="ios-chat-page__header-main">
             <div className="ios-chat-page__eyebrow">{uiText.tasks.eyebrow}</div>
             <div className="ios-chat-page__title">{uiText.tasks.title}</div>
-          </div>
-          <div className="ios-chat-page__meta">
-            <span>
-              {pickLocaleText(locale, {
-                "zh-CN": `${tasks.length} 条消息`,
-                "zh-TW": `${tasks.length} 條消息`,
-                en: `${tasks.length} messages`,
-                ja: `${tasks.length} 件のメッセージ`,
-              })}
-            </span>
-            <span>{uiText.tasks.enterToSend}</span>
-            <span>{uiText.tasks.shiftEnter}</span>
           </div>
         </div>
 
@@ -1958,6 +1361,79 @@ function TasksTab() {
 
 function WorkspaceTab() {
   const locale = useStore(s => s.locale);
+  const workspaceRoot = useStore(s => s.workspaceRoot);
+  const workspacePinnedPreviews = useStore(s => s.workspacePinnedPreviews);
+  const workspaceSavedBundles = useStore(s => s.workspaceSavedBundles);
+  const workspaceProjectMemories = useStore(s => s.workspaceProjectMemories);
+  const workspaceDeskNotes = useStore(s => s.workspaceDeskNotes);
+  const workspaceScratchpad = useStore(s => s.workspaceScratchpad);
+  const workspacePreviewTabs = useStore(s => s.workspacePreviewTabs);
+  const workspaceEntries = useStore(s => s.workspaceEntries);
+  const chatSessions = useStore(s => s.chatSessions);
+  const activeSessionId = useStore(s => s.activeSessionId);
+  const setTab = useStore(s => s.setTab);
+  const [deskPanelOpen, setDeskPanelOpen] = useState(false);
+
+  const activeSession = useMemo(
+    () => chatSessions.find(session => session.id === activeSessionId) ?? null,
+    [activeSessionId, chatSessions],
+  );
+
+  const scopedWorkspaceSavedBundles = useMemo(
+    () => filterByProjectScope(workspaceSavedBundles, activeSession ?? {}),
+    [activeSession, workspaceSavedBundles],
+  );
+  const scopedWorkspaceProjectMemories = useMemo(
+    () => filterByProjectScope(workspaceProjectMemories, activeSession ?? {}),
+    [activeSession, workspaceProjectMemories],
+  );
+  const scopedDeskNotes = useMemo(
+    () => filterByProjectScope(workspaceDeskNotes, activeSession ?? {}),
+    [activeSession, workspaceDeskNotes],
+  );
+
+  useEffect(() => {
+    if (!deskPanelOpen) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setDeskPanelOpen(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [deskPanelOpen]);
+
+  const workspaceSummaryCards = [
+    {
+      label: pickLocaleText(locale, { "zh-CN": "当前目录", "zh-TW": "目前目錄", en: "Current Folder", ja: "現在のフォルダ" }),
+      value: workspaceRoot
+        ? workspaceRoot.split(/[\\/]+/).filter(Boolean).at(-1) ?? workspaceRoot
+        : pickLocaleText(locale, { "zh-CN": "未选择", "zh-TW": "未選擇", en: "Not Selected", ja: "未選択" }),
+      accent: "var(--accent)",
+    },
+    {
+      label: pickLocaleText(locale, { "zh-CN": "固定引用", "zh-TW": "固定引用", en: "Pinned Context", ja: "固定コンテキスト" }),
+      value: String(workspacePinnedPreviews.length),
+      accent: "#2563eb",
+    },
+    {
+      label: pickLocaleText(locale, { "zh-CN": "项目记忆", "zh-TW": "專案記憶", en: "Project Memory", ja: "プロジェクト記憶" }),
+      value: String(scopedWorkspaceProjectMemories.length),
+      accent: "#14b8a6",
+    },
+    {
+      label: pickLocaleText(locale, { "zh-CN": "草稿与便签", "zh-TW": "草稿與便箋", en: "Drafts & Notes", ja: "草稿とノート" }),
+      value: String(scopedDeskNotes.length + (workspaceScratchpad.trim() ? 1 : 0)),
+      accent: "#f59e0b",
+    },
+  ];
+
+  const retainedCapabilities = [
+    pickLocaleText(locale, { "zh-CN": "选择本地文件夹并浏览文件", "zh-TW": "選擇本地資料夾並瀏覽檔案", en: "Choose a local folder and browse files", ja: "ローカルフォルダを選んでファイルを閲覧" }),
+    pickLocaleText(locale, { "zh-CN": "预览文件并固定为引用上下文", "zh-TW": "預覽檔案並固定為引用上下文", en: "Preview files and pin them as context", ja: "ファイルをプレビューして文脈として固定" }),
+    pickLocaleText(locale, { "zh-CN": "保存项目记忆和上下文包", "zh-TW": "保存專案記憶與上下文包", en: "Save project memories and context packs", ja: "プロジェクト記憶とコンテキストパックを保存" }),
+    pickLocaleText(locale, { "zh-CN": "维护草稿、便签和工作台临时上下文", "zh-TW": "維護草稿、便箋與工作台臨時上下文", en: "Maintain drafts, notes, and temporary desk context", ja: "草稿・ノート・一時コンテキストを維持" }),
+  ];
+
+  const latestMemory = scopedWorkspaceProjectMemories[0] ?? null;
   return (
     <div className="ios-feature-page ios-feature-page--workspace">
       <div className="ios-feature-page__header">
@@ -1975,7 +1451,167 @@ function WorkspaceTab() {
         })}</div>
       </div>
       <div className="ios-feature-page__canvas">
-        <WorkspaceDesk />
+        <div className="workspace-lite">
+          <section className="workspace-lite__hero">
+            <div>
+              <div className="workspace-lite__eyebrow">
+                {pickLocaleText(locale, {
+                  "zh-CN": "轻量工作区",
+                  "zh-TW": "輕量工作區",
+                  en: "Light Workspace",
+                  ja: "ライトワークスペース",
+                })}
+              </div>
+              <div className="workspace-lite__title">
+                {pickLocaleText(locale, {
+                  "zh-CN": "把工作区收成一个上下文入口，而不是整页操作台",
+                  "zh-TW": "把工作區收斂成一個上下文入口，而不是整頁操作台",
+                  en: "Keep workspace as a context entry point instead of a full-page control surface",
+                  ja: "ワークスペースを全面操作台ではなく文脈入口として保つ",
+                })}
+              </div>
+              <div className="workspace-lite__copy">
+                {pickLocaleText(locale, {
+                  "zh-CN": "文件浏览、引用固定、项目记忆和草稿能力都还保留，但改为需要时再展开，避免主页面长期被大面积空态占住。",
+                  "zh-TW": "檔案瀏覽、引用固定、專案記憶和草稿能力都會保留，但改成需要時再展開，避免主頁長期被大面積空態佔住。",
+                  en: "File browsing, pinned references, project memory, and drafts all remain available, but now open on demand so the main page does not stay occupied by a large empty workspace.",
+                  ja: "ファイル閲覧、固定参照、プロジェクト記憶、草稿は維持しつつ、必要時だけ展開する形にして、空状態の大きな画面占有を避けます。",
+                })}
+              </div>
+            </div>
+            <div className="workspace-lite__hero-actions">
+              <button type="button" className="btn-primary" onClick={() => setDeskPanelOpen(true)}>
+                {pickLocaleText(locale, {
+                  "zh-CN": workspaceRoot ? "打开工作区面板" : "选择文件夹并打开",
+                  "zh-TW": workspaceRoot ? "打開工作區面板" : "選擇資料夾並打開",
+                  en: workspaceRoot ? "Open Workspace Panel" : "Choose Folder and Open",
+                  ja: workspaceRoot ? "ワークスペースを開く" : "フォルダを選んで開く",
+                })}
+              </button>
+              <button type="button" className="btn-ghost" onClick={() => setTab("tasks")}>
+                {pickLocaleText(locale, {
+                  "zh-CN": "回到聊天",
+                  "zh-TW": "回到聊天",
+                  en: "Back to Chat",
+                  ja: "チャットへ戻る",
+                })}
+              </button>
+            </div>
+          </section>
+
+          <div className="workspace-lite__stats">
+            {workspaceSummaryCards.map(card => (
+              <article key={card.label} className="workspace-lite__stat">
+                <span>{card.label}</span>
+                <strong style={{ color: card.accent }}>{card.value}</strong>
+              </article>
+            ))}
+          </div>
+
+          <div className="workspace-lite__grid">
+            <section className="workspace-lite__panel">
+              <div className="workspace-lite__panel-eyebrow">
+                {pickLocaleText(locale, {
+                  "zh-CN": "当前状态",
+                  "zh-TW": "目前狀態",
+                  en: "Current State",
+                  ja: "現在の状態",
+                })}
+              </div>
+              <div className="workspace-lite__status">
+                <div className="workspace-lite__status-item">
+                  <span>{pickLocaleText(locale, { "zh-CN": "根目录", "zh-TW": "根目錄", en: "Root", ja: "ルート" })}</span>
+                  <strong>{workspaceRoot ?? pickLocaleText(locale, { "zh-CN": "还没有选择本地文件夹", "zh-TW": "還沒有選擇本地資料夾", en: "No local folder selected yet", ja: "ローカルフォルダはまだ未選択です" })}</strong>
+                </div>
+                <div className="workspace-lite__status-item">
+                  <span>{pickLocaleText(locale, { "zh-CN": "当前文件数", "zh-TW": "目前檔案數", en: "Visible Entries", ja: "表示中の項目" })}</span>
+                  <strong>
+                    {pickLocaleText(locale, {
+                      "zh-CN": `${workspaceEntries.length} 项`,
+                      "zh-TW": `${workspaceEntries.length} 項`,
+                      en: `${workspaceEntries.length} items`,
+                      ja: `${workspaceEntries.length} 件`,
+                    })}
+                  </strong>
+                </div>
+                <div className="workspace-lite__status-item">
+                  <span>{pickLocaleText(locale, { "zh-CN": "当前引用标签", "zh-TW": "目前引用標籤", en: "Preview Tabs", ja: "プレビュータブ" })}</span>
+                  <strong>
+                    {pickLocaleText(locale, {
+                      "zh-CN": `${workspacePreviewTabs.length} 个标签`,
+                      "zh-TW": `${workspacePreviewTabs.length} 個標籤`,
+                      en: `${workspacePreviewTabs.length} tabs`,
+                      ja: `${workspacePreviewTabs.length} タブ`,
+                    })}
+                  </strong>
+                </div>
+                <div className="workspace-lite__status-item">
+                  <span>{pickLocaleText(locale, { "zh-CN": "最近记忆", "zh-TW": "最近記憶", en: "Latest Memory", ja: "最新の記憶" })}</span>
+                  <strong>{latestMemory?.name ?? pickLocaleText(locale, { "zh-CN": "还没有保存项目记忆", "zh-TW": "還沒有保存專案記憶", en: "No saved project memory yet", ja: "保存済み記憶はまだありません" })}</strong>
+                </div>
+              </div>
+            </section>
+
+            <section className="workspace-lite__panel">
+              <div className="workspace-lite__panel-eyebrow">
+                {pickLocaleText(locale, {
+                  "zh-CN": "保留能力",
+                  "zh-TW": "保留能力",
+                  en: "Retained Capabilities",
+                  ja: "保持する機能",
+                })}
+              </div>
+              <div className="workspace-lite__list">
+                {retainedCapabilities.map(item => (
+                  <div key={item} className="workspace-lite__list-item">
+                    {item}
+                  </div>
+                ))}
+              </div>
+              <div className="workspace-lite__footnote">
+                {pickLocaleText(locale, {
+                  "zh-CN": `当前项目下还有 ${scopedWorkspaceSavedBundles.length} 个上下文包、${scopedDeskNotes.length} 条便签可在面板中继续使用。`,
+                  "zh-TW": `目前專案下還有 ${scopedWorkspaceSavedBundles.length} 個上下文包、${scopedDeskNotes.length} 條便箋可在面板中繼續使用。`,
+                  en: `${scopedWorkspaceSavedBundles.length} saved context packs and ${scopedDeskNotes.length} notes remain available inside the panel.`,
+                  ja: `パネル内では ${scopedWorkspaceSavedBundles.length} 件のコンテキストパックと ${scopedDeskNotes.length} 件のノートを引き続き使えます。`,
+                })}
+              </div>
+            </section>
+          </div>
+
+          {deskPanelOpen ? (
+            <div className="workspace-lite__overlay" onClick={() => setDeskPanelOpen(false)}>
+              <div className="workspace-lite__overlay-shell" onClick={event => event.stopPropagation()}>
+                <div className="workspace-lite__overlay-head">
+                  <div>
+                    <div className="workspace-lite__eyebrow">
+                      {pickLocaleText(locale, {
+                        "zh-CN": "工作区面板",
+                        "zh-TW": "工作區面板",
+                        en: "Workspace Panel",
+                        ja: "ワークスペースパネル",
+                      })}
+                    </div>
+                    <div className="workspace-lite__overlay-title">
+                      {pickLocaleText(locale, {
+                        "zh-CN": "需要操作文件、引用和记忆时再展开",
+                        "zh-TW": "需要操作檔案、引用和記憶時再展開",
+                        en: "Open only when you need files, references, or memory operations",
+                        ja: "ファイル・参照・記憶操作が必要なときだけ開く",
+                      })}
+                    </div>
+                  </div>
+                  <button type="button" className="btn-ghost" onClick={() => setDeskPanelOpen(false)}>
+                    {pickLocaleText(locale, { "zh-CN": "关闭", "zh-TW": "關閉", en: "Close", ja: "閉じる" })}
+                  </button>
+                </div>
+                <div className="workspace-lite__overlay-body">
+                  <WorkspaceDesk />
+                </div>
+              </div>
+            </div>
+          ) : null}
+        </div>
       </div>
     </div>
   );
@@ -2054,6 +1690,134 @@ function LanguageSwitcher() {
   );
 }
 
+function DesktopSidebarQuickSettings() {
+  const locale = useStore(s => s.locale);
+  const setLocale = useStore(s => s.setLocale);
+  const theme = useStore(s => s.theme);
+  const setTheme = useStore(s => s.setTheme);
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+
+    const handlePointerDown = (event: MouseEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    };
+
+    document.addEventListener("mousedown", handlePointerDown);
+    return () => document.removeEventListener("mousedown", handlePointerDown);
+  }, [open]);
+
+  const quickSettingsLabel = pickLocaleText(locale, {
+    "zh-CN": "快速设置",
+    "zh-TW": "快速設定",
+    en: "Quick Settings",
+    ja: "クイック設定",
+  });
+  const languageLabel = pickLocaleText(locale, {
+    "zh-CN": "语言",
+    "zh-TW": "語言",
+    en: "Language",
+    ja: "言語",
+  });
+  const appearanceLabel = pickLocaleText(locale, {
+    "zh-CN": "外观",
+    "zh-TW": "外觀",
+    en: "Appearance",
+    ja: "外観",
+  });
+
+  const languageOptions: Array<{ id: UiLocale; label: string }> = [
+    { id: "zh-CN", label: "简" },
+    { id: "zh-TW", label: "繁" },
+    { id: "en", label: "EN" },
+    { id: "ja", label: "日" },
+  ];
+
+  const themeOptions: Array<{ id: "dark" | "coral" | "jade"; label: string }> = [
+    {
+      id: "dark",
+      label: pickLocaleText(locale, {
+        "zh-CN": "浅色",
+        "zh-TW": "淺色",
+        en: "Light",
+        ja: "ライト",
+      }),
+    },
+    {
+      id: "coral",
+      label: pickLocaleText(locale, {
+        "zh-CN": "暖珊瑚",
+        "zh-TW": "暖珊瑚",
+        en: "Coral",
+        ja: "コーラル",
+      }),
+    },
+    {
+      id: "jade",
+      label: pickLocaleText(locale, {
+        "zh-CN": "翡翠",
+        "zh-TW": "翡翠",
+        en: "Jade",
+        ja: "ジェイド",
+      }),
+    },
+  ];
+
+  return (
+    <div className={`desktop-workspace-shell__quick-settings ${open ? "is-open" : ""}`} ref={rootRef}>
+      <button
+        type="button"
+        className="desktop-workspace-shell__quick-settings-trigger"
+        onClick={() => setOpen(value => !value)}
+        aria-label={quickSettingsLabel}
+        title={quickSettingsLabel}
+      >
+        <QuickSettingsIcon />
+      </button>
+
+      {open ? (
+        <div className="desktop-workspace-shell__quick-settings-panel">
+          <div className="desktop-workspace-shell__quick-settings-group">
+            <span>{languageLabel}</span>
+            <div className="desktop-workspace-shell__quick-settings-options">
+              {languageOptions.map(option => (
+                <button
+                  key={option.id}
+                  type="button"
+                  className={`desktop-workspace-shell__quick-settings-option ${locale === option.id ? "is-active" : ""}`}
+                  onClick={() => setLocale(option.id)}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="desktop-workspace-shell__quick-settings-group">
+            <span>{appearanceLabel}</span>
+            <div className="desktop-workspace-shell__quick-settings-options is-theme-list">
+              {themeOptions.map(option => (
+                <button
+                  key={option.id}
+                  type="button"
+                  className={`desktop-workspace-shell__quick-settings-option ${theme === option.id ? "is-active" : ""}`}
+                  onClick={() => setTheme(option.id)}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function SidebarSection({
   title,
   subtitle,
@@ -2080,6 +1844,64 @@ function StatusPill({ label, value }: { label: string; value: string }) {
       <span>{label}</span>
       <strong>{value}</strong>
     </div>
+  );
+}
+
+function NavItemIcon({ id }: { id: AppTab }) {
+  switch (id) {
+    case "dashboard":
+      return (
+        <svg viewBox="0 0 20 20" width="18" height="18" fill="none" aria-hidden="true">
+          <path d="M4 4.5h5.2v5.2H4zM10.8 4.5H16v8h-5.2zM4 11.3h5.2v4.2H4zM10.8 14H16" stroke="currentColor" strokeWidth="1.45" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      );
+    case "tasks":
+      return (
+        <svg viewBox="0 0 20 20" width="18" height="18" fill="none" aria-hidden="true">
+          <path d="M4.5 14.9V5.1a1.1 1.1 0 0 1 1.1-1.1h9.3A1.1 1.1 0 0 1 16 5.1v9.8a1.1 1.1 0 0 1-1.1 1.1H5.6a1.1 1.1 0 0 1-1.1-1.1Z" stroke="currentColor" strokeWidth="1.45"/>
+          <path d="m7.3 9.5 2 2 4-4" stroke="currentColor" strokeWidth="1.45" strokeLinecap="round" strokeLinejoin="round"/>
+        </svg>
+      );
+    case "dispatch":
+      return (
+        <svg viewBox="0 0 20 20" width="18" height="18" fill="none" aria-hidden="true">
+          <path d="M4 10h12M10 4l6 6-6 6" stroke="currentColor" strokeWidth="1.45" strokeLinecap="round" strokeLinejoin="round"/>
+        </svg>
+      );
+    case "meeting":
+      return (
+        <svg viewBox="0 0 20 20" width="18" height="18" fill="none" aria-hidden="true">
+          <path d="M6.2 9.5a2.2 2.2 0 1 0 0-4.4 2.2 2.2 0 0 0 0 4.4ZM13.8 9.5a2.2 2.2 0 1 0 0-4.4 2.2 2.2 0 0 0 0 4.4Z" stroke="currentColor" strokeWidth="1.35"/>
+          <path d="M2.9 15.5c.4-2 2-3.2 3.9-3.2s3.5 1.2 3.9 3.2M9.3 15.5c.36-1.72 1.84-2.8 3.57-2.8 1.72 0 3.2 1.08 3.56 2.8" stroke="currentColor" strokeWidth="1.35" strokeLinecap="round"/>
+        </svg>
+      );
+    case "settings":
+      return (
+        <svg viewBox="0 0 20 20" width="18" height="18" fill="none" aria-hidden="true">
+          <path d="M10 6.4a3.6 3.6 0 1 0 0 7.2 3.6 3.6 0 0 0 0-7.2Z" stroke="currentColor" strokeWidth="1.35"/>
+          <path d="M10 2.8v1.7M10 15.5v1.7M4.9 4.9l1.2 1.2M13.9 13.9l1.2 1.2M2.8 10h1.7M15.5 10h1.7M4.9 15.1l1.2-1.2M13.9 6.1l1.2-1.2" stroke="currentColor" strokeWidth="1.35" strokeLinecap="round"/>
+        </svg>
+      );
+    default:
+      return null;
+  }
+}
+
+function SidebarPanelIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 20 20" width="18" height="18" fill="none" aria-hidden="true" {...props}>
+      <rect x="3.2" y="4" width="13.6" height="12" rx="2.2" stroke="currentColor" strokeWidth="1.35" />
+      <path d="M9.1 4.4v11.2" stroke="currentColor" strokeWidth="1.35" />
+    </svg>
+  );
+}
+
+function QuickSettingsIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 20 20" width="18" height="18" fill="none" aria-hidden="true" {...props}>
+      <path d="M10 3.1v1.4M10 15.5v1.4M5.05 5.05l1 1M13.95 13.95l1 1M3.1 10h1.4M15.5 10h1.4M5.05 14.95l1-1M13.95 6.05l1-1" stroke="currentColor" strokeWidth="1.35" strokeLinecap="round"/>
+      <circle cx="10" cy="10" r="3.1" stroke="currentColor" strokeWidth="1.35"/>
+    </svg>
   );
 }
 
@@ -2395,8 +2217,8 @@ function getDashboardBusinessFocus(
           en: "Signal volume helps decide which topics are worth turning into content tasks.",
           ja: "シグナル数は、どのテーマをコンテンツタスク化すべきか判断する助けになります。",
         }),
-        actionLabel: pickLocaleText(locale, { "zh-CN": "进入工作区", "zh-TW": "進入工作區", en: "Open Desk", ja: "ワークスペースへ" }),
-        tab: "workspace" as const,
+        actionLabel: pickLocaleText(locale, { "zh-CN": "进入聊天", "zh-TW": "進入聊天", en: "Open Chat", ja: "チャットへ" }),
+        tab: "tasks" as const,
       },
     ];
   }
@@ -2442,11 +2264,80 @@ function getDashboardBusinessFocus(
   ];
 }
 
+type MeetingAttachmentKind = "image" | "document" | "audio" | "video" | "other";
+
+type MeetingAttachmentItem = {
+  id: string;
+  file: File;
+  kind: MeetingAttachmentKind;
+};
+
+const MEETING_ACCEPTED_FILE_TYPES = [
+  "image/*",
+  "audio/*",
+  "video/*",
+  ".pdf",
+  ".doc",
+  ".docx",
+  ".xls",
+  ".xlsx",
+  ".ppt",
+  ".pptx",
+  ".txt",
+  ".md",
+  ".csv",
+  ".json",
+  ".zip",
+  ".rar",
+  ".7z",
+].join(",");
+
+function detectMeetingAttachmentKind(file: File): MeetingAttachmentKind {
+  if (file.type.startsWith("image/")) return "image";
+  if (file.type.startsWith("audio/")) return "audio";
+  if (file.type.startsWith("video/")) return "video";
+  if (
+    file.type.includes("pdf") ||
+    file.type.includes("word") ||
+    file.type.includes("sheet") ||
+    file.type.includes("excel") ||
+    file.type.includes("powerpoint") ||
+    file.type.startsWith("text/")
+  ) {
+    return "document";
+  }
+  return "other";
+}
+
+function getMeetingAttachmentBadge(kind: MeetingAttachmentKind) {
+  switch (kind) {
+    case "image":
+      return "IMG";
+    case "document":
+      return "DOC";
+    case "audio":
+      return "AUDIO";
+    case "video":
+      return "VIDEO";
+    default:
+      return "FILE";
+  }
+}
+
+function formatMeetingFileSize(size: number) {
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+  if (size < 1024 * 1024 * 1024) return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(size / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+}
+
 function MeetingTab() {
   const locale = useStore(s => s.locale);
   const [topic, setTopic] = useState("");
+  const [attachments, setAttachments] = useState<MeetingAttachmentItem[]>([]);
   const { wsStatus, meetingSpeeches, meetingActive, clearMeeting, setMeetingActive, setMeetingTopic } = useStore();
   const scrollRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -2456,20 +2347,47 @@ function MeetingTab() {
 
   const startMeeting = () => {
     if (!topic.trim() || meetingActive || wsStatus !== "connected") return;
+    const composedTopic = attachments.length
+      ? `${topic.trim()}\n\nAttachments: ${attachments.map(item => item.file.name).join(", ")}`
+      : topic.trim();
     clearMeeting();
-    setMeetingTopic(topic.trim());
+    setMeetingTopic(composedTopic);
     setMeetingActive(true);
+    setAttachments([]);
     void syncRuntimeSettings();
-    sendWs({ type: "meeting", topic: topic.trim() });
+    sendWs({ type: "meeting", topic: composedTopic });
+  };
+
+  const openFilePicker = () => {
+    if (meetingActive) return;
+    fileInputRef.current?.click();
+  };
+
+  const removeAttachment = (id: string) => {
+    setAttachments(current => current.filter(item => item.id !== id));
+  };
+
+  const handleFileChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.target.files ?? []);
+    if (files.length === 0) return;
+    setAttachments(current => [
+      ...current,
+      ...files.map(file => ({
+        id: randomId(),
+        file,
+        kind: detectMeetingAttachmentKind(file),
+      })),
+    ]);
+    event.target.value = "";
   };
 
   const agentInfo: Record<string, { name: string; emoji: string; color: string }> = {
-    orchestrator: { name: pickLocaleText(locale, { "zh-CN": "虾总管", "zh-TW": "蝦總管", en: "Orchestrator Lobster", ja: "統括ロブスター" }), emoji: "🦞", color: "var(--accent)" },
-    explorer: { name: pickLocaleText(locale, { "zh-CN": "探海龙虾", "zh-TW": "探海龍蝦", en: "Explorer Lobster", ja: "探索ロブスター" }), emoji: "🔎", color: "#38bdf8" },
-    writer: { name: pickLocaleText(locale, { "zh-CN": "执笔龙虾", "zh-TW": "執筆龍蝦", en: "Writer Lobster", ja: "執筆ロブスター" }), emoji: "✍️", color: "#34c759" },
-    designer: { name: pickLocaleText(locale, { "zh-CN": "幻影龙虾", "zh-TW": "幻影龍蝦", en: "Designer Lobster", ja: "デザイナーロブスター" }), emoji: "🎨", color: "#ff5c8a" },
-    performer: { name: pickLocaleText(locale, { "zh-CN": "戏精龙虾", "zh-TW": "戲精龍蝦", en: "Performer Lobster", ja: "パフォーマーロブスター" }), emoji: "🎬", color: "#ff9f0a" },
-    greeter: { name: pickLocaleText(locale, { "zh-CN": "迎客龙虾", "zh-TW": "迎客龍蝦", en: "Greeter Lobster", ja: "接客ロブスター" }), emoji: "💬", color: "#00c7be" },
+    orchestrator: { name: pickLocaleText(locale, { "zh-CN": "鹦鹉螺", "zh-TW": "鸚鵡螺", en: "Nautilus", ja: "オウムガイ" }), emoji: "🦞", color: "var(--accent)" },
+    explorer: { name: pickLocaleText(locale, { "zh-CN": "探海鲸鱼", "zh-TW": "探海鯨魚", en: "Scout Whale", ja: "探海クジラ" }), emoji: "🔎", color: "#38bdf8" },
+    writer: { name: pickLocaleText(locale, { "zh-CN": "星海章鱼", "zh-TW": "星海章魚", en: "Starsea Octopus", ja: "星海タコ" }), emoji: "✍️", color: "#34c759" },
+    designer: { name: pickLocaleText(locale, { "zh-CN": "珊瑚水母", "zh-TW": "珊瑚水母", en: "Coral Jellyfish", ja: "サンゴクラゲ" }), emoji: "🎨", color: "#ff5c8a" },
+    performer: { name: pickLocaleText(locale, { "zh-CN": "逐浪海豚", "zh-TW": "逐浪海豚", en: "Surf Dolphin", ja: "波乗りイルカ" }), emoji: "🎬", color: "#ff9f0a" },
+    greeter: { name: pickLocaleText(locale, { "zh-CN": "招潮蟹", "zh-TW": "招潮蟹", en: "Fiddler Crab", ja: "シオマネキ" }), emoji: "💬", color: "#00c7be" },
   };
 
   const roleLabel: Record<string, string> = {
@@ -2551,9 +2469,51 @@ function MeetingTab() {
         })}</div>}
       </div>
 
-      <div className="meeting-shell__composer">
+      {attachments.length > 0 ? (
+        <div className="attachment-list meeting-shell__attachments">
+          {attachments.map(({ id, file, kind }) => (
+            <div key={id} className="attachment-chip">
+              <span className="attachment-chip__type">{getMeetingAttachmentBadge(kind)}</span>
+              <span className="attachment-chip__name">{file.name}</span>
+              <span className="attachment-chip__size">{formatMeetingFileSize(file.size)}</span>
+              <button
+                type="button"
+                className="attachment-chip__remove"
+                onClick={() => removeAttachment(id)}
+                disabled={meetingActive}
+              >
+                ×
+              </button>
+            </div>
+          ))}
+        </div>
+      ) : null}
+
+      <div className="meeting-shell__composer command-input__row">
         <input
-          className="input"
+          ref={fileInputRef}
+          type="file"
+          accept={MEETING_ACCEPTED_FILE_TYPES}
+          multiple
+          onChange={handleFileChange}
+          style={{ display: "none" }}
+        />
+        <button
+          type="button"
+          className="command-input__upload command-input__send2"
+          onClick={openFilePicker}
+          disabled={meetingActive}
+          title={pickLocaleText(locale, {
+            "zh-CN": "添加附件",
+            "zh-TW": "新增附件",
+            en: "Add attachment",
+            ja: "添付を追加",
+          })}
+        >
+          +
+        </button>
+        <input
+          className="input meeting-shell__topic-input"
           placeholder={pickLocaleText(locale, {
             "zh-CN": "输入会议议题，例如：下一版产品首页该怎么改？",
             "zh-TW": "輸入會議議題，例如：下一版產品首頁該怎麼改？",
@@ -2567,7 +2527,7 @@ function MeetingTab() {
         />
         <button
           type="button"
-          className="btn-primary"
+          className={`meeting-shell__start-btn ${!meetingActive && topic.trim() && wsStatus === "connected" ? "is-ready" : ""}`}
           onClick={startMeeting}
           disabled={meetingActive || !topic.trim() || wsStatus !== "connected"}
         >
@@ -2575,6 +2535,21 @@ function MeetingTab() {
             ? pickLocaleText(locale, { "zh-CN": "讨论中...", "zh-TW": "討論中...", en: "Discussing...", ja: "議論中..." })
             : pickLocaleText(locale, { "zh-CN": "开始会议", "zh-TW": "開始會議", en: "Start Meeting", ja: "会議を開始" })}
         </button>
+      </div>
+      <div className="meeting-shell__composer-hint">
+        {attachments.length > 0
+          ? pickLocaleText(locale, {
+              "zh-CN": `已准备 ${attachments.length} 个附件，发起会议后会连同文件名一起带入讨论上下文。`,
+              "zh-TW": `已準備 ${attachments.length} 個附件，發起會議後會連同檔名一起帶入討論上下文。`,
+              en: `${attachments.length} attachment(s) ready. The file names will be injected into the meeting context when you start.`,
+              ja: `${attachments.length} 件の添付を準備済みです。会議開始時にファイル名も議論コンテキストへ渡されます。`,
+            })
+          : pickLocaleText(locale, {
+              "zh-CN": "可像对话区一样添加附件，把文档、图片或素材文件一起带进会议讨论。",
+              "zh-TW": "可像對話區一樣新增附件，把文件、圖片或素材一起帶進會議討論。",
+              en: "Add attachments like chat to bring docs, images, or asset files into the meeting context.",
+              ja: "チャットと同じように添付を追加して、文書・画像・素材を会議コンテキストに含められます。",
+            })}
       </div>
     </section>
   );

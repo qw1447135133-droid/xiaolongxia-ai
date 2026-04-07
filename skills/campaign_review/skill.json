@@ -1,0 +1,45 @@
+{
+  "id": "campaign_review",
+  "order": 310,
+  "category": "content",
+  "sourceType": "local",
+  "sourceLabel": "Local Product Skill",
+  "accent": "#e11d48",
+  "icon": "trend",
+  "recommendedAgents": ["writer", "explorer", "performer"],
+  "tags": ["campaign", "review", "content", "analysis"],
+  "locales": {
+    "zh-CN": {
+      "name": "活动复盘",
+      "short": "复盘传播、执行、反馈与改进方向。",
+      "description": "用于汇总一轮活动或内容发布后的结果、问题、反馈和下次优化方向，帮助形成稳定运营闭环。",
+      "dispatch": "当任务涉及活动复盘、内容表现分析、渠道反馈汇总或下轮优化建议时自动命中。",
+      "typicalTasks": "活动复盘、内容表现总结、渠道反馈整理、下轮优化建议。",
+      "outputs": "复盘摘要、问题清单、亮点总结和优化动作。"
+    },
+    "zh-TW": {
+      "name": "活動復盤",
+      "short": "復盤傳播、執行、回饋與改進方向。",
+      "description": "用於彙總一輪活動或內容發佈後的結果、問題、回饋和下次優化方向，幫助形成穩定營運閉環。",
+      "dispatch": "當任務涉及活動復盤、內容表現分析、渠道回饋彙總或下一輪優化建議時自動命中。",
+      "typicalTasks": "活動復盤、內容表現總結、渠道回饋整理、下一輪優化建議。",
+      "outputs": "復盤摘要、問題清單、亮點總結與優化動作。"
+    },
+    "en": {
+      "name": "Campaign Review",
+      "short": "Review distribution, execution, feedback, and improvements.",
+      "description": "Summarizes campaign or content-release outcomes, issues, feedback, and the next round of improvements so operations can keep learning.",
+      "dispatch": "Auto-selected for campaign retros, content performance review, channel feedback aggregation, or next-cycle optimization work.",
+      "typicalTasks": "Campaign retros, content review, channel feedback summaries, and next-step optimization proposals.",
+      "outputs": "Review summaries, issue lists, highlights, and improvement actions."
+    },
+    "ja": {
+      "name": "施策レビュー",
+      "short": "配信、実行、反応、改善方向を振り返る。",
+      "description": "施策やコンテンツ配信の結果、問題、反応、次回改善方向を整理し、運用ループを強くします。",
+      "dispatch": "施策振り返り、コンテンツ評価、チャネル反応整理、次回改善提案が必要なとき自動で使われます。",
+      "typicalTasks": "施策レビュー、内容評価、反応整理、次回改善提案。",
+      "outputs": "振り返り要約、課題一覧、良かった点、改善アクション。"
+    }
+  }
+}

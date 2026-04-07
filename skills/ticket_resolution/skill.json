@@ -1,0 +1,45 @@
+{
+  "id": "ticket_resolution",
+  "order": 190,
+  "category": "service",
+  "sourceType": "local",
+  "sourceLabel": "Local Product Skill",
+  "accent": "#2563eb",
+  "icon": "headset",
+  "recommendedAgents": ["greeter", "orchestrator", "writer"],
+  "tags": ["ticket", "service", "resolution", "support"],
+  "locales": {
+    "zh-CN": {
+      "name": "工单处置",
+      "short": "诊断工单、安排动作并推动结案。",
+      "description": "用于识别工单优先级、整理处理步骤、生成回复建议并推进到解决或转派状态。",
+      "dispatch": "当任务涉及工单分析、服务恢复、问题解释、结案说明或转派判断时自动命中。",
+      "typicalTasks": "问题归类、处理步骤建议、客户更新、结案记录。",
+      "outputs": "工单摘要、处置方案、回复文案和结案说明。"
+    },
+    "zh-TW": {
+      "name": "工單處置",
+      "short": "診斷工單、安排動作並推動結案。",
+      "description": "用於識別工單優先級、整理處理步驟、生成回覆建議並推進到解決或轉派狀態。",
+      "dispatch": "當任務涉及工單分析、服務恢復、問題解釋、結案說明或轉派判斷時自動命中。",
+      "typicalTasks": "問題分類、處理步驟建議、客戶更新、結案記錄。",
+      "outputs": "工單摘要、處置方案、回覆文案與結案說明。"
+    },
+    "en": {
+      "name": "Ticket Resolution",
+      "short": "Diagnose tickets, plan actions, and drive closure.",
+      "description": "Handles ticket priority, resolution steps, customer-facing updates, and closeout logic so service work is easier to supervise.",
+      "dispatch": "Auto-selected when the task is about ticket diagnosis, service recovery, issue explanation, closeout messaging, or reassignment judgment.",
+      "typicalTasks": "Issue categorization, resolution steps, customer updates, and closure notes.",
+      "outputs": "Ticket summaries, action plans, reply copy, and closeout records."
+    },
+    "ja": {
+      "name": "チケット対応",
+      "short": "チケット診断、対処計画、クローズ推進。",
+      "description": "チケット優先度、解決ステップ、顧客向け更新、クローズ判断を整理し、監督しやすい対応フローへ整えます。",
+      "dispatch": "チケット分析、復旧対応、問題説明、クローズ文面、再割当判断が必要なとき自動で使われます。",
+      "typicalTasks": "問題分類、対処手順、顧客更新、クローズ記録。",
+      "outputs": "チケット要約、対処計画、返信文面、クローズ記録。"
+    }
+  }
+}

@@ -1,0 +1,45 @@
+{
+  "id": "screenshot",
+  "order": 50,
+  "category": "visual",
+  "sourceType": "built-in",
+  "sourceLabel": "Built-in Skill",
+  "accent": "#8b5cf6",
+  "icon": "camera",
+  "recommendedAgents": ["explorer", "designer", "orchestrator"],
+  "tags": ["screenshot", "evidence", "desktop", "qa"],
+  "locales": {
+    "zh-CN": {
+      "name": "截图处理",
+      "short": "界面留档、证据采集与问题说明。",
+      "description": "用于保存界面证据、定位异常、记录桌面接管结果和补充操作说明。",
+      "dispatch": "当任务需要看到当前界面、保留证据或验证桌面步骤时自动优先命中。",
+      "typicalTasks": "失败留档、操作证明、界面反馈、步骤说明。",
+      "outputs": "截图、证据摘要、问题定位说明和步骤记录。"
+    },
+    "zh-TW": {
+      "name": "截圖處理",
+      "short": "介面留檔、證據採集與問題說明。",
+      "description": "用於保存介面證據、定位異常、記錄桌面接管結果與補充操作說明。",
+      "dispatch": "當任務需要查看目前介面、保留證據或驗證桌面步驟時自動優先命中。",
+      "typicalTasks": "失敗留檔、操作證明、介面回饋、步驟說明。",
+      "outputs": "截圖、證據摘要、問題定位說明與步驟記錄。"
+    },
+    "en": {
+      "name": "Screenshots",
+      "short": "UI evidence, capture, and issue explanation.",
+      "description": "Captures screen evidence for UI review, desktop automation verification, and issue explanation.",
+      "dispatch": "Auto-selected when the task needs current-screen visibility, action evidence, or desktop verification.",
+      "typicalTasks": "Failure capture, action proof, UI feedback, and step-by-step evidence.",
+      "outputs": "Screenshots, evidence summaries, issue notes, and action records."
+    },
+    "ja": {
+      "name": "スクリーンショット",
+      "short": "画面記録、証拠採取、状況説明。",
+      "description": "UI 確認、デスクトップ自動化の検証、失敗証跡の保存に使う画面証拠収集スキルです。",
+      "dispatch": "現在画面の確認、操作証拠、デスクトップ検証が必要なとき自動で使われます。",
+      "typicalTasks": "失敗記録、操作証跡、UI フィードバック、手順説明。",
+      "outputs": "スクリーンショット、証拠要約、問題説明、操作記録。"
+    }
+  }
+}

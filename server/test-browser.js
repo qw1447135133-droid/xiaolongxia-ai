@@ -28,7 +28,7 @@ function warn(msg) { log(`${YELLOW}!`, msg); }
 
 async function runTest() {
   console.log("\n========================================");
-  console.log("  虾总管浏览器自动化功能测试");
+  console.log("  鹦鹉螺浏览器自动化功能测试");
   console.log("========================================\n");
 
   const tools = getAgentTools("orchestrator");

@@ -1,0 +1,45 @@
+{
+  "id": "desktop_takeover",
+  "order": 210,
+  "category": "automation",
+  "sourceType": "local",
+  "sourceLabel": "Local Product Skill",
+  "accent": "#0ea5e9",
+  "icon": "desktop",
+  "recommendedAgents": ["explorer", "orchestrator", "greeter"],
+  "tags": ["desktop", "takeover", "mouse", "keyboard"],
+  "locales": {
+    "zh-CN": {
+      "name": "桌面接管",
+      "short": "截图、定位、点击与人工续跑。",
+      "description": "用于在代码接口不够时切换到桌面交互模式，通过截图识别、鼠标键盘操作和人工接管实现任务续跑。",
+      "dispatch": "当任务涉及桌面应用、鼠标键盘模拟、截图定位、验证码边界或人工接管恢复时自动命中。",
+      "typicalTasks": "桌面端点击、界面定位、失败重试、人工接管后续跑。",
+      "outputs": "桌面动作记录、截图证据、定位结果和恢复建议。"
+    },
+    "zh-TW": {
+      "name": "桌面接管",
+      "short": "截圖、定位、點擊與人工續跑。",
+      "description": "用於在程式介面不足時切換到桌面互動模式，透過截圖識別、滑鼠鍵盤操作與人工接管實現任務續跑。",
+      "dispatch": "當任務涉及桌面應用、滑鼠鍵盤模擬、截圖定位、驗證碼邊界或人工接管恢復時自動命中。",
+      "typicalTasks": "桌面端點擊、介面定位、失敗重試、人工接管後續跑。",
+      "outputs": "桌面動作記錄、截圖證據、定位結果與恢復建議。"
+    },
+    "en": {
+      "name": "Desktop Takeover",
+      "short": "Screens, targeting, clicks, and human-assisted resume.",
+      "description": "Switches into desktop interaction mode when code APIs are insufficient, using screenshots, targeting, mouse/keyboard actions, and human-assisted resume.",
+      "dispatch": "Auto-selected for desktop apps, mouse-keyboard simulation, screenshot targeting, captcha boundaries, or manual takeover recovery.",
+      "typicalTasks": "Desktop clicks, UI targeting, retry loops, and post-takeover continuation.",
+      "outputs": "Desktop action logs, screenshot evidence, targeting results, and recovery suggestions."
+    },
+    "ja": {
+      "name": "デスクトップ引き継ぎ",
+      "short": "画面認識、位置決め、クリック、人手再開。",
+      "description": "コード API では足りないときにデスクトップ操作モードへ切り替え、画面認識、位置決め、マウスキー操作、人手再開でタスクを継続します。",
+      "dispatch": "デスクトップアプリ、マウスキーボード操作、画面位置決め、認証境界、人手引き継ぎ復旧が必要なとき自動で使われます。",
+      "typicalTasks": "デスクトップクリック、UI 位置決め、失敗再試行、引き継ぎ後の再開。",
+      "outputs": "操作ログ、画面証跡、位置決め結果、復旧提案。"
+    }
+  }
+}

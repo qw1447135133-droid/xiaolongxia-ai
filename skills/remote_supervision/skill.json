@@ -1,0 +1,45 @@
+{
+  "id": "remote_supervision",
+  "order": 250,
+  "category": "governance",
+  "sourceType": "local",
+  "sourceLabel": "Local Product Skill",
+  "accent": "#f59e0b",
+  "icon": "radar",
+  "recommendedAgents": ["orchestrator", "greeter", "performer"],
+  "tags": ["remote", "supervision", "ops", "monitoring"],
+  "locales": {
+    "zh-CN": {
+      "name": "远程监督",
+      "short": "值守看板、缺口判断与人工决策。",
+      "description": "用于整理远程值守面板上的待办、风险、接管和恢复入口，让人工监督能快速做出决策。",
+      "dispatch": "当任务涉及远程值守、异常提醒、人工监督、批量待办判断或值守看板整理时自动命中。",
+      "typicalTasks": "人工决策、队列收口、待办优先级、监督摘要。",
+      "outputs": "值守摘要、优先级判断、接管建议和待办清单。"
+    },
+    "zh-TW": {
+      "name": "遠程監督",
+      "short": "值守看板、缺口判斷與人工決策。",
+      "description": "用於整理遠程值守面板上的待辦、風險、接管與恢復入口，讓人工監督能快速做出決策。",
+      "dispatch": "當任務涉及遠程值守、異常提醒、人工監督、批量待辦判斷或值守看板整理時自動命中。",
+      "typicalTasks": "人工決策、隊列收口、待辦優先級、監督摘要。",
+      "outputs": "值守摘要、優先級判斷、接管建議與待辦清單。"
+    },
+    "en": {
+      "name": "Remote Supervision",
+      "short": "Supervision boards, gap checks, and human decisions.",
+      "description": "Organizes remote-ops backlogs, risks, takeover needs, and recovery entry points so human supervisors can decide quickly.",
+      "dispatch": "Auto-selected for remote supervision, alerts, human oversight, bulk queue judgment, or supervision dashboard cleanup.",
+      "typicalTasks": "Human decisions, queue cleanup, backlog prioritization, and supervision summaries.",
+      "outputs": "Ops summaries, priority decisions, takeover suggestions, and action lists."
+    },
+    "ja": {
+      "name": "遠隔監督",
+      "short": "監督ボード、ギャップ判断、人手決定。",
+      "description": "遠隔運用パネル上の backlog、リスク、引き継ぎ、復旧入口を整理し、人手監督がすばやく判断できるようにします。",
+      "dispatch": "遠隔監督、異常通知、人手監視、キュー一括判断、監督ボード整理が必要なとき自動で使われます。",
+      "typicalTasks": "人手判断、キュー整理、優先度付け、監督要約。",
+      "outputs": "運用要約、優先度判断、引き継ぎ提案、作業一覧。"
+    }
+  }
+}

@@ -1,0 +1,45 @@
+{
+  "id": "customer_research",
+  "order": 280,
+  "category": "research",
+  "sourceType": "local",
+  "sourceLabel": "Local Product Skill",
+  "accent": "#10b981",
+  "icon": "compass",
+  "recommendedAgents": ["explorer", "writer", "greeter"],
+  "tags": ["customer", "research", "background", "insight"],
+  "locales": {
+    "zh-CN": {
+      "name": "客户调研",
+      "short": "调研客户背景、关注点与合作切入点。",
+      "description": "用于快速理解客户所在行业、业务重点、近期动态和潜在诉求，帮助客服与销售提升应对质量。",
+      "dispatch": "当任务涉及客户背景研究、访前准备、客户分析或合作切入点梳理时自动命中。",
+      "typicalTasks": "客户背景调研、访谈准备、合作切入点整理、客户摘要。",
+      "outputs": "客户摘要、关键关注点、背景资料和切入建议。"
+    },
+    "zh-TW": {
+      "name": "客戶調研",
+      "short": "調研客戶背景、關注點與合作切入點。",
+      "description": "用於快速理解客戶所在產業、業務重點、近期動態與潛在訴求，幫助客服與銷售提升應對品質。",
+      "dispatch": "當任務涉及客戶背景研究、會前準備、客戶分析或合作切入點整理時自動命中。",
+      "typicalTasks": "客戶背景調研、訪談準備、合作切入點整理、客戶摘要。",
+      "outputs": "客戶摘要、關鍵關注點、背景資料與切入建議。"
+    },
+    "en": {
+      "name": "Customer Research",
+      "short": "Study customer background, priorities, and entry points.",
+      "description": "Quickly builds a usable picture of the customer's industry, business priorities, recent activity, and likely needs for better support or sales handling.",
+      "dispatch": "Auto-selected when the task involves customer research, prep before a meeting, account analysis, or partnership entry-point planning.",
+      "typicalTasks": "Customer background research, briefing prep, entry-point analysis, and customer summaries.",
+      "outputs": "Customer briefs, priority signals, background notes, and suggested entry points."
+    },
+    "ja": {
+      "name": "顧客調査",
+      "short": "顧客背景、関心、提案切り口を把握。",
+      "description": "顧客の業界、重点業務、最近の動き、潜在ニーズを素早く整理し、客服や営業の対応品質を上げます。",
+      "dispatch": "顧客背景調査、打合せ前準備、アカウント分析、提案切り口整理が必要なとき自動で使われます。",
+      "typicalTasks": "背景調査、事前ブリーフ、切り口整理、顧客要約。",
+      "outputs": "顧客ブリーフ、重要関心、背景メモ、提案切り口。"
+    }
+  }
+}

@@ -3,12 +3,12 @@ import "@/styles/globals.css";
 import { ELECTRON_RUNTIME_QUERY_KEYS } from "@/lib/electron-runtime";
 
 export const metadata: Metadata = {
-  title: "🦞 小龙虾 AI 团队",
+  title: "STARCRAW",
   description: "跨境电商多 Agent 数字员工公司",
   icons: {
-    icon: "/favicon.svg",
-    shortcut: "/favicon.svg",
-    apple: "/favicon.svg",
+    icon: "/brand-mark.png",
+    shortcut: "/brand-mark.png",
+    apple: "/brand-mark.png",
   },
 };
 

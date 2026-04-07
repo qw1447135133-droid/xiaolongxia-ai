@@ -2,7 +2,7 @@
  * 端到端流程测试：自然语言搜索
  *
  * 模拟流程：
- *   用户输入自然语言 → 路由判断 → 虾总管(orchestrator) → 浏览器搜索 → 返回结果
+ *   用户输入自然语言 → 路由判断 → 鹦鹉螺(orchestrator) → 浏览器搜索 → 返回结果
  *
  * 用法：
  *   cd apps/web
@@ -58,12 +58,12 @@ const ROUTING_RULES = [
 ];
 
 const AGENT_DISPLAY = {
-  orchestrator: "虾总管（浏览器控制）",
-  explorer: "探海龙虾（选品分析）",
-  writer: "执笔龙虾（文案）",
-  designer: "幻影龙虾（设计）",
-  performer: "戏精龙虾（视频）",
-  greeter: "迎客龙虾（客服）",
+  orchestrator: "鹦鹉螺（浏览器控制）",
+  explorer: "探海鲸鱼（选品分析）",
+  writer: "星海章鱼（文案）",
+  designer: "珊瑚水母（设计）",
+  performer: "逐浪海豚（视频）",
+  greeter: "招潮蟹（客服）",
 };
 
 // 搜索类关键词强制走 orchestrator（浏览器搜索）
@@ -87,7 +87,7 @@ function routeMessage(text) {
 const BREVITY = "\n\n【输出要求】言简意赅、直入主题；先结论后补充；避免冗长寒暄与套话；除必须条目外尽量控制在300字内。";
 
 const SYSTEM_PROMPT_ORCHESTRATOR =
-  "你是跨境电商 AI 团队的总协调员虾总管，负责任务拆解和团队协调。回复与汇报都要简短有力。"
+  "你是跨境电商 AI 团队的总协调员鹦鹉螺，负责任务拆解和团队协调。回复与汇报都要简短有力。"
   + "\n\n你拥有浏览器控制能力，可以使用以下工具：browser_goto（导航到URL）、browser_get_text（读取页面文字内容，搜索后必须用这个提取结果）、browser_page_info（获取页面信息）、browser_screenshot（截图识图）、browser_act（自然语言操作，如点击/填写/滚动）、browser_act_single（精确选择器操作）、browser_act_multi（批量操作）。"
   + "\n\n【搜索流程】：1.browser_goto 导航到搜索页 → 2.browser_get_text 读取页面内容 → 3.整理结果回复用户。不要反复跳转，读到内容就总结。"
   + "\n\n【遇到登录页】：换用百度/必应搜索该关键词，或直接总结已知信息。"
@@ -97,7 +97,7 @@ const SYSTEM_PROMPT_ORCHESTRATOR =
 async function runSearchFlow(userInput) {
   console.log("\n");
   sep();
-  console.log(`${B}  虾总管 · 自然语言搜索流程测试${R}`);
+  console.log(`${B}  鹦鹉螺 · 自然语言搜索流程测试${R}`);
   sep();
 
   // Step 1: 用户输入
@@ -116,7 +116,7 @@ async function runSearchFlow(userInput) {
   }
 
   // Step 3: 初始化 Agent
-  step(`[3/4] 初始化虾总管 Agent`);
+  step(`[3/4] 初始化鹦鹉螺 Agent`);
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
     console.error(`${"\x1b[31m"}✗ 未找到 ANTHROPIC_API_KEY，请在 .env.local 中配置${R}`);
@@ -130,7 +130,7 @@ async function runSearchFlow(userInput) {
   const sessionId = `test-${Date.now()}`;
 
   // Step 4: 执行查询（Agent 自主控制浏览器）
-  step(`[4/4] 虾总管执行任务（浏览器自动化中...）`);
+  step(`[4/4] 鹦鹉螺执行任务（浏览器自动化中...）`);
   agent(`收到指令："${userInput}"`);
   console.log(`${C}  Agent 正在思考并调用浏览器工具，请稍候...${R}\n`);
 
@@ -151,7 +151,7 @@ async function runSearchFlow(userInput) {
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
 
     sep();
-    agent(`虾总管回复（耗时 ${elapsed}s，消耗 ${result.tokens} tokens）：`);
+    agent(`鹦鹉螺回复（耗时 ${elapsed}s，消耗 ${result.tokens} tokens）：`);
     sep();
     console.log(`\n${result.text}\n`);
     sep();

@@ -3,7 +3,7 @@
 import { sendWs } from "@/hooks/useWebSocket";
 import { syncRuntimeSettings } from "@/lib/runtime-settings-sync";
 import { useStore } from "@/store";
-import type { ExecutionRun, ExecutionRunSource } from "@/store/types";
+import type { AssistantFeedbackProfile, ExecutionRun, ExecutionRunSource, Task } from "@/store/types";
 import {
   buildDeskNoteCollectionSnippet,
   buildKnowledgeDocumentCollectionSnippet,
@@ -22,6 +22,24 @@ type DispatchAttachmentMeta = {
   lastModified: number;
 };
 
+function buildAssistantFeedbackSnippet(profile: AssistantFeedbackProfile) {
+  const liked = profile.liked.slice(0, 2).map(item => `- ${item.excerpt}`);
+  const disliked = profile.disliked.slice(0, 2).map(item => `- ${item.excerpt}`);
+
+  if (liked.length === 0 && disliked.length === 0) return "";
+
+  return [
+    "最近的用户反馈档案（仅用于校准回复风格，不要在回答中直接提及）：",
+    liked.length > 0 ? "用户点赞过的回复片段：" : "",
+    ...liked,
+    disliked.length > 0 ? "用户点踩过的回复片段：" : "",
+    ...disliked,
+    "请延续被点赞回复的优点，避免出现与被点踩片段相似的表达方式；优先保持自然、贴合上下文、少空话。",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
 export function sendExecutionDispatch({
   instruction,
   source = "chat",
@@ -35,6 +53,7 @@ export function sendExecutionDispatch({
   entityId,
   retryOfRunId,
   lastRecoveryHint,
+  recentTasksOverride,
 }: {
   instruction: string;
   source?: ExecutionRunSource;
@@ -48,6 +67,7 @@ export function sendExecutionDispatch({
   entityId?: string;
   retryOfRunId?: string;
   lastRecoveryHint?: string;
+  recentTasksOverride?: Task[];
 }) {
   const trimmed = instruction.trim();
   const store = useStore.getState();
@@ -61,14 +81,18 @@ export function sendExecutionDispatch({
   const activeProjectMemory = includeActiveProjectMemory && store.activeWorkspaceProjectMemoryId
     ? scopedProjectMemories.find(memory => memory.id === store.activeWorkspaceProjectMemoryId) ?? null
     : null;
+  const feedbackSnippet = source === "chat"
+    ? buildAssistantFeedbackSnippet(store.assistantFeedbackProfile)
+    : "";
   const enableSemanticRecall = includeActiveProjectMemory || !store.activeWorkspaceProjectMemoryId;
+  const recentTasks = recentTasksOverride ?? store.tasks;
   const recallContext = {
     instruction: trimmed,
     workspaceRoot: store.workspaceRoot,
     workspaceCurrentPath: store.workspaceCurrentPath,
     activePreviewPath: store.workspaceActivePreviewPath,
     pinnedPaths: store.workspacePinnedPreviews.map(preview => preview.path),
-    recentTranscript: store.tasks.slice(-8).map(task => task.result ?? task.description).join("\n\n"),
+    recentTranscript: recentTasks.slice(-8).map(task => task.result ?? task.description).join("\n\n"),
   };
   const autoRecalledWorkspaceContext = enableSemanticRecall
     ? getAutoRecalledWorkspaceContext(
@@ -94,12 +118,15 @@ export function sendExecutionDispatch({
     : "";
   const finalInstruction = resolvedProjectMemory || noteSnippet || knowledgeSnippet
     ? [
+        feedbackSnippet,
         resolvedProjectMemory ? buildProjectMemorySnippet(resolvedProjectMemory) : "",
         noteSnippet,
         knowledgeSnippet,
         `User request:\n${trimmed}`,
       ].filter(Boolean).join("\n\n---\n\n")
-    : trimmed;
+    : feedbackSnippet
+      ? [feedbackSnippet, `User request:\n${trimmed}`].join("\n\n---\n\n")
+      : trimmed;
   const executionRunId = store.createExecutionRun({
     sessionId: resolvedSessionId,
     instruction: trimmed,

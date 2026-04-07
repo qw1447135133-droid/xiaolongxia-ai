@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, type CSSProperties } from "react";
+import { useMemo, type CSSProperties, type ReactNode } from "react";
 import { retryExecutionDispatch, sendExecutionDispatch } from "@/lib/execution-dispatch";
 import { pickLocaleText } from "@/lib/ui-locale";
 import { useStore } from "@/store";
@@ -12,6 +12,7 @@ import {
   getSessionProjectScope,
 } from "@/lib/project-context";
 import { AGENT_META, type ExecutionRecoveryState, type ExecutionRun, type UiLocale } from "@/store/types";
+import { AgentIcon } from "./AgentIcon";
 import { timeAgo } from "@/lib/utils";
 import { runExecutionVerification } from "@/lib/execution-verification";
 import type { ControlCenterSectionId } from "@/store/types";
@@ -119,8 +120,8 @@ export function ExecutionCenter({ compact = false }: { compact?: boolean }) {
     setTab("tasks");
   };
 
-  const retryRun = (run: ExecutionRun) => {
-    const { ok, executionRunId } = retryExecutionDispatch(run, {
+  const retryRun = async (run: ExecutionRun) => {
+    const { ok, executionRunId } = await retryExecutionDispatch(run, {
       includeUserMessage: true,
       includeActiveProjectMemory: true,
       taskDescription: pickLocaleText(locale, {
@@ -146,14 +147,14 @@ export function ExecutionCenter({ compact = false }: { compact?: boolean }) {
     handoffToChat(run);
   };
 
-  const continueAfterManualRecovery = (run: ExecutionRun) => {
+  const continueAfterManualRecovery = async (run: ExecutionRun) => {
     if (desktopInputSession.executionRunId !== run.id || !desktopInputSession.resumeInstruction) {
       handoffToChat(run);
       return;
     }
 
     setActiveChatSession(run.sessionId);
-    const { ok, executionRunId } = sendExecutionDispatch({
+    const { ok, executionRunId } = await sendExecutionDispatch({
       instruction: desktopInputSession.resumeInstruction,
       source: "chat",
       includeUserMessage: false,
@@ -426,7 +427,15 @@ export function ExecutionCenter({ compact = false }: { compact?: boolean }) {
                   <TraceStat label={pickLocaleText(locale, { "zh-CN": "会话", "zh-TW": "會話", en: "Session", ja: "セッション" })} value={run.sessionId.slice(0, 8)} />
                   <TraceStat label={pickLocaleText(locale, { "zh-CN": "任务", "zh-TW": "任務", en: "Tasks", ja: "タスク" })} value={`${run.completedTasks}/${run.totalTasks || 0}`} />
                   <TraceStat label={pickLocaleText(locale, { "zh-CN": "失败", "zh-TW": "失敗", en: "Failed", ja: "失敗" })} value={String(run.failedTasks)} />
-                  <TraceStat label={pickLocaleText(locale, { "zh-CN": "当前", "zh-TW": "目前", en: "Current", ja: "現在" })} value={currentAgent ? `${currentAgent.emoji} ${currentAgent.name}` : pickLocaleText(locale, { "zh-CN": "待分配", "zh-TW": "待分配", en: "Unassigned", ja: "未割当" })} />
+                  <TraceStat
+                    label={pickLocaleText(locale, { "zh-CN": "当前", "zh-TW": "目前", en: "Current", ja: "現在" })}
+                    value={currentAgent ? (
+                      <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                        <AgentIcon agentId={run.currentAgentId!} size={14} />
+                        <span>{currentAgent.name}</span>
+                      </span>
+                    ) : pickLocaleText(locale, { "zh-CN": "待分配", "zh-TW": "待分配", en: "Unassigned", ja: "未割当" })}
+                  />
                 </div>
 
                 {executionEntityLabel ? (
@@ -616,7 +625,7 @@ export function ExecutionCenter({ compact = false }: { compact?: boolean }) {
                             flexShrink: 0,
                           }}
                         >
-                          {eventAgent ? eventAgent.emoji : "•"}
+                          {eventAgent && event.agentId ? <AgentIcon agentId={event.agentId} size={16} /> : "•"}
                         </div>
                         <div style={{ minWidth: 0, flex: 1 }}>
                           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
@@ -695,7 +704,7 @@ function MetricCard({ label, value, accent }: { label: string; value: string | n
   );
 }
 
-function TraceStat({ label, value }: { label: string; value: string }) {
+function TraceStat({ label, value }: { label: string; value: ReactNode }) {
   return (
     <div
       style={{

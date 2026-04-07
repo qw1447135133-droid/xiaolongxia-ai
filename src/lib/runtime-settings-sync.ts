@@ -10,6 +10,7 @@ export async function syncRuntimeSettings() {
     agentConfigs,
     platformConfigs,
     userNickname,
+    semanticMemoryConfig,
     desktopProgramSettings,
     hermesDispatchSettings,
   } = useStore.getState();
@@ -19,6 +20,7 @@ export async function syncRuntimeSettings() {
     agentConfigs,
     platformConfigs,
     userNickname,
+    semanticMemoryConfig,
     desktopProgramSettings,
     hermesDispatchSettings,
   };
@@ -40,4 +42,3 @@ export async function syncRuntimeSettings() {
     return false;
   }
 }
-

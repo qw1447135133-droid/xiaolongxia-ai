@@ -5,7 +5,11 @@
  * 浏览器工具（browser_*）仅对 orchestrator 开放。
  */
 
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+
 import { getBrowser, getPage } from "./browser-manager.js";
+import { actDesktopCdpApp, openDesktopCdpApp, snapshotDesktopCdpApp } from "./cdp-app-manager.js";
 import { requestDesktopInputControl, requestDesktopInstalledApplications, requestDesktopLaunch, requestDesktopScreenshot } from "./desktop-bridge.js";
 
 // ---------------------------------------------------------------------------
@@ -84,6 +88,8 @@ function buildDesktopSearchAliases(value) {
     ["vscode", "vs code", "visual studio code", "code.exe"],
     ["chrome", "google chrome", "chrome.exe"],
     ["edge", "microsoft edge", "msedge.exe"],
+    ["firefox", "mozilla firefox", "firefox.exe"],
+    ["browser", "浏览器"],
     ["notepad", "notepad.exe", "记事本"],
   ];
 
@@ -96,6 +102,161 @@ function buildDesktopSearchAliases(value) {
   }
 
   return [...aliases];
+}
+
+const EXTERNAL_BROWSER_PROFILES = [
+  {
+    id: "chrome",
+    label: "Chrome",
+    aliases: buildDesktopSearchAliases("chrome"),
+    knownRelativePaths: [
+      ["Google", "Chrome", "Application", "chrome.exe"],
+    ],
+  },
+  {
+    id: "edge",
+    label: "Edge",
+    aliases: buildDesktopSearchAliases("edge"),
+    knownRelativePaths: [
+      ["Microsoft", "Edge", "Application", "msedge.exe"],
+    ],
+  },
+  {
+    id: "firefox",
+    label: "Firefox",
+    aliases: buildDesktopSearchAliases("firefox"),
+    knownRelativePaths: [
+      ["Mozilla Firefox", "firefox.exe"],
+    ],
+  },
+];
+
+function normalizeExternalBrowserPreference(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (!normalized || normalized === "auto") return "auto";
+  if (["default", "system", "system-default", "system_browser", "default-browser", "系统", "系统默认", "默认浏览器"].includes(normalized)) {
+    return "default";
+  }
+  if (["chrome", "google chrome", "chrome.exe"].includes(normalized)) return "chrome";
+  if (["edge", "microsoft edge", "msedge.exe"].includes(normalized)) return "edge";
+  if (["firefox", "mozilla firefox", "firefox.exe"].includes(normalized)) return "firefox";
+  return "auto";
+}
+
+function normalizeExternalBrowserUrl(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  if (/^[a-z][a-z0-9+.-]*:\/\//iu.test(raw)) return raw;
+  if (/^[\w.-]+\.[a-z]{2,}(?:[/:?#]|$)/iu.test(raw)) {
+    return `https://${raw}`;
+  }
+  return raw;
+}
+
+function getExternalBrowserProfiles(preference = "auto") {
+  if (preference === "default") return [];
+  if (preference === "chrome" || preference === "edge" || preference === "firefox") {
+    return EXTERNAL_BROWSER_PROFILES.filter(profile => profile.id === preference);
+  }
+  return EXTERNAL_BROWSER_PROFILES;
+}
+
+function buildInstalledAppHaystack(item) {
+  return [
+    item?.name,
+    item?.target,
+    item?.location,
+  ]
+    .filter(Boolean)
+    .map(value => String(value).toLowerCase())
+    .join(" ");
+}
+
+function findInstalledBrowserCandidate(installedApps, preference = "auto") {
+  const profiles = getExternalBrowserProfiles(preference);
+  for (const profile of profiles) {
+    const matchedApp = installedApps.find(item => profile.aliases.some(alias => buildInstalledAppHaystack(item).includes(alias)));
+    if (matchedApp) {
+      return {
+        profile,
+        target: matchedApp.target,
+        matchedAppName: matchedApp.name,
+        resolution: "installed-app",
+        source: matchedApp.source,
+      };
+    }
+  }
+  return null;
+}
+
+function findKnownBrowserPath(preference = "auto") {
+  const roots = [
+    process.env.LOCALAPPDATA,
+    process.env.ProgramFiles,
+    process.env["ProgramFiles(x86)"],
+  ].filter(Boolean);
+
+  const profiles = getExternalBrowserProfiles(preference);
+  for (const profile of profiles) {
+    for (const root of roots) {
+      for (const relativeParts of profile.knownRelativePaths) {
+        const absolutePath = join(root, ...relativeParts);
+        if (existsSync(absolutePath)) {
+          return {
+            profile,
+            target: absolutePath,
+            matchedAppName: profile.label,
+            resolution: "known-path",
+            source: "filesystem",
+          };
+        }
+      }
+    }
+  }
+  return null;
+}
+
+function isExplicitExternalBrowserRequest(text) {
+  const normalized = String(text || "").trim().toLowerCase();
+  if (!normalized) return false;
+
+  return [
+    /^(?:请)?(?:帮我)?(?:麻烦)?(?:打开|启动|开启|唤起)(?:一下)?(?:外部|系统|真实)?(?:浏览器|chrome|google chrome|edge|msedge|firefox)/i,
+    /(?:用|使用|在)(?:外部|系统|真实)?(?:浏览器|chrome|google chrome|edge|msedge|firefox).{0,12}(?:打开|访问|启动)/i,
+    /\b(?:open|launch|start)\b.{0,18}\b(?:browser|chrome|edge|firefox)\b/i,
+    /\b(?:browser|chrome|edge|firefox)\b.{0,18}\b(?:open|launch|start)\b/i,
+    /(?:打开|访问|进入|前往|跳转到|去到|go to|visit|open).{0,24}(?:网页|页面|网站|网址|链接|url|官网|web\s*site|website|site|page|link)\b/i,
+    /(?:打开|访问|进入|前往|跳转到|去到|go to|visit|open).{0,32}(?:https?:\/\/|www\.|[a-z0-9-]+(?:\.[a-z0-9-]+)+\/?)/i,
+  ].some((pattern) => pattern.test(normalized));
+}
+
+function isResearchDeliveryIntent(text) {
+  const normalized = String(text || "").trim().toLowerCase();
+  if (!normalized) return false;
+
+  const hasResearchIntent = /(?:查询|查一下|搜索|搜集|搜一下|检索|research|search|lookup|find|新闻|资讯|資料|资料|总结|總結|报告|報告|写一份|写个|撰写|整理)/i.test(normalized);
+  const hasLocalDeliveryIntent = /(?:word|docx|文档|文件|报告|報告|总结|總結|保存|导出|輸出|发送|發送|发到|桌面|desktop|本地|附件)/i.test(normalized);
+  return hasResearchIntent && hasLocalDeliveryIntent;
+}
+
+function isBrowserLaunchTarget(target, args = []) {
+  const normalizedTarget = String(target || "").trim().toLowerCase();
+  const normalizedArgs = Array.isArray(args)
+    ? args.map((value) => String(value || "").trim().toLowerCase()).filter(Boolean)
+    : [];
+
+  const browserPatterns = [
+    /\b(?:chrome|google chrome|chrome\.exe)\b/i,
+    /\b(?:edge|msedge|microsoft edge|msedge\.exe)\b/i,
+    /\b(?:firefox|firefox\.exe)\b/i,
+    /\b(?:browser|浏览器|瀏覽器)\b/i,
+  ];
+
+  if (browserPatterns.some((pattern) => pattern.test(normalizedTarget))) {
+    return true;
+  }
+
+  return normalizedArgs.some((value) => browserPatterns.some((pattern) => pattern.test(value)));
 }
 
 // ---------------------------------------------------------------------------
@@ -301,7 +462,7 @@ class BrowserGetTextTool extends ToolBase {
 
 class DesktopLaunchNativeApplicationTool extends ToolBase {
   name = "desktop_launch_native_application";
-  searchHint = "在 Electron 桌面运行态启动本机程序。适用于打开微信、飞书、Chrome、VS Code、资源管理器或指定 exe/快捷方式。仅负责启动程序，不支持鼠标键盘模拟。";
+  searchHint = "在 Electron 桌面运行态启动本机程序。适用于打开微信、飞书、VS Code、资源管理器或指定 exe/快捷方式。若目标其实是打开真实外部浏览器，只能在用户明确要求打开浏览器/网站/链接/URL 时使用；纯网页搜索、资料整理、写 Word/报告并保存本地时，不应用它启动 Chrome/Edge/Firefox。仅负责启动程序，不支持鼠标键盘模拟。";
 
   inputSchema() {
     return {
@@ -320,6 +481,27 @@ class DesktopLaunchNativeApplicationTool extends ToolBase {
     };
   }
 
+  async checkPermissions({ target, args = [] } = {}, context = {}) {
+    if (!isBrowserLaunchTarget(target, args)) {
+      return { behavior: "allow" };
+    }
+
+    const userInstruction = String(context.userInstruction || "").trim();
+    if (!userInstruction) {
+      return { behavior: "deny", reason: "缺少用户明确的浏览器打开指令，不能通过通用程序启动工具拉起外部浏览器。" };
+    }
+
+    if (isExplicitExternalBrowserRequest(userInstruction)) {
+      return { behavior: "allow" };
+    }
+
+    if (isResearchDeliveryIntent(userInstruction)) {
+      return { behavior: "deny", reason: "这是检索后生成本地文档的任务，应先用内置 browser_* 查资料，再写文件，不应通过本机程序工具启动外部浏览器。" };
+    }
+
+    return { behavior: "deny", reason: "用户并未明确要求打开外部浏览器；不能通过通用程序启动工具绕过内置 browser_* 的默认检索路径。" };
+  }
+
   async call({ target, args = [], cwd, reason }, context = {}) {
     const result = await requestDesktopLaunch({
       target,
@@ -336,6 +518,137 @@ class DesktopLaunchNativeApplicationTool extends ToolBase {
         ...result,
       }),
     };
+  }
+}
+
+class DesktopOpenExternalBrowserTool extends ToolBase {
+  name = "desktop_open_external_browser";
+  searchHint = "打开真实外部浏览器（Chrome / Edge / Firefox / 系统默认浏览器）。只有当用户明确要求打开浏览器，或明确要求打开/访问某个网站、链接、URL 时才应使用；纯网页搜索、资料查找、页面读取、新闻整理、写 Word/报告/总结并保存到桌面等任务，仍必须优先使用内置 browser_* 工具。";
+
+  inputSchema() {
+    return {
+      type: "object",
+      properties: {
+        browser: {
+          type: "string",
+          enum: ["auto", "default", "chrome", "edge", "firefox"],
+          description: "希望打开的浏览器类型。auto 表示优先 Chrome，再尝试 Edge、Firefox；default 表示系统默认浏览器。",
+        },
+        url: {
+          type: "string",
+          description: "可选。若提供则在外部浏览器中打开该网址，例如 https://chatgpt.com 或 www.baidu.com。",
+        },
+        reason: {
+          type: "string",
+          description: "打开真实外部浏览器的原因，便于审计记录。",
+        },
+        forceRefresh: {
+          type: "boolean",
+          description: "是否强制刷新一次已安装程序扫描结果。",
+        },
+      },
+      required: [],
+    };
+  }
+
+  async checkPermissions(_input, context = {}) {
+    const userInstruction = String(context.userInstruction || "").trim();
+    if (!userInstruction) {
+      return { behavior: "deny", reason: "缺少用户明确的浏览器打开指令，默认应使用内置 browser_* 工具。" };
+    }
+
+    if (isExplicitExternalBrowserRequest(userInstruction)) {
+      return { behavior: "allow" };
+    }
+
+    if (isResearchDeliveryIntent(userInstruction)) {
+      return { behavior: "deny", reason: "这是检索后生成本地文档的任务，应先用内置 browser_* 查资料，再写文件，不应启动外部浏览器。" };
+    }
+
+    return { behavior: "deny", reason: "用户并未明确要求打开外部浏览器；默认应使用内置 browser_* 工具完成网页检索。" };
+  }
+
+  async call({ browser = "auto", url = "", reason, forceRefresh = false } = {}, context = {}) {
+    const normalizedBrowser = normalizeExternalBrowserPreference(browser);
+    const normalizedUrl = normalizeExternalBrowserUrl(url);
+    let installedApps = [];
+    try {
+      if (normalizedBrowser !== "default") {
+        installedApps = await requestDesktopInstalledApplications({ forceRefresh }, {
+          preferredWs: context.desktopClientWs,
+        });
+      }
+    } catch {
+      installedApps = [];
+    }
+
+    const installedCandidate = findInstalledBrowserCandidate(installedApps, normalizedBrowser);
+    const resolvedCandidate = installedCandidate || findKnownBrowserPath(normalizedBrowser);
+
+    if (resolvedCandidate) {
+      const launchResult = await requestDesktopLaunch({
+        target: resolvedCandidate.target,
+        args: normalizedUrl ? [normalizedUrl] : [],
+        ...(reason ? { reason } : {
+          reason: normalizedUrl
+            ? `用户明确要求使用真实外部浏览器打开 ${normalizedUrl}`
+            : "用户明确要求打开真实外部浏览器",
+        }),
+      }, {
+        preferredWs: context.desktopClientWs,
+      });
+
+      return {
+        data: JSON.stringify({
+          success: true,
+          browser: resolvedCandidate.profile.id,
+          browserLabel: resolvedCandidate.profile.label,
+          target: resolvedCandidate.target,
+          matchedAppName: resolvedCandidate.matchedAppName,
+          resolution: resolvedCandidate.resolution,
+          source: resolvedCandidate.source,
+          url: normalizedUrl || null,
+          launch: launchResult,
+        }),
+      };
+    }
+
+    if (normalizedBrowser === "default" && normalizedUrl) {
+      const launchResult = await requestDesktopLaunch({
+        target: normalizedUrl,
+        ...(reason ? { reason } : { reason: `用户明确要求使用系统默认浏览器打开 ${normalizedUrl}` }),
+      }, {
+        preferredWs: context.desktopClientWs,
+      });
+
+      return {
+        data: JSON.stringify({
+          success: true,
+          browser: "default",
+          browserLabel: "系统默认浏览器",
+          target: normalizedUrl,
+          matchedAppName: "系统默认浏览器",
+          resolution: "shell-url",
+          source: "shell",
+          url: normalizedUrl,
+          launch: launchResult,
+        }),
+      };
+    }
+
+    const browserLabelMap = {
+      auto: "Chrome / Edge / Firefox",
+      default: "系统默认浏览器",
+      chrome: "Chrome",
+      edge: "Edge",
+      firefox: "Firefox",
+    };
+
+    throw new Error(
+      normalizedBrowser === "default"
+        ? "未能确定系统默认浏览器。若需要使用默认浏览器，请同时提供要打开的 URL。"
+        : `未找到可启动的 ${browserLabelMap[normalizedBrowser] || "外部浏览器"}。请先确认桌面端已安装浏览器，或把浏览器加入本机程序白名单。`,
+    );
   }
 }
 
@@ -524,7 +837,7 @@ class DesktopCaptureScreenshotTool extends ToolBase {
       properties: {
         target: { type: "string", description: "当前截图关注的程序或界面，可选。" },
         intent: { type: "string", description: "截图用途说明，可选。" },
-        maxWidth: { type: "number", description: "输出最大宽度，默认 1440。" },
+        maxWidth: { type: "number", description: "输出最大宽度；为保证点击坐标准确，默认保留原始桌面宽度，仅在需要压缩图片时再传。" },
         quality: { type: "number", description: "JPEG 质量 45-90，默认 72。" },
       },
       required: [],
@@ -583,6 +896,212 @@ class DesktopCaptureScreenshotTool extends ToolBase {
   }
 }
 
+class DesktopCdpOpenAppTool extends ToolBase {
+  name = "desktop_cdp_open_app";
+  searchHint = "以 CDP App Mode 打开或复用可结构化控制的 Chromium / Electron 应用。当前适合 chrome、edge、feishu、figma、notion。这类应用应优先使用 desktop_cdp_snapshot + desktop_cdp_act，而不是先截图再猜鼠标坐标。";
+
+  inputSchema() {
+    return {
+      type: "object",
+      properties: {
+        app: {
+          type: "string",
+          description: "目标应用，可填 chrome、edge、feishu、figma、notion。",
+        },
+        target: {
+          type: "string",
+          description: "可选。应用可执行文件路径；若不填则自动按已安装程序匹配。",
+        },
+        url: {
+          type: "string",
+          description: "浏览器类应用可选。打开后直接导航到该网址。",
+        },
+        forceNew: {
+          type: "boolean",
+          description: "是否强制新建一个 CDP 会话，而不是复用最近会话。",
+        },
+        forceRefresh: {
+          type: "boolean",
+          description: "是否强制刷新一次本机程序扫描结果。",
+        },
+        reason: {
+          type: "string",
+          description: "为什么要以 CDP 模式打开该应用，可选。",
+        },
+      },
+      required: [],
+    };
+  }
+
+  async call(args = {}, context = {}) {
+    const result = await openDesktopCdpApp(args, {
+      desktopClientWs: context.desktopClientWs,
+    });
+    return {
+      data: JSON.stringify(result),
+    };
+  }
+
+  makeToolResultBlock(toolUseId, data) {
+    let parsed = null;
+    try {
+      parsed = typeof data === "string" ? JSON.parse(data) : data;
+    } catch {
+      parsed = null;
+    }
+
+    if (!parsed?.sessionId) {
+      return super.makeToolResultBlock(toolUseId, data);
+    }
+
+    const content = [
+      `CDP App Mode 已连接 ${parsed.label || parsed.app || "目标应用"}。`,
+      `会话 ID: ${parsed.sessionId}`,
+      parsed.pageTitle ? `当前标题: ${parsed.pageTitle}` : "",
+      parsed.pageUrl ? `当前地址: ${parsed.pageUrl}` : "",
+      "下一步请优先调用 desktop_cdp_snapshot 获取结构化元素，再使用 desktop_cdp_act 基于 ref 操作。",
+    ]
+      .filter(Boolean)
+      .join("\n");
+
+    return {
+      type: "tool_result",
+      tool_use_id: toolUseId,
+      content,
+    };
+  }
+}
+
+class DesktopCdpSnapshotTool extends ToolBase {
+  name = "desktop_cdp_snapshot";
+  searchHint = "读取当前 CDP App Mode 会话的结构化页面快照，返回可操作元素 ref 列表。之后应优先把 ref 交给 desktop_cdp_act，而不是改回视觉坐标点击。";
+  maxResultSizeChars = 24_000;
+
+  inputSchema() {
+    return {
+      type: "object",
+      properties: {
+        sessionId: {
+          type: "string",
+          description: "可选。指定 CDP 会话 ID；不填时默认使用最近一次 CDP 会话。",
+        },
+        limit: {
+          type: "number",
+          description: "最多返回多少个结构化元素，默认 36，最大 80。",
+        },
+      },
+      required: [],
+    };
+  }
+
+  async call(args = {}) {
+    const result = await snapshotDesktopCdpApp(args);
+    return {
+      data: JSON.stringify(result),
+    };
+  }
+
+  makeToolResultBlock(toolUseId, data) {
+    let parsed = null;
+    try {
+      parsed = typeof data === "string" ? JSON.parse(data) : data;
+    } catch {
+      parsed = null;
+    }
+
+    if (!parsed?.sessionId || !Array.isArray(parsed.elements)) {
+      return super.makeToolResultBlock(toolUseId, data);
+    }
+
+    const lines = [
+      `CDP 快照: ${parsed.label || parsed.app || "应用"} · 会话 ${parsed.sessionId}`,
+      parsed.pageTitle ? `标题: ${parsed.pageTitle}` : "",
+      parsed.pageUrl ? `地址: ${parsed.pageUrl}` : "",
+      parsed.textPreview ? `正文摘要: ${parsed.textPreview}` : "",
+      "可操作元素:",
+      ...parsed.elements.slice(0, 24).map((item) => {
+        const summary = [item.name, item.text, item.placeholder, item.value].filter(Boolean)[0] || item.tag || "element";
+        return `- ${item.ref} [${item.role || item.tag}] ${summary}`;
+      }),
+      "下一步请使用 desktop_cdp_act，并优先传 ref。",
+    ].filter(Boolean);
+
+    return {
+      type: "tool_result",
+      tool_use_id: toolUseId,
+      content: lines.join("\n"),
+    };
+  }
+}
+
+class DesktopCdpActTool extends ToolBase {
+  name = "desktop_cdp_act";
+  searchHint = "在 CDP App Mode 会话中执行结构化操作。优先使用 desktop_cdp_snapshot 返回的 ref 来 click / fill / type / press / navigate，避免回到截图猜坐标。";
+
+  inputSchema() {
+    return {
+      type: "object",
+      properties: {
+        sessionId: { type: "string", description: "可选。指定 CDP 会话 ID；不填时默认最近会话。" },
+        action: {
+          type: "string",
+          enum: ["click", "double_click", "hover", "fill", "type", "press", "navigate"],
+          description: "要执行的结构化动作。",
+        },
+        ref: { type: "string", description: "优先使用 desktop_cdp_snapshot 返回的 ref。" },
+        selector: { type: "string", description: "可选。直接传 CSS selector。" },
+        role: { type: "string", description: "可选。和 name 一起按 ARIA role 定位，例如 button、link、textbox。" },
+        name: { type: "string", description: "可选。role 对应的 name。" },
+        label: { type: "string", description: "name 的别名。" },
+        textMatch: { type: "string", description: "可选。按页面文本模糊匹配定位。" },
+        targetText: { type: "string", description: "textMatch 的别名。" },
+        value: { type: "string", description: "fill / type 动作输入的内容。" },
+        key: { type: "string", description: "press 动作的按键，如 Enter、Control+L。" },
+        url: { type: "string", description: "navigate 动作的目标 URL。" },
+        delayMs: { type: "number", description: "type 动作的逐字延迟，可选。" },
+        timeoutMs: { type: "number", description: "等待元素可见/动作完成的超时，可选。" },
+      },
+      required: ["action"],
+    };
+  }
+
+  async call(args = {}) {
+    const result = await actDesktopCdpApp(args);
+    return {
+      data: JSON.stringify(result),
+    };
+  }
+
+  makeToolResultBlock(toolUseId, data) {
+    let parsed = null;
+    try {
+      parsed = typeof data === "string" ? JSON.parse(data) : data;
+    } catch {
+      parsed = null;
+    }
+
+    if (!parsed?.sessionId) {
+      return super.makeToolResultBlock(toolUseId, data);
+    }
+
+    const content = [
+      `CDP 动作已完成: ${parsed.action || "act"}`,
+      `会话 ID: ${parsed.sessionId}`,
+      parsed.pageTitle ? `当前标题: ${parsed.pageTitle}` : "",
+      parsed.pageUrl ? `当前地址: ${parsed.pageUrl}` : "",
+      "如需继续操作，建议再次调用 desktop_cdp_snapshot 刷新最新 ref。",
+    ]
+      .filter(Boolean)
+      .join("\n");
+
+    return {
+      type: "tool_result",
+      tool_use_id: toolUseId,
+      content,
+    };
+  }
+}
+
 // ---------------------------------------------------------------------------
 // ---------------------------------------------------------------------------
 
@@ -602,7 +1121,11 @@ const BROWSER_TOOLS = [
 
 const DESKTOP_TOOLS = [
   new DesktopListInstalledApplicationsTool(),
+  new DesktopOpenExternalBrowserTool(),
   new DesktopLaunchNativeApplicationTool(),
+  new DesktopCdpOpenAppTool(),
+  new DesktopCdpSnapshotTool(),
+  new DesktopCdpActTool(),
   new DesktopControlInputTool(),
   new DesktopCaptureScreenshotTool(),
 ];
@@ -623,5 +1146,8 @@ export function getAgentTools(agentId) {
       ...DESKTOP_TOOLS.filter((t) => t.isEnabled()),
     ];
   }
-  return base;
+  return [
+    ...base,
+    ...DESKTOP_TOOLS.filter((t) => t.isEnabled()),
+  ];
 }

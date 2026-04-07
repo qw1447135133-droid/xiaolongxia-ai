@@ -121,6 +121,7 @@ export function NativeAppsCenter() {
       agentConfigs,
       platformConfigs,
       userNickname,
+      semanticMemoryConfig,
       desktopProgramSettings: nextDesktopProgramSettings,
       hermesDispatchSettings,
     } = useStore.getState();
@@ -132,6 +133,7 @@ export function NativeAppsCenter() {
         agentConfigs,
         platformConfigs,
         userNickname,
+        semanticMemoryConfig,
         desktopProgramSettings: nextDesktopProgramSettings,
         hermesDispatchSettings,
       })) {
@@ -148,6 +150,7 @@ export function NativeAppsCenter() {
           agentConfigs,
           platformConfigs,
           userNickname,
+          semanticMemoryConfig,
           desktopProgramSettings: nextDesktopProgramSettings,
           hermesDispatchSettings,
         }),
@@ -529,7 +532,7 @@ export function NativeAppsCenter() {
                   ),
               },
               {
-                label: "动作时自动切桌面",
+                label: "接管异常时显示状态提醒",
                 value: desktopProgramSettings.inputControl.autoOpenPanelOnAction,
                 action: () =>
                   void applyDesktopSettingUpdates(
@@ -539,7 +542,7 @@ export function NativeAppsCenter() {
                         autoOpenPanelOnAction: !desktopProgramSettings.inputControl.autoOpenPanelOnAction,
                       },
                     },
-                    `自动切桌面已${desktopProgramSettings.inputControl.autoOpenPanelOnAction ? "关闭" : "启用"}。`,
+                    `桌面接管状态提醒已${desktopProgramSettings.inputControl.autoOpenPanelOnAction ? "关闭" : "启用"}。`,
                   ),
               },
               {

@@ -28,9 +28,9 @@ import { DesktopRuntimeBridge } from "@/components/DesktopRuntimeBridge";
 import { ExecutionVerificationBridge } from "@/components/ExecutionVerificationBridge";
 import { ControlCenter } from "@/components/ControlCenter";
 import { ExecutionCenter } from "@/components/ExecutionCenter";
-import { HermesDispatchCenter } from "@/components/HermesDispatchCenter";
 import { ProjectHubCard } from "@/components/ProjectHubCard";
 import { WorkspaceDesk } from "@/components/WorkspaceDesk";
+import { ChatSessionsPanel } from "@/components/ChatSessionsPanel";
 import {
   createSemanticMemoryProvider,
   registerSemanticMemoryProvider,
@@ -53,6 +53,7 @@ import {
   pickLocaleText,
 } from "@/lib/ui-locale";
 import { DEFAULT_CHAT_TITLE, sortChatSessions } from "@/lib/chat-sessions";
+import { AgentIcon, getAgentIconColor } from "@/components/AgentIcon";
 
 function detectElectronRuntime() {
   if (typeof window === "undefined") return false;
@@ -72,7 +73,7 @@ function useRuntimeTarget() {
 function dispatchInstruction(instruction: string) {
   const trimmed = instruction.trim();
   if (!trimmed) return;
-  sendExecutionDispatch({
+  void sendExecutionDispatch({
     instruction: trimmed,
     source: "workflow",
     includeActiveProjectMemory: true,
@@ -112,7 +113,7 @@ export default function App() {
   }, [locale]);
 
   useEffect(() => {
-    const checkBusinessQueue = () => {
+    const checkBusinessQueue = async () => {
       const store = useStore.getState();
       const {
         automationPaused,
@@ -178,7 +179,7 @@ export default function App() {
 
       if (!nextItem) return;
 
-      const { ok, executionRunId } = sendExecutionDispatch({
+      const { ok, executionRunId } = await sendExecutionDispatch({
         instruction: nextItem.instruction,
         source: "remote-ops",
         includeUserMessage: true,
@@ -206,11 +207,11 @@ export default function App() {
       checkAndExecuteTasks(task => {
         dispatchInstruction(task.instruction);
       });
-      checkBusinessQueue();
+      void checkBusinessQueue();
     }, 60000);
 
     const bootTimer = window.setTimeout(() => {
-      checkBusinessQueue();
+      void checkBusinessQueue();
     }, 8000);
 
     return () => {
@@ -487,7 +488,11 @@ function DesktopWorkspaceApp() {
           </p>
         </div>
         <div className="desktop-workspace-shell__alert-actions">
-          <button type="button" className="desktop-workspace-shell__hero-action" onClick={() => setTab("settings")}>
+          <button
+            type="button"
+            className="desktop-workspace-shell__hero-action"
+            onClick={() => openControlCenterSection("overview")}
+          >
             {uiText.common.checkSettings}
           </button>
           <button type="button" className="desktop-workspace-shell__hero-action" onClick={() => setTab("tasks")}>
@@ -581,8 +586,8 @@ function DesktopWorkspaceApp() {
                     <strong>{item.value}</strong>
                   </div>
                 ))}
-                <DesktopSidebarQuickSettings />
                 {sidebarAlert ? <div className="desktop-workspace-shell__sidebar-alert-mini">{sidebarAlert}</div> : null}
+                <DesktopSidebarQuickSettings />
               </div>
             </>
           ) : (
@@ -928,7 +933,7 @@ function DashboardTab({ onOpenTab }: { onOpenTab: (tab: AppTab) => void }) {
                     <article key={agent.id} className="ios-home__agent-compact-card">
                       <div className="ios-home__agent-compact-head">
                         <div className="ios-home__agent-avatar">
-                          {AGENT_META[agent.id].emoji}
+                          <AgentIcon agentId={agent.id} size={20} />
                         </div>
                         <div className="ios-home__agent-compact-name">
                           <strong>{AGENT_META[agent.id].name}</strong>
@@ -1027,7 +1032,7 @@ function DashboardTab({ onOpenTab }: { onOpenTab: (tab: AppTab) => void }) {
             automationPaused={automationPaused}
             automationMode={automationMode}
             remoteSupervisorEnabled={remoteSupervisorEnabled}
-            onApproveItem={(item) => {
+            onApproveItem={async (item) => {
               setBusinessApprovalDecision({
                 entityType: item.entityType,
                 entityId: item.entityId,
@@ -1055,7 +1060,7 @@ function DashboardTab({ onOpenTab }: { onOpenTab: (tab: AppTab) => void }) {
                 };
               }
 
-              const { ok, executionRunId } = sendExecutionDispatch({
+              const { ok, executionRunId } = await sendExecutionDispatch({
                 instruction: item.instruction,
                 source: "remote-ops",
                 includeUserMessage: true,
@@ -1129,6 +1134,11 @@ function DashboardTab({ onOpenTab }: { onOpenTab: (tab: AppTab) => void }) {
             }}
             onOpenRemoteOps={() => openControlCenterSection("remote")}
           />
+          <DashboardLiveTaskPanel
+            locale={locale}
+            scopedExecutionRuns={scopedExecutionRuns}
+            scopedOperationLogs={scopedOperationLogs}
+          />
         </aside>
       </div>
     </div>
@@ -1155,7 +1165,7 @@ function DashboardSupervisionRail({
   automationPaused: ReturnType<typeof useStore.getState>["automationPaused"];
   automationMode: ReturnType<typeof useStore.getState>["automationMode"];
   remoteSupervisorEnabled: boolean;
-  onApproveItem: (item: BusinessAutomationQueueItem) => { message: string; executionRunId?: string };
+  onApproveItem: (item: BusinessAutomationQueueItem) => Promise<{ message: string; executionRunId?: string }>;
   onRejectItem: (item: BusinessAutomationQueueItem) => void;
   onSetAutomationMode: (mode: ReturnType<typeof useStore.getState>["automationMode"]) => void;
   onOpenRemoteOps: () => void;
@@ -1261,8 +1271,8 @@ function DashboardSupervisionRail({
                     <button
                       type="button"
                       className="btn-ghost"
-                      onClick={() => {
-                        const result = onApproveItem(item);
+                      onClick={async () => {
+                        const result = await onApproveItem(item);
                         setApprovalFeedback(result.message);
                         setApprovalExecutionRunId(result.executionRunId ?? null);
                       }}
@@ -1302,59 +1312,253 @@ function DashboardSupervisionRail({
   );
 }
 
+function DashboardLiveTaskPanel({
+  locale,
+  scopedExecutionRuns,
+  scopedOperationLogs,
+}: {
+  locale: UiLocale;
+  scopedExecutionRuns: ReturnType<typeof useStore.getState>["executionRuns"];
+  scopedOperationLogs: ReturnType<typeof useStore.getState>["businessOperationLogs"];
+}) {
+  const activeRuns = useMemo(
+    () =>
+      scopedExecutionRuns
+        .filter(run => run.status === "queued" || run.status === "analyzing" || run.status === "running")
+        .sort((left, right) => right.updatedAt - left.updatedAt),
+    [scopedExecutionRuns],
+  );
+
+  const liveItems = useMemo(() => {
+    return activeRuns.slice(0, 8).map(run => {
+      const latestEvent = run.events[run.events.length - 1] ?? null;
+      const relatedOperation = scopedOperationLogs.find(log => log.executionRunId === run.id) ?? null;
+      const headline = summarizeLiveFeedText(
+        latestEvent?.title
+        || relatedOperation?.title
+        || run.instruction
+        || pickLocaleText(locale, {
+          "zh-CN": "正在处理中",
+          "zh-TW": "正在處理中",
+          en: "Processing",
+          ja: "処理中",
+        }),
+        58,
+      );
+      const detail = summarizeLiveFeedText(
+        latestEvent?.detail
+        || relatedOperation?.detail
+        || run.instruction
+        || "",
+        84,
+      );
+
+      return {
+        id: run.id,
+        statusLabel: getMobileExecutionLabel(locale, run.status),
+        tone: getLiveFeedTone(run.status),
+        headline,
+        detail,
+        progress: getExecutionProgressPercent(run),
+        meta: [
+          getExecutionSourceLabel(locale, run.source),
+          run.currentAgentId ? AGENT_META[run.currentAgentId]?.name ?? null : null,
+          timeAgo(run.updatedAt),
+        ].filter(Boolean) as string[],
+      };
+    });
+  }, [activeRuns, locale, scopedOperationLogs]);
+
+  const queuedCount = activeRuns.filter(run => run.status === "queued").length;
+  const runningCount = activeRuns.filter(run => run.status === "running" || run.status === "analyzing").length;
+
+  return (
+    <section className="ios-home__rail-panel ios-home__live-feed-panel">
+      <div className="ios-home__live-feed-head">
+        <div>
+          <div className="ios-home__eyebrow">{pickLocaleText(locale, {
+            "zh-CN": "实时任务日志",
+            "zh-TW": "即時任務日誌",
+            en: "Live Task Log",
+            ja: "リアルタイムタスクログ",
+          })}</div>
+          <div className="ios-home__overview-title">{pickLocaleText(locale, {
+            "zh-CN": "自动任务进程",
+            "zh-TW": "自動任務進程",
+            en: "Automation Progress",
+            ja: "自動タスク進行",
+          })}</div>
+        </div>
+        <div className="ios-home__live-feed-metrics">
+          <span>{pickLocaleText(locale, { "zh-CN": `运行中 ${runningCount}`, "zh-TW": `運行中 ${runningCount}`, en: `Running ${runningCount}`, ja: `実行中 ${runningCount}` })}</span>
+          <span>{pickLocaleText(locale, { "zh-CN": `排队中 ${queuedCount}`, "zh-TW": `排隊中 ${queuedCount}`, en: `Queued ${queuedCount}`, ja: `待機 ${queuedCount}` })}</span>
+        </div>
+      </div>
+
+      <div className="ios-home__live-feed-list">
+        {liveItems.map(item => (
+          <article key={item.id} className="ios-home__live-feed-item">
+            <div className="ios-home__live-feed-item-head">
+              <span className={`ios-home__live-feed-badge is-${item.tone}`}>{item.statusLabel}</span>
+              <div className="ios-home__live-feed-headline" title={item.headline}>{item.headline}</div>
+              <div className="ios-home__live-feed-progress-label">{item.progress}%</div>
+            </div>
+            {item.detail ? <div className="ios-home__live-feed-detail" title={item.detail}>{item.detail}</div> : null}
+            <div className="ios-home__live-feed-meta">
+              {item.meta.map(entry => (
+                <span key={`${item.id}-${entry}`}>{entry}</span>
+              ))}
+            </div>
+            <div className="ios-home__live-feed-progress">
+              <div className={`ios-home__live-feed-progress-bar is-${item.tone}`} style={{ width: `${item.progress}%` }} />
+            </div>
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 function TasksTab() {
   const tasks = useStore(s => s.tasks);
   const locale = useStore(s => s.locale);
+  const workspaceRoot = useStore(s => s.workspaceRoot);
+  const chatSessions = useStore(s => s.chatSessions);
+  const activeSessionId = useStore(s => s.activeSessionId);
+  const createChatSession = useStore(s => s.createChatSession);
   const setCommandDraft = useStore(s => s.setCommandDraft);
   const activeTeamOperatingTemplateId = useStore(s => s.activeTeamOperatingTemplateId);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const activeSurface = activeTeamOperatingTemplateId
     ? TEAM_OPERATING_SURFACES[activeTeamOperatingTemplateId]
     : null;
   const uiText = useMemo(() => getUiText(locale), [locale]);
   const chatStarters = activeSurface?.chatStarters ?? getDefaultChatStarters(locale);
+  const historyDropdownRef = useRef<HTMLDivElement | null>(null);
+  const activeSession = useMemo(
+    () => chatSessions.find(session => session.id === activeSessionId) ?? null,
+    [activeSessionId, chatSessions],
+  );
+  useEffect(() => {
+    if (!historyOpen) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setHistoryOpen(false);
+      }
+    };
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (historyDropdownRef.current?.contains(target)) return;
+      setHistoryOpen(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("pointerdown", onPointerDown);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("pointerdown", onPointerDown);
+    };
+  }, [historyOpen]);
+
+  useEffect(() => {
+    setHistoryOpen(false);
+  }, [activeSessionId]);
+
+  const handleCreateChat = () => {
+    createChatSession(activeSession?.workspaceRoot ?? workspaceRoot ?? null);
+    setHistoryOpen(false);
+  };
 
   return (
     <div className="ios-chat-page">
-      <section className="ios-chat-page__surface">
-        <div className="ios-chat-page__header">
-          <div className="ios-chat-page__header-main">
-            <div className="ios-chat-page__eyebrow">{uiText.tasks.eyebrow}</div>
-            <div className="ios-chat-page__title">{uiText.tasks.title}</div>
-          </div>
-        </div>
+      <div className="ios-chat-page__frame">
+        <section className="ios-chat-page__surface">
+          <div className="ios-chat-page__header">
+            <div className="ios-chat-page__header-main">
+              <div className="ios-chat-page__eyebrow">{uiText.tasks.eyebrow}</div>
+              <div className="ios-chat-page__title">{uiText.tasks.title}</div>
+            </div>
+            <div className="ios-chat-page__header-side">
+              <div className="ios-chat-page__actions">
+                <div className="ios-chat-page__history-dropdown" ref={historyDropdownRef}>
+                  <button
+                    type="button"
+                    className={`ios-chat-page__toolbar-btn ios-chat-page__history-trigger ${historyOpen ? "is-active" : ""}`}
+                    onClick={() => setHistoryOpen(open => !open)}
+                    title={uiText.common.sessions}
+                    aria-label={uiText.common.sessions}
+                    aria-haspopup="dialog"
+                    aria-expanded={historyOpen}
+                  >
+                    <HistoryIcon />
+                    <span className="ios-chat-page__history-trigger-count">{chatSessions.length}</span>
+                  </button>
 
-        {tasks.length === 0 ? (
-          <div className="ios-chat-page__empty">
-            <div className="ios-chat-page__empty-badge">{uiText.tasks.newChatBadge}</div>
-            <div className="ios-chat-page__empty-title">{uiText.tasks.emptyTitle}</div>
-            <div className="ios-chat-page__empty-copy">{uiText.tasks.emptyCopy}</div>
-            <div className="ios-chat-page__empty-actions">
-              {chatStarters.map(prompt => (
+                  {historyOpen ? (
+                    <div className="ios-chat-page__history-menu" role="dialog" aria-label={uiText.common.sessions}>
+                      <div className="ios-chat-page__history-head">
+                        <div>
+                          <div className="ios-chat-page__eyebrow">{uiText.common.sessions}</div>
+                          <div className="ios-chat-page__history-title">{uiText.common.sessions}</div>
+                          <div className="ios-chat-page__history-copy">{uiText.common.sessionsSubtitle}</div>
+                        </div>
+                      </div>
+                      <div className="ios-chat-page__history-body">
+                        <ChatSessionsPanel showHeader={false} />
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+                <div className="ios-chat-page__meta">
+                  <span>{activeSession?.title || DEFAULT_CHAT_TITLE}</span>
+                </div>
                 <button
-                  key={prompt}
                   type="button"
-                  className="ios-chat-page__empty-prompt"
-                  onClick={() => setCommandDraft(prompt)}
+                  className="ios-chat-page__toolbar-btn is-primary"
+                  onClick={handleCreateChat}
                 >
-                  {prompt}
+                  <NewChatIcon />
+                  <span>{uiText.common.newChat}</span>
                 </button>
-              ))}
+              </div>
             </div>
           </div>
-        ) : (
-          <div className="ios-chat-page__stream">
-            <TaskPipeline fillHeight />
-          </div>
-        )}
 
-        <div className="ios-chat-page__composer">
-          <CommandInput
-            variant="dock"
-            showHeader={false}
-            showFooter={false}
-          />
-        </div>
-      </section>
+          {tasks.length === 0 ? (
+            <div className="ios-chat-page__empty">
+              <div className="ios-chat-page__empty-badge">{uiText.tasks.newChatBadge}</div>
+              <div className="ios-chat-page__empty-title">{uiText.tasks.emptyTitle}</div>
+              <div className="ios-chat-page__empty-copy">{uiText.tasks.emptyCopy}</div>
+              <div className="ios-chat-page__empty-actions">
+                {chatStarters.map(prompt => (
+                  <button
+                    key={prompt}
+                    type="button"
+                    className="ios-chat-page__empty-prompt"
+                    onClick={() => setCommandDraft(prompt)}
+                  >
+                    {prompt}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <>
+              <div className="ios-chat-page__stream">
+                <TaskPipeline fillHeight />
+              </div>
+            </>
+          )}
+
+          <div className="ios-chat-page__composer">
+            <CommandInput
+              variant="dock"
+              showHeader={false}
+              showFooter={false}
+            />
+          </div>
+        </section>
+      </div>
     </div>
   );
 }
@@ -1623,20 +1827,20 @@ function DispatchTab() {
     <div className="ios-feature-page ios-feature-page--dispatch">
       <div className="ios-feature-page__header">
         <div className="ios-feature-page__eyebrow">{pickLocaleText(locale, {
-          "zh-CN": "调度",
-          "zh-TW": "調度",
-          en: "Dispatch",
-          ja: "ディスパッチ",
+          "zh-CN": "实时任务日志",
+          "zh-TW": "即時任務日誌",
+          en: "Live Task Log",
+          ja: "リアルタイムタスクログ",
         })}</div>
         <div className="ios-feature-page__title">{pickLocaleText(locale, {
-          "zh-CN": "自动调度总览",
-          "zh-TW": "自動調度總覽",
-          en: "Automation dispatch overview",
-          ja: "自動ディスパッチ概要",
+          "zh-CN": "任务进程与任务历史",
+          "zh-TW": "任務進程與任務歷史",
+          en: "Task progress and task history",
+          ja: "タスク進行とタスク履歴",
         })}</div>
       </div>
       <div className="ios-feature-page__canvas">
-        <HermesDispatchCenter compact />
+        <ExecutionCenter />
       </div>
     </div>
   );
@@ -1771,12 +1975,13 @@ function DesktopSidebarQuickSettings() {
     <div className={`desktop-workspace-shell__quick-settings ${open ? "is-open" : ""}`} ref={rootRef}>
       <button
         type="button"
-        className="desktop-workspace-shell__quick-settings-trigger"
+        className={`desktop-workspace-shell__nav-item desktop-workspace-shell__quick-settings-trigger ${open ? "is-active" : ""}`}
         onClick={() => setOpen(value => !value)}
         aria-label={quickSettingsLabel}
         title={quickSettingsLabel}
       >
-        <QuickSettingsIcon />
+        <span className="desktop-workspace-shell__nav-icon"><QuickSettingsIcon /></span>
+        <strong>{appearanceLabel}</strong>
       </button>
 
       {open ? (
@@ -1899,8 +2104,27 @@ function SidebarPanelIcon(props: SVGProps<SVGSVGElement>) {
 function QuickSettingsIcon(props: SVGProps<SVGSVGElement>) {
   return (
     <svg viewBox="0 0 20 20" width="18" height="18" fill="none" aria-hidden="true" {...props}>
-      <path d="M10 3.1v1.4M10 15.5v1.4M5.05 5.05l1 1M13.95 13.95l1 1M3.1 10h1.4M15.5 10h1.4M5.05 14.95l1-1M13.95 6.05l1-1" stroke="currentColor" strokeWidth="1.35" strokeLinecap="round"/>
-      <circle cx="10" cy="10" r="3.1" stroke="currentColor" strokeWidth="1.35"/>
+      <path d="M4 5.5h8.5M4 10h12M4 14.5h7.5" stroke="currentColor" strokeWidth="1.45" strokeLinecap="round"/>
+      <circle cx="14.5" cy="5.5" r="1.75" fill="currentColor"/>
+      <circle cx="8.2" cy="10" r="1.75" fill="currentColor"/>
+      <circle cx="13.2" cy="14.5" r="1.75" fill="currentColor"/>
+    </svg>
+  );
+}
+
+function HistoryIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 20 20" width="16" height="16" fill="none" aria-hidden="true" {...props}>
+      <path d="M5 5.2h10M5 10h7.6M5 14.8h6.1" stroke="currentColor" strokeWidth="1.45" strokeLinecap="round"/>
+      <path d="M13.9 14.4 15 15.5l2-2.3" stroke="currentColor" strokeWidth="1.45" strokeLinecap="round" strokeLinejoin="round"/>
+    </svg>
+  );
+}
+
+function NewChatIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 20 20" width="16" height="16" fill="none" aria-hidden="true" {...props}>
+      <path d="M10 4.2v11.6M4.2 10h11.6" stroke="currentColor" strokeWidth="1.55" strokeLinecap="round"/>
     </svg>
   );
 }
@@ -1978,6 +2202,38 @@ function getMobileExecutionLabel(
     default:
       return status;
   }
+}
+
+function getExecutionSourceLabel(
+  locale: UiLocale,
+  source: ReturnType<typeof useStore.getState>["executionRuns"][number]["source"],
+) {
+  switch (source) {
+    case "remote-ops":
+      return pickLocaleText(locale, { "zh-CN": "值守触发", "zh-TW": "值守觸發", en: "Ops Trigger", ja: "監督起動" });
+    case "workflow":
+      return pickLocaleText(locale, { "zh-CN": "工作流", "zh-TW": "工作流", en: "Workflow", ja: "ワークフロー" });
+    case "workspace":
+      return pickLocaleText(locale, { "zh-CN": "工作区", "zh-TW": "工作區", en: "Workspace", ja: "ワークスペース" });
+    case "quick-start":
+      return pickLocaleText(locale, { "zh-CN": "快捷触发", "zh-TW": "快捷觸發", en: "Quick Start", ja: "クイック起動" });
+    default:
+      return pickLocaleText(locale, { "zh-CN": "聊天任务", "zh-TW": "聊天任務", en: "Chat Task", ja: "チャット起動" });
+  }
+}
+
+function getLiveFeedTone(
+  status: ReturnType<typeof useStore.getState>["executionRuns"][number]["status"],
+) {
+  if (status === "failed") return "blocked";
+  if (status === "completed") return "ready";
+  if (status === "running" || status === "analyzing") return "running";
+  return "idle";
+}
+
+function summarizeLiveFeedText(value: string, maxLength: number) {
+  if (value.length <= maxLength) return value;
+  return `${value.slice(0, maxLength).trimEnd()}...`;
 }
 
 function getVerificationLabel(
@@ -2381,13 +2637,13 @@ function MeetingTab() {
     event.target.value = "";
   };
 
-  const agentInfo: Record<string, { name: string; emoji: string; color: string }> = {
-    orchestrator: { name: pickLocaleText(locale, { "zh-CN": "鹦鹉螺", "zh-TW": "鸚鵡螺", en: "Nautilus", ja: "オウムガイ" }), emoji: "🦞", color: "var(--accent)" },
-    explorer: { name: pickLocaleText(locale, { "zh-CN": "探海鲸鱼", "zh-TW": "探海鯨魚", en: "Scout Whale", ja: "探海クジラ" }), emoji: "🔎", color: "#38bdf8" },
-    writer: { name: pickLocaleText(locale, { "zh-CN": "星海章鱼", "zh-TW": "星海章魚", en: "Starsea Octopus", ja: "星海タコ" }), emoji: "✍️", color: "#34c759" },
-    designer: { name: pickLocaleText(locale, { "zh-CN": "珊瑚水母", "zh-TW": "珊瑚水母", en: "Coral Jellyfish", ja: "サンゴクラゲ" }), emoji: "🎨", color: "#ff5c8a" },
-    performer: { name: pickLocaleText(locale, { "zh-CN": "逐浪海豚", "zh-TW": "逐浪海豚", en: "Surf Dolphin", ja: "波乗りイルカ" }), emoji: "🎬", color: "#ff9f0a" },
-    greeter: { name: pickLocaleText(locale, { "zh-CN": "招潮蟹", "zh-TW": "招潮蟹", en: "Fiddler Crab", ja: "シオマネキ" }), emoji: "💬", color: "#00c7be" },
+  const agentInfo: Record<string, { name: string; color: string }> = {
+    orchestrator: { name: pickLocaleText(locale, { "zh-CN": "鹦鹉螺", "zh-TW": "鸚鵡螺", en: "Nautilus", ja: "オウムガイ" }), color: "var(--accent)" },
+    explorer: { name: pickLocaleText(locale, { "zh-CN": "探海鲸鱼", "zh-TW": "探海鯨魚", en: "Scout Whale", ja: "探海クジラ" }), color: "#38bdf8" },
+    writer: { name: pickLocaleText(locale, { "zh-CN": "星海章鱼", "zh-TW": "星海章魚", en: "Starsea Octopus", ja: "星海タコ" }), color: "#34c759" },
+    designer: { name: pickLocaleText(locale, { "zh-CN": "珊瑚水母", "zh-TW": "珊瑚水母", en: "Coral Jellyfish", ja: "サンゴクラゲ" }), color: "#ff5c8a" },
+    performer: { name: pickLocaleText(locale, { "zh-CN": "逐浪海豚", "zh-TW": "逐浪海豚", en: "Surf Dolphin", ja: "波乗りイルカ" }), color: "#ff9f0a" },
+    greeter: { name: pickLocaleText(locale, { "zh-CN": "招潮蟹", "zh-TW": "招潮蟹", en: "Fiddler Crab", ja: "シオマネキ" }), color: "#00c7be" },
   };
 
   const roleLabel: Record<string, string> = {
@@ -2420,7 +2676,7 @@ function MeetingTab() {
         )}
 
         {meetingSpeeches.map(speech => {
-          const info = agentInfo[speech.agentId] ?? { name: speech.agentId, emoji: "🦞", color: "var(--accent)" };
+          const info = agentInfo[speech.agentId] ?? { name: speech.agentId, color: "var(--accent)" };
           const isSummary = speech.role === "summary";
 
           return (
@@ -2433,7 +2689,11 @@ function MeetingTab() {
                   boxShadow: isSummary ? `0 0 16px color-mix(in srgb, ${info.color} 18%, transparent)` : "none",
                 }}
               >
-                {info.emoji}
+                <AgentIcon
+                  agentId={(speech.agentId in AGENT_META ? speech.agentId : "orchestrator") as keyof typeof AGENT_META}
+                  size={20}
+                  color={speech.agentId in AGENT_META ? getAgentIconColor(speech.agentId as keyof typeof AGENT_META) : info.color}
+                />
               </div>
 
               <div className="meeting-shell__bubble-wrap">

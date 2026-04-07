@@ -3,9 +3,11 @@ import {
   buildKnowledgeDocumentDocument,
   buildProjectMemoryDocument,
   searchSemanticMemory,
+  searchSemanticMemoryAsync,
 } from "@/lib/semantic-memory";
+import type { ModelProvider } from "@/store/types";
 import type { WorkspaceDeskNote, WorkspaceProjectMemory } from "@/types/desktop-workspace";
-import type { SemanticKnowledgeDocument } from "@/types/semantic-memory";
+import type { SemanticKnowledgeDocument, SemanticMemoryConfig } from "@/types/semantic-memory";
 
 export interface ProjectMemoryRecallContext {
   instruction?: string;
@@ -140,6 +142,44 @@ export function getRecommendedProjectMemories(
     } satisfies ProjectMemoryRecommendation));
 }
 
+export async function getRecommendedProjectMemoriesAsync(
+  memories: WorkspaceProjectMemory[],
+  context: ProjectMemoryRecallContext,
+  config: SemanticMemoryConfig,
+  providers: ModelProvider[],
+  limit = 3,
+) {
+  const results: Array<{
+    document: { item: WorkspaceProjectMemory };
+    score: number;
+    reasons: string[];
+  }> = await searchSemanticMemoryAsync(
+    memories.map(memory => ({
+      ...buildProjectMemoryDocument(memory),
+      content: buildProjectMemoryScratchpad(memory),
+    })),
+    {
+      query: context.instruction,
+      workspaceRoot: context.workspaceRoot,
+      workspaceCurrentPath: context.workspaceCurrentPath,
+      activePreviewPath: context.activePreviewPath,
+      pinnedPaths: context.pinnedPaths,
+      recentTranscript: context.recentTranscript,
+    },
+    { limit, config, providers },
+  );
+
+  return results.map((result: {
+    document: { item: WorkspaceProjectMemory };
+    score: number;
+    reasons: string[];
+  }) => ({
+    memory: result.document.item,
+    score: result.score,
+    reasons: result.reasons,
+  } satisfies ProjectMemoryRecommendation));
+}
+
 export function getAutoRecalledProjectMemory(
   memories: WorkspaceProjectMemory[],
   context: ProjectMemoryRecallContext,
@@ -172,6 +212,41 @@ export function getRecommendedDeskNotes(
       score: result.score,
       reasons: result.reasons,
     } satisfies DeskNoteRecommendation));
+}
+
+export async function getRecommendedDeskNotesAsync(
+  notes: WorkspaceDeskNote[],
+  context: ProjectMemoryRecallContext,
+  config: SemanticMemoryConfig,
+  providers: ModelProvider[],
+  limit = 3,
+) {
+  const results: Array<{
+    document: { item: WorkspaceDeskNote };
+    score: number;
+    reasons: string[];
+  }> = await searchSemanticMemoryAsync(
+    notes.map(buildDeskNoteDocument),
+    {
+      query: context.instruction,
+      workspaceRoot: context.workspaceRoot,
+      workspaceCurrentPath: context.workspaceCurrentPath,
+      activePreviewPath: context.activePreviewPath,
+      pinnedPaths: context.pinnedPaths,
+      recentTranscript: context.recentTranscript,
+    },
+    { limit, config, providers },
+  );
+
+  return results.map((result: {
+    document: { item: WorkspaceDeskNote };
+    score: number;
+    reasons: string[];
+  }) => ({
+    note: result.document.item,
+    score: result.score,
+    reasons: result.reasons,
+  } satisfies DeskNoteRecommendation));
 }
 
 export function getAutoRecalledDeskNote(
@@ -224,6 +299,41 @@ export function getRecommendedKnowledgeDocuments(
   } satisfies KnowledgeDocumentRecommendation));
 }
 
+export async function getRecommendedKnowledgeDocumentsAsync(
+  documents: SemanticKnowledgeDocument[],
+  context: ProjectMemoryRecallContext,
+  config: SemanticMemoryConfig,
+  providers: ModelProvider[],
+  limit = 3,
+) {
+  const results: Array<{
+    document: { item: SemanticKnowledgeDocument };
+    score: number;
+    reasons: string[];
+  }> = await searchSemanticMemoryAsync(
+    documents.map(buildKnowledgeDocumentDocument),
+    {
+      query: context.instruction,
+      workspaceRoot: context.workspaceRoot,
+      workspaceCurrentPath: context.workspaceCurrentPath,
+      activePreviewPath: context.activePreviewPath,
+      pinnedPaths: context.pinnedPaths,
+      recentTranscript: context.recentTranscript,
+    },
+    { limit, config, providers },
+  );
+
+  return results.map((result: {
+    document: { item: SemanticKnowledgeDocument };
+    score: number;
+    reasons: string[];
+  }) => ({
+    document: result.document.item,
+    score: result.score,
+    reasons: result.reasons,
+  } satisfies KnowledgeDocumentRecommendation));
+}
+
 export function getAutoRecalledKnowledgeDocument(
   documents: SemanticKnowledgeDocument[],
   context: ProjectMemoryRecallContext,
@@ -247,5 +357,31 @@ export function getAutoRecalledWorkspaceContext(
     memoryRecommendation: getAutoRecalledProjectMemory(memories, context, memoryThreshold),
     deskNoteRecommendations: getRecommendedDeskNotes(notes, context, 3).filter(item => item.score >= noteThreshold),
     knowledgeRecommendations: getRecommendedKnowledgeDocuments(documents, context, 3).filter(item => item.score >= documentThreshold),
+  };
+}
+
+export async function getAutoRecalledWorkspaceContextAsync(
+  memories: WorkspaceProjectMemory[],
+  notes: WorkspaceDeskNote[],
+  documents: SemanticKnowledgeDocument[],
+  context: ProjectMemoryRecallContext,
+  config: SemanticMemoryConfig,
+  providers: ModelProvider[],
+  memoryThreshold = 10,
+  noteThreshold = 9,
+  documentThreshold = 9,
+): Promise<WorkspaceRecallRecommendation> {
+  const [memoryRecommendations, deskNoteRecommendations, knowledgeRecommendations] = await Promise.all([
+    getRecommendedProjectMemoriesAsync(memories, context, config, providers, 1),
+    getRecommendedDeskNotesAsync(notes, context, config, providers, 3),
+    getRecommendedKnowledgeDocumentsAsync(documents, context, config, providers, 3),
+  ]);
+
+  return {
+    memoryRecommendation: memoryRecommendations[0] && memoryRecommendations[0].score >= memoryThreshold
+      ? memoryRecommendations[0]
+      : null,
+    deskNoteRecommendations: deskNoteRecommendations.filter((item: DeskNoteRecommendation) => item.score >= noteThreshold),
+    knowledgeRecommendations: knowledgeRecommendations.filter((item: KnowledgeDocumentRecommendation) => item.score >= documentThreshold),
   };
 }

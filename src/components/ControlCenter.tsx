@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useStore } from "@/store";
 import { filterByProjectScope, getRunProjectScopeKey, getSessionProjectLabel } from "@/lib/project-context";
+import { isManualInjectableKnowledgeDocument } from "@/lib/memory-compression";
 import { getTeamOperatingTemplate, TEAM_OPERATING_SURFACES } from "@/store/types";
 import type { ControlCenterSectionId, UiLocale } from "@/store/types";
 import { getUiText, pickLocaleText } from "@/lib/ui-locale";
@@ -356,7 +357,8 @@ function ControlOverview({
   const scopedDeskNotes = filterByProjectScope(workspaceDeskNotes, activeSession ?? {});
   const scopedSavedBundles = filterByProjectScope(workspaceSavedBundles, activeSession ?? {});
   const scopedProjectMemories = filterByProjectScope(workspaceProjectMemories, activeSession ?? {});
-  const scopedKnowledgeDocs = filterByProjectScope(semanticKnowledgeDocs, activeSession ?? {});
+  const scopedKnowledgeDocs = filterByProjectScope(semanticKnowledgeDocs, activeSession ?? {})
+    .filter(isManualInjectableKnowledgeDocument);
   const scopedRuns = executionRuns.filter(run => getRunProjectScopeKey(run, chatSessions) === currentProjectKey);
   const scopedApprovals = filterByProjectScope(businessApprovals, activeSession ?? {});
   const scopedCustomers = filterByProjectScope(businessCustomers, activeSession ?? {});

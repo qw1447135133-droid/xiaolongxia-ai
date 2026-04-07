@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect } from "react";
-import { applyDesktopLaunchNavigation } from "@/lib/desktop-launch-routing";
 import { useStore } from "@/store";
 import { randomId } from "@/lib/utils";
 import type {
@@ -104,7 +103,19 @@ type WsMessage =
     }
   | { type: "agent_status"; agentId: AgentId; status: AgentStatus; currentTask?: string; executionRunId?: string }
   | { type: "task_add"; task: Task; executionRunId?: string }
+  | { type: "task_stream_delta"; taskId: string; delta: string; executionRunId?: string }
   | { type: "task_update"; taskId: string; updates: Partial<Task>; executionRunId?: string }
+  | {
+      type: "assistant_reasoning";
+      taskId: string;
+      sessionId: string;
+      agentId: AgentId;
+      executionRunId?: string;
+      summary?: string;
+      detail?: string;
+      status?: "running" | "done" | "failed";
+      timestamp?: number;
+    }
   | { type: "activity"; activity: Omit<Activity, "id">; executionRunId?: string }
   | { type: "cost"; agentId: AgentId; tokens: number }
   | {
@@ -130,9 +141,14 @@ let _retryDelay = 1000;
 let _retryCount = 0;
 let _retryTimer: number | null = null;
 let _isConnecting = false;
+let _heartbeatTimer: number | null = null;
+let _pongTimeoutTimer: number | null = null;
+let _connectTimeoutTimer: number | null = null;
 
-const WS_MAX_RETRIES = 20;
 const WS_RETRY_MAX = 30000;
+const WS_HEARTBEAT_INTERVAL = 15000;
+const WS_PONG_TIMEOUT = 7000;
+const WS_CONNECT_TIMEOUT = 8000;
 
 function getStore() {
   return useStore.getState();
@@ -140,13 +156,22 @@ function getStore() {
 
 function syncSettingsToSocket() {
   if (_ws?.readyState !== WebSocket.OPEN) return;
-  const { providers, agentConfigs, platformConfigs, userNickname, desktopProgramSettings, hermesDispatchSettings } = getStore();
+  const {
+    providers,
+    agentConfigs,
+    platformConfigs,
+    userNickname,
+    semanticMemoryConfig,
+    desktopProgramSettings,
+    hermesDispatchSettings,
+  } = getStore();
   _ws.send(JSON.stringify({
     type: "settings_sync",
     providers,
     agentConfigs,
     platformConfigs,
     userNickname,
+    semanticMemoryConfig,
     desktopProgramSettings,
     hermesDispatchSettings,
     runtime: {
@@ -173,8 +198,6 @@ function syncSettingsToSocket() {
 async function handleDesktopLaunchRequest(msg: Extract<WsMessage, { type: "desktop_launch_request" }>) {
   const {
     desktopProgramSettings,
-    setTab,
-    setActiveControlCenterSection,
   } = getStore();
   const sendResult = (payload: { ok: boolean; result?: NativeAppLaunchResult; error?: string }) => {
     if (_ws?.readyState !== WebSocket.OPEN) return;
@@ -202,12 +225,6 @@ async function handleDesktopLaunchRequest(msg: Extract<WsMessage, { type: "deskt
         })),
       },
     });
-    if (result.ok) {
-      applyDesktopLaunchNavigation(msg.payload.target, {
-        setTab,
-        setActiveControlCenterSection,
-      });
-    }
     sendResult({ ok: true, result });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -215,10 +232,11 @@ async function handleDesktopLaunchRequest(msg: Extract<WsMessage, { type: "deskt
   }
 }
 
-function focusDesktopControlPanel() {
-  const { setTab, setActiveControlCenterSection } = getStore();
-  setActiveControlCenterSection("desktop");
-  setTab("settings");
+function maybeFocusDesktopControlPanel(enabled: boolean) {
+  if (!enabled) return;
+  // Keep this toggle as a status reminder only.
+  // Desktop evidence / execution state is still recorded in-store,
+  // but we no longer auto-switch tabs or panels while the user is chatting.
 }
 
 function buildDesktopVerificationResumeInstruction(meta: {
@@ -356,10 +374,6 @@ async function handleDesktopInputRequest(msg: Extract<WsMessage, { type: "deskto
     }));
   };
 
-  if (desktopProgramSettings.inputControl.autoOpenPanelOnAction) {
-    focusDesktopControlPanel();
-  }
-
   setDesktopInputSession({
     state: "running",
     source: "agent",
@@ -378,6 +392,7 @@ async function handleDesktopInputRequest(msg: Extract<WsMessage, { type: "deskto
 
   if (!window.electronAPI?.controlDesktopInput) {
     const error = "当前客户端不是 Electron 桌面运行态，无法执行鼠标键盘接管。";
+    maybeFocusDesktopControlPanel(desktopProgramSettings.inputControl.autoOpenPanelOnAction);
     appendDesktopExecutionEvent({
       executionRunId: msg.executionRunId,
       sessionId: msg.sessionId,
@@ -455,6 +470,7 @@ async function handleDesktopInputRequest(msg: Extract<WsMessage, { type: "deskto
       : undefined;
     if (result.manualRequired) {
       setAutomationPaused(true);
+      maybeFocusDesktopControlPanel(desktopProgramSettings.inputControl.autoOpenPanelOnAction);
     }
     const resultDetail = result.manualRequired
       ? `${result.message} 已切到人工验证，目标 ${msg.payload.target || "当前桌面"}。`
@@ -526,6 +542,7 @@ async function handleDesktopInputRequest(msg: Extract<WsMessage, { type: "deskto
     sendResult({ ok: true, result });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    maybeFocusDesktopControlPanel(desktopProgramSettings.inputControl.autoOpenPanelOnAction);
     appendDesktopExecutionEvent({
       executionRunId: msg.executionRunId,
       sessionId: msg.sessionId,
@@ -592,10 +609,6 @@ async function handleDesktopCaptureRequest(msg: Extract<WsMessage, { type: "desk
     }));
   };
 
-  if (desktopProgramSettings.inputControl.autoOpenPanelOnAction) {
-    focusDesktopControlPanel();
-  }
-
   appendDesktopExecutionEvent({
     executionRunId: msg.executionRunId,
     sessionId: msg.sessionId,
@@ -615,6 +628,7 @@ async function handleDesktopCaptureRequest(msg: Extract<WsMessage, { type: "desk
 
   if (!window.electronAPI?.captureDesktopScreenshot) {
     const error = "当前客户端不是 Electron 桌面运行态，无法抓取桌面截图。";
+    maybeFocusDesktopControlPanel(desktopProgramSettings.inputControl.autoOpenPanelOnAction);
     appendDesktopExecutionEvent({
       executionRunId: msg.executionRunId,
       sessionId: msg.sessionId,
@@ -710,6 +724,7 @@ async function handleDesktopCaptureRequest(msg: Extract<WsMessage, { type: "desk
     sendResult({ ok: true, result });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    maybeFocusDesktopControlPanel(desktopProgramSettings.inputControl.autoOpenPanelOnAction);
     appendDesktopExecutionEvent({
       executionRunId: msg.executionRunId,
       sessionId: msg.sessionId,
@@ -784,6 +799,7 @@ function handleMessage(msg: WsMessage) {
     setAgentStatus,
     addTask,
     updateTask,
+    appendTaskResult,
     addActivity,
     addCost,
     addTokens,
@@ -797,6 +813,7 @@ function handleMessage(msg: WsMessage) {
     upsertBusinessChannelSession,
     recordBusinessOperation,
     setChannelActionResult,
+    upsertAssistantReasoning,
   } = getStore();
 
   switch (msg.type) {
@@ -808,6 +825,21 @@ function handleMessage(msg: WsMessage) {
       break;
     case "task_update":
       updateTask(msg.taskId, msg.updates);
+      break;
+    case "task_stream_delta":
+      appendTaskResult(msg.taskId, msg.delta);
+      break;
+    case "assistant_reasoning":
+      upsertAssistantReasoning({
+        taskId: msg.taskId,
+        sessionId: msg.sessionId,
+        agentId: msg.agentId,
+        executionRunId: msg.executionRunId,
+        summary: msg.summary,
+        detail: msg.detail,
+        status: msg.status,
+        updatedAt: msg.timestamp,
+      });
       break;
     case "activity":
       addActivity({ ...msg.activity, id: randomId() });
@@ -949,9 +981,9 @@ async function getWsUrl(): Promise<string> {
     (window as unknown as { electronAPI?: { getWsPort: () => Promise<number> } }).electronAPI
   ) {
     const port = await (window as unknown as { electronAPI: { getWsPort: () => Promise<number> } }).electronAPI.getWsPort();
-    return `ws://localhost:${port}`;
+    return `ws://127.0.0.1:${port}`;
   }
-  return process.env.NEXT_PUBLIC_WS_URL ?? "ws://localhost:3001";
+  return process.env.NEXT_PUBLIC_WS_URL ?? "ws://127.0.0.1:3001";
 }
 
 export function getWebSocket(): WebSocket | null {
@@ -966,13 +998,75 @@ export function sendWs(msg: object): boolean {
   return false;
 }
 
-export function connectWebSocket(force = false) {
-  const { setWsStatus } = getStore();
-
+function clearRetryTimer() {
   if (_retryTimer) {
     clearTimeout(_retryTimer);
     _retryTimer = null;
   }
+}
+
+function clearHeartbeatTimers() {
+  if (_heartbeatTimer) {
+    clearInterval(_heartbeatTimer);
+    _heartbeatTimer = null;
+  }
+  if (_pongTimeoutTimer) {
+    clearTimeout(_pongTimeoutTimer);
+    _pongTimeoutTimer = null;
+  }
+}
+
+function clearConnectTimeout() {
+  if (_connectTimeoutTimer) {
+    clearTimeout(_connectTimeoutTimer);
+    _connectTimeoutTimer = null;
+  }
+}
+
+function scheduleReconnect() {
+  clearRetryTimer();
+  _retryTimer = window.setTimeout(() => connectWebSocket(), _retryDelay);
+  _retryDelay = Math.min(_retryDelay * 2, WS_RETRY_MAX);
+}
+
+function markHeartbeatReceived() {
+  if (_pongTimeoutTimer) {
+    clearTimeout(_pongTimeoutTimer);
+    _pongTimeoutTimer = null;
+  }
+}
+
+function startHeartbeat() {
+  clearHeartbeatTimers();
+  _heartbeatTimer = window.setInterval(() => {
+    if (!_ws || _ws.readyState !== WebSocket.OPEN) {
+      return;
+    }
+
+    try {
+      _ws.send(JSON.stringify({ type: "ping" }));
+      markHeartbeatReceived();
+      _pongTimeoutTimer = window.setTimeout(() => {
+        try {
+          _ws?.close();
+        } catch {
+          // Ignore best-effort close failures.
+        }
+      }, WS_PONG_TIMEOUT);
+    } catch {
+      try {
+        _ws?.close();
+      } catch {
+        // Ignore best-effort close failures.
+      }
+    }
+  }, WS_HEARTBEAT_INTERVAL);
+}
+
+export function connectWebSocket(force = false) {
+  const { setWsStatus } = getStore();
+
+  clearRetryTimer();
 
   if (!force && (_isConnecting || (_ws && _ws.readyState !== WebSocket.CLOSED))) {
     return;
@@ -980,8 +1074,12 @@ export function connectWebSocket(force = false) {
 
   if (force && _ws) {
     try {
-      _ws.onclose = null;
-      _ws.close();
+      const staleSocket = _ws;
+      staleSocket.onopen = null;
+      staleSocket.onmessage = null;
+      staleSocket.onerror = null;
+      staleSocket.onclose = null;
+      staleSocket.close();
     } catch {
       // Ignore best-effort close failures.
     }
@@ -992,20 +1090,35 @@ export function connectWebSocket(force = false) {
   setWsStatus("connecting");
 
   getWsUrl().then((wsUrl) => {
-    _ws = new WebSocket(wsUrl);
+    const socket = new WebSocket(wsUrl);
+    _ws = socket;
+    clearConnectTimeout();
+    _connectTimeoutTimer = window.setTimeout(() => {
+      if (socket.readyState === WebSocket.CONNECTING) {
+        try {
+          socket.close();
+        } catch {
+          // Ignore best-effort close failures.
+        }
+      }
+    }, WS_CONNECT_TIMEOUT);
 
-    _ws.onopen = () => {
+    socket.onopen = () => {
+      if (_ws !== socket) return;
+      clearConnectTimeout();
       _retryDelay = 1000;
       _retryCount = 0;
       _isConnecting = false;
       getStore().setWsStatus("connected");
+      startHeartbeat();
 
       window.setTimeout(() => {
         syncSettingsToSocket();
       }, 100);
     };
 
-    _ws.onmessage = (e) => {
+    socket.onmessage = (e) => {
+      if (_ws !== socket) return;
       try {
         const message = JSON.parse(e.data as string) as WsMessage;
         if (message.type === "desktop_launch_request") {
@@ -1024,30 +1137,48 @@ export function connectWebSocket(force = false) {
           void handleDesktopInstalledAppsRequest(message);
           return;
         }
+        if (message.type === "pong") {
+          markHeartbeatReceived();
+          return;
+        }
         handleMessage(message);
       } catch (err) {
         console.error("[WS] parse error:", err);
       }
     };
 
-    _ws.onclose = () => {
+    socket.onclose = () => {
+      if (_ws !== socket) return;
       _isConnecting = false;
+      clearConnectTimeout();
+      clearHeartbeatTimers();
       getStore().setWsStatus("disconnected");
       _retryCount += 1;
-      if (_retryCount <= WS_MAX_RETRIES) {
-        _retryTimer = window.setTimeout(() => connectWebSocket(), _retryDelay);
-        _retryDelay = Math.min(_retryDelay * 2, WS_RETRY_MAX);
-      }
+      _ws = null;
+      scheduleReconnect();
     };
 
-    _ws.onerror = (err) => {
-      console.error("[WS] error:", err);
+    socket.onerror = () => {
+      if (_ws !== socket) return;
+      console.error("[WS] connection error", {
+        url: wsUrl,
+        readyState: socket.readyState,
+        retryCount: _retryCount,
+      });
       _isConnecting = false;
+      try {
+        socket.close();
+      } catch {
+        // Ignore best-effort close failures.
+      }
     };
   }).catch((err) => {
     console.error("[WS] connect failed:", err);
     _isConnecting = false;
+    clearConnectTimeout();
+    clearHeartbeatTimers();
     setWsStatus("disconnected");
+    scheduleReconnect();
   });
 }
 
@@ -1061,11 +1192,29 @@ export function useWebSocket() {
   useEffect(() => {
     connectWebSocket();
 
-    return () => {
-      if (_retryTimer) {
-        clearTimeout(_retryTimer);
-        _retryTimer = null;
+    const reconnectIfNeeded = () => {
+      if (getStore().wsStatus !== "connected") {
+        reconnectWebSocket();
       }
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        reconnectIfNeeded();
+      }
+    };
+
+    window.addEventListener("online", reconnectIfNeeded);
+    window.addEventListener("focus", reconnectIfNeeded);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      window.removeEventListener("online", reconnectIfNeeded);
+      window.removeEventListener("focus", reconnectIfNeeded);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      clearRetryTimer();
+      clearHeartbeatTimers();
+      clearConnectTimeout();
     };
   }, []);
 }

@@ -12,10 +12,11 @@ import {
   getRecommendedKnowledgeDocuments,
   getRecommendedProjectMemories,
 } from "@/lib/workspace-memory";
+import { isManualInjectableKnowledgeDocument } from "@/lib/memory-compression";
 import { filterByProjectScope } from "@/lib/project-context";
 import { useStore } from "@/store";
 import { randomId } from "@/lib/utils";
-import { sendExecutionDispatch } from "@/lib/execution-dispatch";
+import { cancelExecutionRun, sendExecutionDispatch } from "@/lib/execution-dispatch";
 
 type AttachmentKind = "image" | "document" | "audio" | "video" | "other";
 
@@ -100,12 +101,14 @@ export function CommandInput({
   const [error, setError] = useState("");
   const [attachments, setAttachments] = useState<AttachmentItem[]>([]);
   const [includeProjectMemory, setIncludeProjectMemory] = useState(true);
+  const [cancellingRunId, setCancellingRunId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const {
     isDispatching,
     wsStatus,
     commandDraft,
     tasks,
+    executionRuns,
     workspaceRoot,
     workspaceCurrentPath,
     workspaceActivePreviewPath,
@@ -129,6 +132,25 @@ export function CommandInput({
     [activeSessionId, chatSessions],
   );
 
+  const activeChatExecutionRun = useMemo(
+    () =>
+      executionRuns
+        .filter(
+          run =>
+            run.sessionId === activeSessionId
+            && run.source === "chat"
+            && (run.status === "queued" || run.status === "analyzing" || run.status === "running"),
+        )
+        .sort((left, right) => right.updatedAt - left.updatedAt)[0] ?? null,
+    [activeSessionId, executionRuns],
+  );
+
+  useEffect(() => {
+    if (cancellingRunId && (!activeChatExecutionRun || activeChatExecutionRun.id !== cancellingRunId)) {
+      setCancellingRunId(null);
+    }
+  }, [activeChatExecutionRun, cancellingRunId]);
+
   const scopedProjectMemories = useMemo(
     () => filterByProjectScope(workspaceProjectMemories, activeSession ?? {}),
     [activeSession, workspaceProjectMemories],
@@ -138,7 +160,7 @@ export function CommandInput({
     [activeSession, workspaceDeskNotes],
   );
   const scopedKnowledgeDocs = useMemo(
-    () => filterByProjectScope(semanticKnowledgeDocs, activeSession ?? {}),
+    () => filterByProjectScope(semanticKnowledgeDocs, activeSession ?? {}).filter(isManualInjectableKnowledgeDocument),
     [activeSession, semanticKnowledgeDocs],
   );
 
@@ -258,7 +280,7 @@ export function CommandInput({
 
   const dispatch = async () => {
     const instruction = commandDraft.trim();
-    if (!instruction || isDispatching) return;
+    if (!instruction || isDispatching || activeChatExecutionRun) return;
 
     if (wsStatus !== "connected") {
       setError("WebSocket is disconnected. Please retry in a moment.");
@@ -284,7 +306,7 @@ export function CommandInput({
     clearCommandDraft();
     setAttachments([]);
 
-    const { ok } = sendExecutionDispatch({
+    const { ok } = await sendExecutionDispatch({
       instruction,
       source: "chat",
       attachments: attachmentMetas,
@@ -298,6 +320,17 @@ export function CommandInput({
     }
 
     setDispatching(false);
+  };
+
+  const stopCurrentReply = () => {
+    if (!activeChatExecutionRun) return;
+    const ok = cancelExecutionRun(activeChatExecutionRun.id);
+    if (!ok) {
+      setError("中止请求发送失败，请稍后重试。");
+      return;
+    }
+    setError("");
+    setCancellingRunId(activeChatExecutionRun.id);
   };
 
   return (
@@ -464,21 +497,39 @@ export function CommandInput({
           placeholder="输入你的任务、问题、网页研究需求或桌面执行目标"
           rows={4}
         />
-        <button
-          className={`command-input__send command-input__send2 ${commandDraft.trim() && !isDispatching ? "is-ready" : ""}`}
-          onClick={() => void dispatch()}
-          disabled={isDispatching || !commandDraft.trim()}
-          title="Send message"
-          type="button"
-        >
-          {isDispatching ? (
-            <span className="spinner" style={{ width: 16, height: 16, borderWidth: 2 }} />
-          ) : (
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" />
-            </svg>
-          )}
-        </button>
+        {activeChatExecutionRun ? (
+          <button
+            className={`command-input__send command-input__send2 command-input__stop ${cancellingRunId === activeChatExecutionRun.id ? "is-pending" : "is-ready"}`}
+            onClick={stopCurrentReply}
+            disabled={cancellingRunId === activeChatExecutionRun.id}
+            title="中止当前回复"
+            type="button"
+          >
+            {cancellingRunId === activeChatExecutionRun.id ? (
+              <span className="spinner" style={{ width: 16, height: 16, borderWidth: 2 }} />
+            ) : (
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <rect x="7" y="7" width="10" height="10" rx="2" />
+              </svg>
+            )}
+          </button>
+        ) : (
+          <button
+            className={`command-input__send command-input__send2 ${commandDraft.trim() && !isDispatching ? "is-ready" : ""}`}
+            onClick={() => void dispatch()}
+            disabled={isDispatching || !commandDraft.trim()}
+            title="Send message"
+            type="button"
+          >
+            {isDispatching ? (
+              <span className="spinner" style={{ width: 16, height: 16, borderWidth: 2 }} />
+            ) : (
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" />
+              </svg>
+            )}
+          </button>
+        )}
       </div>
 
       {showFooter ? (

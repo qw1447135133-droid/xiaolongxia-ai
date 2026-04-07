@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { filterByProjectScope, getRunProjectScopeKey } from "@/lib/project-context";
 import { isPlatformOperationalStatus } from "@/lib/platform-connectors";
 import { useStore } from "@/store";
@@ -222,19 +222,151 @@ export function LaunchReadinessPanel({
     },
   ];
 
+  useEffect(() => {
+    if (!activeAdvice) return undefined;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setActiveAdviceId(null);
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [activeAdvice]);
+
   if (compact) {
     return (
+      <>
+        <div
+          className="card"
+          style={{
+            padding: 14,
+            display: "grid",
+            gap: 10,
+            borderColor: readinessPercent >= 80 ? "rgba(34, 197, 94, 0.24)" : "rgba(251, 191, 36, 0.24)",
+            background: "linear-gradient(135deg, rgba(125, 211, 252, 0.08), rgba(255,255,255,0.02))",
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+            <div>
+              <div style={{ fontSize: 11, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.08em" }}>
+                {pickLocaleText(locale, {
+                  "zh-CN": "上线准备度",
+                  "zh-TW": "上線準備度",
+                  en: "Launch Readiness",
+                  ja: "公開準備度",
+                })}
+              </div>
+              <div style={{ marginTop: 4, fontSize: 16, fontWeight: 700 }}>
+                {pickLocaleText(locale, {
+                  "zh-CN": "人工收口摘要",
+                  "zh-TW": "人工收口摘要",
+                  en: "Manual Closing Summary",
+                  ja: "手動収束サマリー",
+                })}
+              </div>
+            </div>
+            <span
+              style={{
+                padding: "4px 10px",
+                borderRadius: 999,
+                border: `1px solid ${readinessPercent >= 80 ? "rgba(34, 197, 94, 0.32)" : "rgba(251, 191, 36, 0.32)"}`,
+                background: readinessPercent >= 80 ? "rgba(34, 197, 94, 0.12)" : "rgba(251, 191, 36, 0.12)",
+                color: readinessPercent >= 80 ? "var(--success)" : "var(--warning)",
+                fontSize: 12,
+                fontWeight: 700,
+              }}
+            >
+              {readinessPercent}%
+            </span>
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 8 }}>
+            {compactSummaryItems.map(item => (
+              <div
+                key={item.label}
+                style={{
+                  padding: "10px 12px",
+                  borderRadius: 14,
+                  border: "1px solid var(--border)",
+                  background: "rgba(255,255,255,0.03)",
+                }}
+              >
+                <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{item.label}</div>
+                <div style={{ marginTop: 6, fontSize: 17, fontWeight: 700, color: item.accent }}>{item.value}</div>
+              </div>
+            ))}
+          </div>
+
+          <div style={{ display: "grid", gap: 8 }}>
+            <div style={{ fontSize: 11, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.08em" }}>
+              {pickLocaleText(locale, {
+                "zh-CN": "当前阻塞",
+                "zh-TW": "目前阻塞",
+                en: "Current Blockers",
+                ja: "現在の阻害項目",
+              })}
+            </div>
+            {riskItems.length > 0 ? (
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 8 }}>
+                {riskItems.map(item => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    className="btn-ghost"
+                    style={{
+                      textAlign: "left",
+                      padding: "10px 12px",
+                      borderRadius: 14,
+                      border: "1px solid var(--border)",
+                      background: item.severity === "critical"
+                        ? "rgba(248, 113, 113, 0.08)"
+                        : item.severity === "warning"
+                          ? "rgba(251, 191, 36, 0.08)"
+                          : "rgba(255,255,255,0.03)",
+                    }}
+                    onClick={() => setActiveAdviceId(item.id)}
+                  >
+                    <div style={{ fontSize: 12, fontWeight: 700 }}>{item.title}</div>
+                    <div style={{ marginTop: 6, fontSize: 11, color: "var(--text-muted)", lineHeight: 1.6 }}>
+                      {truncateRiskDetail(item.detail)}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.7 }}>
+                {pickLocaleText(locale, {
+                  "zh-CN": "当前没有明显阻塞项，主链路可以继续自动推进。",
+                  "zh-TW": "目前沒有明顯阻塞項，主鏈路可以繼續自動推進。",
+                  en: "There are no visible blockers and the main chain can keep moving automatically.",
+                  ja: "目立つ阻害項目はなく、メインフローは自動で継続できます。",
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+
+        <AdviceModal
+          activeAdvice={activeAdvice}
+          locale={locale}
+          onClose={() => setActiveAdviceId(null)}
+          onOpenSection={onSelectSection}
+        />
+      </>
+    );
+  }
+
+  return (
+    <>
       <div
         className="card"
         style={{
-          padding: 14,
+          padding: compact ? 14 : 16,
           display: "grid",
-          gap: 10,
+          gap: 12,
           borderColor: readinessPercent >= 80 ? "rgba(34, 197, 94, 0.24)" : "rgba(251, 191, 36, 0.24)",
           background: "linear-gradient(135deg, rgba(125, 211, 252, 0.08), rgba(255,255,255,0.02))",
         }}
       >
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
           <div>
             <div style={{ fontSize: 11, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.08em" }}>
               {pickLocaleText(locale, {
@@ -244,12 +376,12 @@ export function LaunchReadinessPanel({
                 ja: "公開準備度",
               })}
             </div>
-            <div style={{ marginTop: 4, fontSize: 16, fontWeight: 700 }}>
+          <div style={{ marginTop: 4, fontSize: compact ? 16 : 18, fontWeight: 700 }}>
               {pickLocaleText(locale, {
-                "zh-CN": "人工收口摘要",
-                "zh-TW": "人工收口摘要",
-                en: "Manual Closing Summary",
-                ja: "手動収束サマリー",
+                "zh-CN": "人工收口看板",
+                "zh-TW": "人工收口看板",
+                en: "Manual Closing Board",
+                ja: "手動収束ボード",
               })}
             </div>
           </div>
@@ -268,8 +400,13 @@ export function LaunchReadinessPanel({
           </span>
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 8 }}>
-          {compactSummaryItems.map(item => (
+        <div style={{ display: "grid", gridTemplateColumns: compact ? "1fr 1fr" : "repeat(auto-fit, minmax(160px, 1fr))", gap: 10 }}>
+          {[
+            { label: "可运行连接器", value: `${operationalPlatforms.length}/${enabledPlatforms.length}`, accent: "var(--success)" },
+            { label: "恢复队列", value: recoveryRuns.length, accent: recoveryRuns.length === 0 ? "var(--success)" : "var(--warning)" },
+            { label: "待审批", value: pendingApprovals, accent: pendingApprovals === 0 ? "var(--success)" : "var(--warning)" },
+            { label: "待回复会话", value: pendingReplySessions, accent: pendingReplySessions === 0 ? "var(--success)" : "#60a5fa" },
+          ].map(item => (
             <div
               key={item.label}
               style={{
@@ -280,22 +417,52 @@ export function LaunchReadinessPanel({
               }}
             >
               <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{item.label}</div>
-              <div style={{ marginTop: 6, fontSize: 17, fontWeight: 700, color: item.accent }}>{item.value}</div>
+              <div style={{ marginTop: 6, fontSize: compact ? 18 : 20, fontWeight: 700, color: item.accent }}>{item.value}</div>
             </div>
+          ))}
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: compact ? "1fr 1fr" : "repeat(auto-fit, minmax(180px, 1fr))", gap: 10 }}>
+          {visibleChecks.map(check => (
+            <button
+              key={check.id}
+              type="button"
+              className="btn-ghost"
+              style={{
+                textAlign: "left",
+                padding: 12,
+                borderRadius: 14,
+                border: "1px solid var(--border)",
+                background: "rgba(255,255,255,0.03)",
+              }}
+              onClick={() => setActiveAdviceId(check.id)}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
+                <strong style={{ fontSize: 12 }}>{check.label}</strong>
+                <span style={{ color: check.ok ? "var(--success)" : "var(--warning)", fontSize: 11 }}>
+                  {check.ok
+                    ? pickLocaleText(locale, { "zh-CN": "正常", "zh-TW": "正常", en: "OK", ja: "正常" })
+                    : pickLocaleText(locale, { "zh-CN": "待处理", "zh-TW": "待處理", en: "Pending", ja: "要対応" })}
+                </span>
+              </div>
+              <div style={{ marginTop: 6, fontSize: 11, color: "var(--text-muted)", lineHeight: 1.7 }}>
+                {check.detail}
+              </div>
+            </button>
           ))}
         </div>
 
         <div style={{ display: "grid", gap: 8 }}>
           <div style={{ fontSize: 11, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.08em" }}>
             {pickLocaleText(locale, {
-              "zh-CN": "当前阻塞",
-              "zh-TW": "目前阻塞",
-              en: "Current Blockers",
-              ja: "現在の阻害項目",
+              "zh-CN": "最高风险",
+              "zh-TW": "最高風險",
+              en: "Top Risks",
+              ja: "主要リスク",
             })}
           </div>
           {riskItems.length > 0 ? (
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 8 }}>
+            <div style={{ display: "grid", gap: 8 }}>
               {riskItems.map(item => (
                 <button
                   key={item.id}
@@ -303,7 +470,7 @@ export function LaunchReadinessPanel({
                   className="btn-ghost"
                   style={{
                     textAlign: "left",
-                    padding: "10px 12px",
+                    padding: "12px 14px",
                     borderRadius: 14,
                     border: "1px solid var(--border)",
                     background: item.severity === "critical"
@@ -312,265 +479,111 @@ export function LaunchReadinessPanel({
                         ? "rgba(251, 191, 36, 0.08)"
                         : "rgba(255,255,255,0.03)",
                   }}
-                  onClick={() => setActiveAdviceId(current => current === item.id ? null : item.id)}
+                  onClick={() => setActiveAdviceId(item.id)}
                 >
-                  <div style={{ fontSize: 12, fontWeight: 700 }}>{item.title}</div>
-                  <div style={{ marginTop: 6, fontSize: 11, color: "var(--text-muted)", lineHeight: 1.6 }}>
-                    {truncateRiskDetail(item.detail)}
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
+                    <strong style={{ fontSize: 12 }}>{item.title}</strong>
+                    <span style={{ fontSize: 11, color: item.severity === "critical" ? "var(--danger)" : item.severity === "warning" ? "var(--warning)" : "var(--text-muted)" }}>
+                      {item.severity === "critical"
+                        ? pickLocaleText(locale, { "zh-CN": "阻断", "zh-TW": "阻斷", en: "Blocking", ja: "阻害" })
+                        : item.severity === "warning"
+                          ? pickLocaleText(locale, { "zh-CN": "关注", "zh-TW": "關注", en: "Warning", ja: "注意" })
+                          : pickLocaleText(locale, { "zh-CN": "提示", "zh-TW": "提示", en: "Info", ja: "情報" })}
+                    </span>
+                  </div>
+                  <div style={{ marginTop: 6, fontSize: 11, color: "var(--text-muted)", lineHeight: 1.7 }}>
+                    {item.detail}
                   </div>
                 </button>
               ))}
             </div>
           ) : (
-            <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.7 }}>
-              {pickLocaleText(locale, {
-                "zh-CN": "当前没有明显阻塞项，主链路可以继续自动推进。",
-                "zh-TW": "目前沒有明顯阻塞項，主鏈路可以繼續自動推進。",
-                en: "There are no visible blockers and the main chain can keep moving automatically.",
-                ja: "目立つ阻害項目はなく、メインフローは自動で継続できます。",
-              })}
+            <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.75 }}>
+              当前没有明显的人工阻断项。自动执行、验证和策略细节已从这个面板隐藏，继续查看对应子面板即可。
             </div>
           )}
-          {activeAdvice ? (
-            <div style={advicePanelStyle}>
-              <div style={adviceHeadStyle}>
-                <div>
-                  <div style={adviceEyebrowStyle}>
-                    {pickLocaleText(locale, {
-                      "zh-CN": "解决方案提示",
-                      "zh-TW": "解決方案提示",
-                      en: "Suggested Fix",
-                      ja: "解決のヒント",
-                    })}
-                  </div>
-                  <div style={adviceTitleStyle}>{activeAdvice.title}</div>
-                </div>
-                <button type="button" className="btn-ghost" onClick={() => setActiveAdviceId(null)}>
-                  {pickLocaleText(locale, {
-                    "zh-CN": "收起",
-                    "zh-TW": "收起",
-                    en: "Hide",
-                    ja: "閉じる",
-                  })}
-                </button>
-              </div>
-              <div style={adviceSummaryStyle}>{activeAdvice.summary}</div>
-              <div style={adviceStepsStyle}>
-                {activeAdvice.steps.map(step => (
-                  <div key={step} style={adviceStepStyle}>{step}</div>
-                ))}
-              </div>
-              {onSelectSection ? (
-                <div style={{ display: "flex", justifyContent: "flex-end" }}>
-                  <button type="button" className="btn-ghost" onClick={() => onSelectSection(activeAdvice.section)}>
-                    {pickLocaleText(locale, {
-                      "zh-CN": "打开对应面板",
-                      "zh-TW": "打開對應面板",
-                      en: "Open Related Panel",
-                      ja: "対応パネルを開く",
-                    })}
-                  </button>
-                </div>
-              ) : null}
-            </div>
-          ) : null}
         </div>
       </div>
-    );
-  }
+
+      <AdviceModal
+        activeAdvice={activeAdvice}
+        locale={locale}
+        onClose={() => setActiveAdviceId(null)}
+        onOpenSection={onSelectSection}
+      />
+    </>
+  );
+}
+
+function AdviceModal({
+  activeAdvice,
+  locale,
+  onClose,
+  onOpenSection,
+}: {
+  activeAdvice: ReturnType<typeof getLaunchAdvice> | null;
+  locale: ReturnType<typeof useStore.getState>["locale"];
+  onClose: () => void;
+  onOpenSection?: (section: ControlCenterSectionId) => void;
+}) {
+  if (!activeAdvice) return null;
 
   return (
-    <div
-      className="card"
-      style={{
-        padding: compact ? 14 : 16,
-        display: "grid",
-        gap: 12,
-        borderColor: readinessPercent >= 80 ? "rgba(34, 197, 94, 0.24)" : "rgba(251, 191, 36, 0.24)",
-        background: "linear-gradient(135deg, rgba(125, 211, 252, 0.08), rgba(255,255,255,0.02))",
-      }}
-    >
-      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
-        <div>
-          <div style={{ fontSize: 11, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.08em" }}>
-            {pickLocaleText(locale, {
-              "zh-CN": "上线准备度",
-              "zh-TW": "上線準備度",
-              en: "Launch Readiness",
-              ja: "公開準備度",
-            })}
-          </div>
-        <div style={{ marginTop: 4, fontSize: compact ? 16 : 18, fontWeight: 700 }}>
-            {pickLocaleText(locale, {
-              "zh-CN": "人工收口看板",
-              "zh-TW": "人工收口看板",
-              en: "Manual Closing Board",
-              ja: "手動収束ボード",
-            })}
-          </div>
-        </div>
-        <span
-          style={{
-            padding: "4px 10px",
-            borderRadius: 999,
-            border: `1px solid ${readinessPercent >= 80 ? "rgba(34, 197, 94, 0.32)" : "rgba(251, 191, 36, 0.32)"}`,
-            background: readinessPercent >= 80 ? "rgba(34, 197, 94, 0.12)" : "rgba(251, 191, 36, 0.12)",
-            color: readinessPercent >= 80 ? "var(--success)" : "var(--warning)",
-            fontSize: 12,
-            fontWeight: 700,
-          }}
-        >
-          {readinessPercent}%
-        </span>
-      </div>
-
-      <div style={{ display: "grid", gridTemplateColumns: compact ? "1fr 1fr" : "repeat(auto-fit, minmax(160px, 1fr))", gap: 10 }}>
-        {[
-          { label: "可运行连接器", value: `${operationalPlatforms.length}/${enabledPlatforms.length}`, accent: "var(--success)" },
-          { label: "恢复队列", value: recoveryRuns.length, accent: recoveryRuns.length === 0 ? "var(--success)" : "var(--warning)" },
-          { label: "待审批", value: pendingApprovals, accent: pendingApprovals === 0 ? "var(--success)" : "var(--warning)" },
-          { label: "待回复会话", value: pendingReplySessions, accent: pendingReplySessions === 0 ? "var(--success)" : "#60a5fa" },
-        ].map(item => (
-          <div
-            key={item.label}
-            style={{
-              padding: "10px 12px",
-              borderRadius: 14,
-              border: "1px solid var(--border)",
-              background: "rgba(255,255,255,0.03)",
-            }}
-          >
-            <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{item.label}</div>
-            <div style={{ marginTop: 6, fontSize: compact ? 18 : 20, fontWeight: 700, color: item.accent }}>{item.value}</div>
-          </div>
-        ))}
-      </div>
-
-      <div style={{ display: "grid", gridTemplateColumns: compact ? "1fr 1fr" : "repeat(auto-fit, minmax(180px, 1fr))", gap: 10 }}>
-        {visibleChecks.map(check => (
-          <button
-            key={check.id}
-            type="button"
-            className="btn-ghost"
-            style={{
-              textAlign: "left",
-              padding: 12,
-              borderRadius: 14,
-              border: "1px solid var(--border)",
-              background: "rgba(255,255,255,0.03)",
-            }}
-            onClick={() => setActiveAdviceId(current => current === check.id ? null : check.id)}
-          >
-            <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
-              <strong style={{ fontSize: 12 }}>{check.label}</strong>
-              <span style={{ color: check.ok ? "var(--success)" : "var(--warning)", fontSize: 11 }}>
-                {check.ok
-                  ? pickLocaleText(locale, { "zh-CN": "正常", "zh-TW": "正常", en: "OK", ja: "正常" })
-                  : pickLocaleText(locale, { "zh-CN": "待处理", "zh-TW": "待處理", en: "Pending", ja: "要対応" })}
-              </span>
-            </div>
-            <div style={{ marginTop: 6, fontSize: 11, color: "var(--text-muted)", lineHeight: 1.7 }}>
-              {check.detail}
-            </div>
-          </button>
-        ))}
-      </div>
-
-      <div style={{ display: "grid", gap: 8 }}>
-        <div style={{ fontSize: 11, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.08em" }}>
-          {pickLocaleText(locale, {
-            "zh-CN": "最高风险",
-            "zh-TW": "最高風險",
-            en: "Top Risks",
-            ja: "主要リスク",
-          })}
-        </div>
-        {riskItems.length > 0 ? (
-          <div style={{ display: "grid", gap: 8 }}>
-            {riskItems.map(item => (
-              <button
-                key={item.id}
-                type="button"
-                className="btn-ghost"
-                style={{
-                  textAlign: "left",
-                  padding: "12px 14px",
-                  borderRadius: 14,
-                  border: "1px solid var(--border)",
-                  background: item.severity === "critical"
-                    ? "rgba(248, 113, 113, 0.08)"
-                    : item.severity === "warning"
-                      ? "rgba(251, 191, 36, 0.08)"
-                      : "rgba(255,255,255,0.03)",
-                }}
-                onClick={() => setActiveAdviceId(current => current === item.id ? null : item.id)}
-              >
-                <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
-                  <strong style={{ fontSize: 12 }}>{item.title}</strong>
-                  <span style={{ fontSize: 11, color: item.severity === "critical" ? "var(--danger)" : item.severity === "warning" ? "var(--warning)" : "var(--text-muted)" }}>
-                    {item.severity === "critical"
-                      ? pickLocaleText(locale, { "zh-CN": "阻断", "zh-TW": "阻斷", en: "Blocking", ja: "阻害" })
-                      : item.severity === "warning"
-                        ? pickLocaleText(locale, { "zh-CN": "关注", "zh-TW": "關注", en: "Warning", ja: "注意" })
-                        : pickLocaleText(locale, { "zh-CN": "提示", "zh-TW": "提示", en: "Info", ja: "情報" })}
-                  </span>
-                </div>
-                <div style={{ marginTop: 6, fontSize: 11, color: "var(--text-muted)", lineHeight: 1.7 }}>
-                  {item.detail}
-                </div>
-              </button>
-            ))}
-          </div>
-        ) : (
-          <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.75 }}>
-            当前没有明显的人工阻断项。自动执行、验证和策略细节已从这个面板隐藏，继续查看对应子面板即可。
-          </div>
-        )}
-      </div>
-
-      {activeAdvice ? (
-        <div style={advicePanelStyle}>
-          <div style={adviceHeadStyle}>
-            <div>
-              <div style={adviceEyebrowStyle}>
-                {pickLocaleText(locale, {
-                  "zh-CN": "解决方案提示",
-                  "zh-TW": "解決方案提示",
-                  en: "Suggested Fix",
-                  ja: "解決のヒント",
-                })}
-              </div>
-              <div style={adviceTitleStyle}>{activeAdvice.title}</div>
-            </div>
-            <button type="button" className="btn-ghost" onClick={() => setActiveAdviceId(null)}>
+    <div className="launch-readiness-modal" onClick={onClose}>
+      <div
+        className="launch-readiness-modal__panel"
+        role="dialog"
+        aria-modal="true"
+        aria-label={activeAdvice.title}
+        onClick={event => event.stopPropagation()}
+      >
+        <div style={adviceHeadStyle}>
+          <div>
+            <div style={adviceEyebrowStyle}>
               {pickLocaleText(locale, {
-                "zh-CN": "收起",
-                "zh-TW": "收起",
-                en: "Hide",
-                ja: "閉じる",
+                "zh-CN": "解决方案提示",
+                "zh-TW": "解決方案提示",
+                en: "Suggested Fix",
+                ja: "解決のヒント",
+              })}
+            </div>
+            <div style={adviceTitleStyle}>{activeAdvice.title}</div>
+          </div>
+          <button type="button" className="btn-ghost" onClick={onClose}>
+            {pickLocaleText(locale, {
+              "zh-CN": "关闭",
+              "zh-TW": "關閉",
+              en: "Close",
+              ja: "閉じる",
+            })}
+          </button>
+        </div>
+        <div style={adviceSummaryStyle}>{activeAdvice.summary}</div>
+        <div style={adviceStepsStyle}>
+          {activeAdvice.steps.map(step => (
+            <div key={step} style={adviceStepStyle}>{step}</div>
+          ))}
+        </div>
+        {onOpenSection ? (
+          <div style={{ display: "flex", justifyContent: "flex-end" }}>
+            <button
+              type="button"
+              className="btn-ghost"
+              onClick={() => {
+                onOpenSection(activeAdvice.section);
+                onClose();
+              }}
+            >
+              {pickLocaleText(locale, {
+                "zh-CN": "打开对应面板",
+                "zh-TW": "打開對應面板",
+                en: "Open Related Panel",
+                ja: "対応パネルを開く",
               })}
             </button>
           </div>
-          <div style={adviceSummaryStyle}>{activeAdvice.summary}</div>
-          <div style={adviceStepsStyle}>
-            {activeAdvice.steps.map(step => (
-              <div key={step} style={adviceStepStyle}>{step}</div>
-            ))}
-          </div>
-          {onSelectSection ? (
-            <div style={{ display: "flex", justifyContent: "flex-end" }}>
-              <button type="button" className="btn-ghost" onClick={() => onSelectSection(activeAdvice.section)}>
-                {pickLocaleText(locale, {
-                  "zh-CN": "打开对应面板",
-                  "zh-TW": "打開對應面板",
-                  en: "Open Related Panel",
-                  ja: "対応パネルを開く",
-                })}
-              </button>
-            </div>
-          ) : null}
-        </div>
-      ) : null}
+        ) : null}
+      </div>
     </div>
   );
 }

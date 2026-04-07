@@ -2,7 +2,8 @@
 import { useLayoutEffect, useMemo, useEffect, useRef, useState, type CSSProperties, type KeyboardEvent } from "react";
 import { useStore } from "@/store";
 import { AGENT_META } from "@/store/types";
-import type { Task } from "@/store/types";
+import { AgentIcon } from "./AgentIcon";
+import type { AssistantReasoningTrace, Task } from "@/store/types";
 import { sendExecutionDispatch } from "@/lib/execution-dispatch";
 import { timeAgo, formatChatDividerTime } from "@/lib/utils";
 import { CHAT_GAP_MS, CHAT_TIMELINE_MAX, CHAT_VIEWPORT_MAX } from "@/lib/chat-sessions";
@@ -74,6 +75,7 @@ export function TaskPipeline({
   const clearHighlightTask = useStore(s => s.clearHighlightTask);
   const locale = useStore(s => s.locale);
   const activeSessionId = useStore(s => s.activeSessionId);
+  const assistantReasoning = useStore(s => s.assistantReasoning);
   const executionRuns = useStore(s => s.executionRuns);
   const wsStatus = useStore(s => s.wsStatus);
   const setDispatching = useStore(s => s.setDispatching);
@@ -99,12 +101,31 @@ export function TaskPipeline({
     return { sortedAsc, timeline: timelineInner, scrollSig: scrollSigInner };
   }, [tasks]);
 
+  const liveReasoningTrace = useMemo(
+    () =>
+      Object.values(assistantReasoning)
+        .filter(trace => trace.sessionId === activeSessionId)
+        .sort((left, right) => right.updatedAt - left.updatedAt)[0] ?? null,
+    [activeSessionId, assistantReasoning],
+  );
+
+  const autoScrollSig = `${scrollSig}:${liveReasoningTrace?.taskId ?? ""}:${liveReasoningTrace?.updatedAt ?? 0}:${liveReasoningTrace?.details.length ?? 0}`;
+
+  const scrollToBottom = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+  };
+
   useLayoutEffect(() => {
     if (!autoScroll || !scrollRef.current) return;
     if (pendingScrollTaskId) return;
-    const el = scrollRef.current;
-    el.scrollTop = el.scrollHeight;
-  }, [autoScroll, scrollSig, timeline.length, pendingScrollTaskId]);
+    scrollToBottom();
+    const frame = requestAnimationFrame(() => {
+      scrollToBottom();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [autoScroll, autoScrollSig, timeline.length, pendingScrollTaskId]);
 
   useLayoutEffect(() => {
     if (!pendingScrollTaskId || !scrollRef.current) return;
@@ -229,7 +250,7 @@ export function TaskPipeline({
         : item,
     );
 
-    const { ok } = sendExecutionDispatch({
+    const { ok } = await sendExecutionDispatch({
       instruction: nextInstruction,
       source: "chat",
       includeUserMessage: false,
@@ -349,7 +370,7 @@ export function TaskPipeline({
     setLastInstruction(sourceUserTask.description);
 
     const nextTaskSnapshot = getTruncatedTaskSnapshot(sourceUserTask.id);
-    const { ok } = sendExecutionDispatch({
+    const { ok } = await sendExecutionDispatch({
       instruction: sourceUserTask.description,
       source: "chat",
       includeUserMessage: false,
@@ -406,6 +427,7 @@ export function TaskPipeline({
           <ChatBubble
             key={item.task.id}
             task={item.task}
+            reasoningTrace={liveReasoningTrace?.taskId === item.task.id ? liveReasoningTrace : null}
             highlight={highlightTaskId === item.task.id}
             isLatestEditableUserMessage={item.task.id === latestUserTaskId}
             isLatestRegeneratableAssistantMessage={item.task.id === latestAssistantTaskId}
@@ -444,6 +466,7 @@ function TimeDivider({
 
 function ChatBubble({
   task,
+  reasoningTrace,
   highlight,
   isLatestEditableUserMessage,
   isLatestRegeneratableAssistantMessage,
@@ -461,6 +484,7 @@ function ChatBubble({
   onRegenerateAssistant,
 }: {
   task: Task;
+  reasoningTrace: AssistantReasoningTrace | null;
   highlight: boolean;
   isLatestEditableUserMessage: boolean;
   isLatestRegeneratableAssistantMessage: boolean;
@@ -522,6 +546,25 @@ function ChatBubble({
     en: "Regenerate reply",
     ja: "返信を再生成",
   });
+  const thinkingLabel = pickLocaleText(locale, {
+    "zh-CN": "思考中",
+    "zh-TW": "思考中",
+    en: "Thinking",
+    ja: "考え中",
+  });
+  const failedLabel = pickLocaleText(locale, {
+    "zh-CN": "执行失败，请重试",
+    "zh-TW": "執行失敗，請重試",
+    en: "Execution failed. Please retry.",
+    ja: "実行に失敗しました。再試行してください。",
+  });
+  const showUserContent = isUser && Boolean(displayDescription) && !isEditing;
+  const showAssistantResult = !isUser && Boolean(displayResult);
+  const isStreamingAssistantResult = !isUser && task.status === "running" && Boolean(displayResult);
+  const showAssistantThinking = !isUser && !displayResult && (task.status === "running" || task.status === "pending");
+  const showAssistantFailure = !isUser && task.status === "failed" && !displayResult;
+  const showAssistantFallbackDescription = !isUser && task.status === "done" && !displayResult && Boolean(displayDescription);
+  const showReasoningTrace = !isUser && reasoningTrace && reasoningTrace.status !== "done";
 
   const handleCopy = async () => {
     const message = displayDescription || displayResult || "";
@@ -559,7 +602,7 @@ function ChatBubble({
       }
     >
       <div className="chat-bubble__meta">
-        {!isUser && <span className="chat-bubble__avatar">{meta.emoji}</span>}
+        {!isUser && <span className="chat-bubble__avatar"><AgentIcon agentId={task.assignedTo} size={16} /></span>}
         <span className="chat-bubble__author">
           {isUser ? pickLocaleText(locale, { "zh-CN": "你", "zh-TW": "你", en: "You", ja: "あなた" }) : meta.name}
         </span>
@@ -654,17 +697,51 @@ function ChatBubble({
           </div>
         ) : null}
 
-        {(!task.result || task.status !== "done" || isUser) && displayDescription && !isEditing && (
+        {showUserContent || showAssistantFallbackDescription ? (
           <div className="chat-bubble__content">
             {displayDescription}
           </div>
-        )}
+        ) : null}
 
-        {!isUser && task.result && task.status === "done" && displayResult && (
+        {showReasoningTrace ? (
+          <AssistantReasoningInline locale={locale} trace={reasoningTrace} />
+        ) : null}
+
+        {showAssistantResult ? (
           <div className="chat-bubble__content chat-bubble__content--result">
             {displayResult}
+            {isStreamingAssistantResult ? (
+              <span
+                aria-hidden="true"
+                style={{
+                  display: "inline-block",
+                  marginLeft: 3,
+                  color: "var(--accent)",
+                  opacity: 0.72,
+                }}
+              >
+                ▍
+              </span>
+            ) : null}
           </div>
-        )}
+        ) : null}
+
+        {showAssistantThinking ? (
+          <div className="chat-bubble__thinking" aria-label={thinkingLabel}>
+            <span>{thinkingLabel}</span>
+            <span className="chat-bubble__thinking-dots" aria-hidden="true">
+              <span />
+              <span />
+              <span />
+            </span>
+          </div>
+        ) : null}
+
+        {showAssistantFailure ? (
+          <div className="chat-bubble__status-note is-failed">
+            {failedLabel}
+          </div>
+        ) : null}
 
         {!isUser && assistantActionError ? (
           <div className="chat-bubble__assistant-error">{assistantActionError}</div>
@@ -729,6 +806,71 @@ function ChatBubble({
           </div>
         ) : null}
       </div>
+    </div>
+  );
+}
+
+function AssistantReasoningInline({
+  locale,
+  trace,
+}: {
+  locale: ReturnType<typeof useStore.getState>["locale"];
+  trace: AssistantReasoningTrace;
+}) {
+  if (trace.status === "done") return null;
+
+  const statusLabel = trace.status === "running"
+    ? pickLocaleText(locale, { "zh-CN": "思考中", "zh-TW": "思考中", en: "Thinking", ja: "思考中" })
+    : trace.status === "failed"
+      ? pickLocaleText(locale, { "zh-CN": "已中断", "zh-TW": "已中斷", en: "Interrupted", ja: "中断" })
+      : pickLocaleText(locale, { "zh-CN": "已完成", "zh-TW": "已完成", en: "Completed", ja: "完了" });
+  const tone = trace.status === "running" ? "#f59e0b" : trace.status === "failed" ? "#ef4444" : "#10b981";
+  const visibleDetails = trace.details.slice(-3).reverse();
+
+  return (
+    <div className="chat-bubble__reasoning-card">
+      <div className="chat-bubble__reasoning-head">
+        <div className="chat-bubble__reasoning-copy">
+          <div className="chat-bubble__reasoning-eyebrow">
+            {pickLocaleText(locale, {
+              "zh-CN": "实时思考摘要",
+              "zh-TW": "即時思考摘要",
+              en: "Live Thinking Summary",
+              ja: "リアルタイム思考サマリー",
+            })}
+          </div>
+          <div className="chat-bubble__reasoning-summary">
+            {trace.summary || pickLocaleText(locale, {
+              "zh-CN": "正在整理回答",
+              "zh-TW": "正在整理回答",
+              en: "Preparing the reply",
+              ja: "回答を整理中",
+            })}
+          </div>
+        </div>
+        <span
+          className="chat-bubble__reasoning-badge"
+          style={
+            {
+              color: tone,
+              borderColor: `${tone}33`,
+              background: `${tone}14`,
+            } as CSSProperties
+          }
+        >
+          {statusLabel}
+        </span>
+      </div>
+
+      {visibleDetails.length > 0 ? (
+        <div className="chat-bubble__reasoning-list">
+          {visibleDetails.map(detail => (
+            <div key={`${trace.taskId}-${detail}`} className="chat-bubble__reasoning-item">
+              {detail}
+            </div>
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 }

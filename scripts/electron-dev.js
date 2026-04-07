@@ -5,10 +5,11 @@ const http = require("http");
 const net = require("net");
 const path = require("path");
 const electronBinary = require("electron");
+const { WebSocket } = require("ws");
 
 const projectRoot = path.resolve(__dirname, "..");
 const preferredNextPort = Number(process.env.XLX_NEXT_PORT || 3000);
-const wsPort = 3001;
+const wsPort = Number(process.env.WS_PORT || 3001);
 const children = [];
 let shuttingDown = false;
 const cleanMode = process.argv.includes("--clean");
@@ -80,6 +81,39 @@ async function waitFor(check, label, timeoutMs = 30000, intervalMs = 500) {
   }
 
   throw new Error(`${label} did not become ready within ${timeoutMs}ms.`);
+}
+
+function isWsReady(port, timeoutMs = 1500) {
+  return new Promise(resolve => {
+    let settled = false;
+    const finish = result => {
+      if (settled) return;
+      settled = true;
+      try {
+        socket.removeAllListeners();
+        socket.terminate();
+      } catch {}
+      resolve(result);
+    };
+
+    const socket = new WebSocket(`ws://127.0.0.1:${port}`);
+    const timer = setTimeout(() => finish(false), timeoutMs);
+
+    socket.once("open", () => {
+      clearTimeout(timer);
+      finish(true);
+    });
+
+    socket.once("error", () => {
+      clearTimeout(timer);
+      finish(false);
+    });
+
+    socket.once("unexpected-response", () => {
+      clearTimeout(timer);
+      finish(false);
+    });
+  });
 }
 
 function waitForChildExit(child, label) {
@@ -225,41 +259,92 @@ async function findAvailablePort(startPort, maxAttempts = 12) {
   throw new Error(`No available port found starting from ${startPort}.`);
 }
 
+function buildRepoCleanupPowerShellCommand({ includeNode = false } = {}) {
+  const escapedRoot = projectRoot.replace(/'/g, "''");
+  const escapedElectronBinary = path.join(projectRoot, "node_modules", "electron", "dist", "electron.exe").replace(/'/g, "''");
+
+  return `
+$ErrorActionPreference = 'SilentlyContinue'
+$repoRoot = '${escapedRoot}'
+$electronBinary = '${escapedElectronBinary}'
+$currentPid = ${process.pid}
+$portPids = @(${includeNode ? "Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Where-Object { $_.LocalPort -in 3000,3001 } | Select-Object -ExpandProperty OwningProcess -Unique" : ""})
+$allProcesses = @(Get-CimInstance Win32_Process)
+$seedIds = @($allProcesses | Where-Object {
+  if ($_.ProcessId -eq $currentPid) {
+    return $false
+  }
+
+  if ($_.Name -eq 'electron.exe') {
+    return ($_.CommandLine -like "*$repoRoot*" -or $_.ExecutablePath -eq $electronBinary)
+  }
+
+  if (${includeNode ? "$true" : "$false"} -and $_.Name -eq 'node.exe') {
+    return (
+      $_.CommandLine -like "*$repoRoot*" -or
+      $_.CommandLine -like "*server\\ws-server.js*" -or
+      $portPids -contains $_.ProcessId
+    )
+  }
+
+  return $false
+} | Select-Object -ExpandProperty ProcessId -Unique)
+$targetIds = New-Object 'System.Collections.Generic.HashSet[uint32]'
+foreach ($seedId in $seedIds) {
+  [void]$targetIds.Add([uint32]$seedId)
+}
+
+$changed = $true
+while ($changed) {
+  $changed = $false
+  foreach ($process in $allProcesses) {
+    if ($process.Name -ne 'electron.exe') {
+      continue
+    }
+
+    $processId = [uint32]$process.ProcessId
+    $parentId = [uint32]$process.ParentProcessId
+    if ($targetIds.Contains($processId)) {
+      continue
+    }
+
+    if ($targetIds.Contains($parentId)) {
+      if ($targetIds.Add($processId)) {
+        $changed = $true
+      }
+      continue
+    }
+
+    $childHit = $allProcesses | Where-Object {
+      $_.ParentProcessId -eq $process.ProcessId -and $targetIds.Contains([uint32]$_.ProcessId)
+    } | Select-Object -First 1
+
+    if ($childHit) {
+      if ($targetIds.Add($processId)) {
+        $changed = $true
+      }
+    }
+  }
+}
+
+$targets = @($allProcesses | Where-Object { $targetIds.Contains([uint32]$_.ProcessId) })
+foreach ($target in $targets | Sort-Object ProcessId -Descending) {
+  try {
+    Stop-Process -Id $target.ProcessId -Force -ErrorAction Stop
+    Write-Output ("stopped " + $target.Name + " #" + $target.ProcessId)
+  } catch {}
+}
+exit 0
+`.trim();
+}
+
 async function cleanRepoProcesses() {
   if (process.platform !== "win32") {
     log("clean", "clean mode is currently implemented for Windows only; skipping process cleanup");
     return;
   }
 
-  const escapedRoot = projectRoot.replace(/'/g, "''");
-  const escapedElectronBinary = path.join(projectRoot, "node_modules", "electron", "dist", "electron.exe").replace(/'/g, "''");
-  const command = [
-    `$ErrorActionPreference = 'SilentlyContinue'`,
-    `$repoRoot = '${escapedRoot}'`,
-    `$electronBinary = '${escapedElectronBinary}'`,
-    `$currentPid = ${process.pid}`,
-    `$portPids = @(Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Where-Object { $_.LocalPort -in 3000,3001 } | Select-Object -ExpandProperty OwningProcess -Unique)`,
-    `$targets = Get-CimInstance Win32_Process | Where-Object {`,
-    `  $_.ProcessId -ne $currentPid -and (`,
-    `    ($_.Name -eq 'electron.exe' -and (`,
-    `      $_.CommandLine -like "*$repoRoot*" -or`,
-    `      $_.ExecutablePath -eq $electronBinary`,
-    `    )) -or`,
-    `    ($_.Name -eq 'node.exe' -and (`,
-    `      $_.CommandLine -like "*$repoRoot*" -or`,
-    `      $_.CommandLine -like "*server\\ws-server.js*" -or`,
-    `      $portPids -contains $_.ProcessId`,
-    `    ))`,
-    `  )`,
-    `}`,
-    `foreach ($target in $targets) {`,
-    `  try {`,
-    `    Stop-Process -Id $target.ProcessId -Force -ErrorAction Stop`,
-    `    Write-Output ("stopped " + $target.Name + " #" + $target.ProcessId)`,
-    `  } catch {}`,
-    `}`,
-    `exit 0`,
-  ].join("\n");
+  const command = buildRepoCleanupPowerShellCommand({ includeNode: true });
 
   const output = await execForText("powershell", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command]);
   const lines = output
@@ -283,28 +368,7 @@ async function cleanRepoElectronProcesses() {
     return;
   }
 
-  const escapedRoot = projectRoot.replace(/'/g, "''");
-  const escapedElectronBinary = path.join(projectRoot, "node_modules", "electron", "dist", "electron.exe").replace(/'/g, "''");
-  const command = [
-    `$ErrorActionPreference = 'SilentlyContinue'`,
-    `$repoRoot = '${escapedRoot}'`,
-    `$electronBinary = '${escapedElectronBinary}'`,
-    `$currentPid = ${process.pid}`,
-    `$targets = Get-CimInstance Win32_Process | Where-Object {`,
-    `  $_.ProcessId -ne $currentPid -and`,
-    `  $_.Name -eq 'electron.exe' -and (`,
-    `    $_.CommandLine -like "*$repoRoot*" -or`,
-    `    $_.ExecutablePath -eq $electronBinary`,
-    `  )`,
-    `}`,
-    `foreach ($target in $targets) {`,
-    `  try {`,
-    `    Stop-Process -Id $target.ProcessId -Force -ErrorAction Stop`,
-    `    Write-Output ("stopped " + $target.Name + " #" + $target.ProcessId)`,
-    `  } catch {}`,
-    `}`,
-    `exit 0`,
-  ].join("\n");
+  const command = buildRepoCleanupPowerShellCommand({ includeNode: false });
 
   const output = await execForText("powershell", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command]);
   const lines = output
@@ -404,12 +468,33 @@ async function ensureNextDev() {
 
 async function ensureWsServer() {
   if (await isTcpPortOpen(wsPort)) {
-    log("WS", `reusing existing ws server on tcp://127.0.0.1:${wsPort}`);
-    return { reused: true };
+    const ownerCommandLine = await getPortOwnerCommandLine(wsPort);
+    const ownedByRepo = isRepoOwnedCommandLine(ownerCommandLine);
+    const healthy = await isWsReady(wsPort);
+
+    if (healthy && ownedByRepo) {
+      log("WS", `reusing existing repo ws server on ws://127.0.0.1:${wsPort}`);
+      return { reused: true };
+    }
+
+    if (ownedByRepo && !healthy) {
+      log("WS", `found stale repo ws server on ws://127.0.0.1:${wsPort}; restarting it`);
+      await stopPortOwnerProcess(wsPort, "WS");
+    } else if (!ownedByRepo && cleanMode) {
+      log("WS", `clean mode detected an unknown process on fixed port ${wsPort}; reclaiming the port for this repo`);
+      const stopped = await stopPortOwnerProcess(wsPort, "WS");
+      if (!stopped && await isTcpPortOpen(wsPort)) {
+        throw new Error(`Port ${wsPort} is occupied by another process, and clean mode could not reclaim the fixed desktop WebSocket port.`);
+      }
+    } else if (!ownedByRepo) {
+      throw new Error(`Port ${wsPort} is occupied by another process, so the desktop WebSocket service cannot start on its fixed port.`);
+    }
   }
 
-  const child = spawnManaged("WS", process.execPath, [path.join("server", "ws-server.js")]);
-  await waitFor(() => isTcpPortOpen(wsPort), "WS server");
+  const child = spawnManaged("WS", process.execPath, [path.join("server", "ws-server.js")], {
+    WS_PORT: String(wsPort),
+  });
+  await waitForReadyOrChildExit(child, () => isWsReady(wsPort), "WS server");
   log("WS", `ready on tcp://127.0.0.1:${wsPort}`);
   return { reused: false, child };
 }
@@ -441,6 +526,8 @@ async function main() {
   const electronChild = spawnManaged("Electron", electronBinary, ["."], {
     NODE_ENV: "development",
     NEXT_DEV_URL: `http://localhost:${next.port}`,
+    WS_PORT: String(wsPort),
+    NEXT_PUBLIC_WS_URL: `ws://127.0.0.1:${wsPort}`,
   });
 
   electronChild.once("exit", code => {

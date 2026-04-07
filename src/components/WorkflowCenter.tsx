@@ -553,8 +553,8 @@ export function WorkflowCenter() {
     focusWorkflowRun(null);
   }, [focusWorkflowRun, focusedWorkflowRunId]);
 
-  const launchRun = (workflowRun: WorkflowRun) => {
-    const { ok, executionRunId } = sendExecutionDispatch({
+  const launchRun = async (workflowRun: WorkflowRun) => {
+    const { ok, executionRunId } = await sendExecutionDispatch({
       instruction: workflowRun.draft,
       source: "workflow",
       taskDescription: workflowRun.title,

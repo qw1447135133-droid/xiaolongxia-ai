@@ -548,17 +548,17 @@ export function DesktopRuntimeDiagnosticsCard() {
                 <button
                   type="button"
                   className="btn-primary"
-                  onClick={() => {
+                  onClick={async () => {
                     focusResumeContext();
                     const resumeRun = linkedExecutionRun ?? screenshotLinkedExecutionRun;
                     const dispatchResult = resumeRun
-                      ? retryExecutionDispatch(resumeRun, {
+                      ? await retryExecutionDispatch(resumeRun, {
                         includeUserMessage: false,
                         includeActiveProjectMemory: true,
                         taskDescription: "验证已完成，继续执行",
                         lastRecoveryHint: "人工验证已完成，继续沿用原执行上下文。",
                       })
-                      : sendExecutionDispatch({
+                      : await sendExecutionDispatch({
                         instruction: desktopInputSession.resumeInstruction!,
                         source: "chat",
                         includeUserMessage: false,
@@ -805,17 +805,17 @@ export function DesktopRuntimeDiagnosticsCard() {
               <button
                 type="button"
                 className="btn-primary"
-                onClick={() => {
+                onClick={async () => {
                   focusResumeContext();
                   const resumeRun = screenshotLinkedExecutionRun ?? linkedExecutionRun;
                   const dispatchResult = resumeRun
-                    ? retryExecutionDispatch(resumeRun, {
+                    ? await retryExecutionDispatch(resumeRun, {
                         includeUserMessage: false,
                         includeActiveProjectMemory: true,
                         taskDescription: "截图确认后继续执行",
                         lastRecoveryHint: "已基于最新桌面截图确认状态，继续沿用原执行上下文。",
                       })
-                    : sendExecutionDispatch({
+                    : await sendExecutionDispatch({
                         instruction: desktopInputSession.resumeInstruction!,
                         source: "chat",
                         includeUserMessage: false,

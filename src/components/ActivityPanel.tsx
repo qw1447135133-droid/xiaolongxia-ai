@@ -7,6 +7,7 @@ import type { Activity } from "@/store/types";
 import { timeAgo, formatDuration } from "@/lib/utils";
 import { CHAT_VIEWPORT_MAX } from "@/lib/chat-sessions";
 import { pickLocaleText } from "@/lib/ui-locale";
+import { AgentIcon } from "./AgentIcon";
 
 const ACTIVITY_COLOR: Record<Activity["type"], string> = {
   dispatch: "var(--accent)",
@@ -123,7 +124,7 @@ function ActivityCard({
           : undefined}
     >
       <div className="activity-panel__head">
-        <span className="activity-panel__emoji">{meta.emoji}</span>
+        <span className="activity-panel__emoji"><AgentIcon agentId={activity.agentId} size={14} /></span>
         <span className="activity-panel__name">{meta.name}</span>
         <span
           className="activity-panel__badge"

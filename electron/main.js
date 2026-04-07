@@ -36,7 +36,7 @@ loadEnvLocal();
 
 // 使用函数延迟访问 app.isPackaged，避免在 app 初始化前访问
 const isDev = () => process.env.NODE_ENV === 'development' || !app.isPackaged;
-const WS_PORT = 3001;
+const WS_PORT = Number(process.env.WS_PORT || 3001);
 
 let mainWindow = null;
 let wsServerProcess = null;

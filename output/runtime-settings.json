@@ -1,72 +1,91 @@
 {
   "providers": [
     {
-      "id": "aliyun-coding-p3fub58n",
-      "name": "阿里云百炼 Coding Plan",
-      "apiKey": "sk-sp-01bfaf67d87b4deeb687f3e7826e6b89",
-      "baseUrl": "https://coding.dashscope.aliyuncs.com/v1"
+      "id": "volcengine-coding-344z0p7e",
+      "name": "火山方舟 Coding Plan",
+      "apiKey": "8997b6ae-3bcd-4043-bbd5-41eb38e0aa04",
+      "baseUrl": "https://ark.cn-beijing.volces.com/api/coding/v3"
     }
   ],
   "agentConfigs": {
     "orchestrator": {
       "id": "orchestrator",
-      "name": "虾总管",
-      "emoji": "🦞",
+      "name": "鹦鹉螺",
+      "emoji": "🐚",
       "personality": "你是跨境电商 AI 团队的总调度员，负责任务拆解和团队协调。",
-      "model": "qwen3.5-plus",
-      "providerId": "aliyun-coding-p3fub58n",
-      "skills": []
+      "model": "doubao-seed-2.0-pro",
+      "providerId": "volcengine-coding-344z0p7e",
+      "skills": [
+        "frontend",
+        "doc_excel"
+      ]
     },
     "explorer": {
       "id": "explorer",
-      "name": "探海龙虾",
-      "emoji": "🔎",
+      "name": "探海鲸鱼",
+      "emoji": "🐋",
       "personality": "你是跨境电商选品专家，专注竞品分析、选品趋势研究和市场数据分析，提供具体可执行的洞察。",
-      "model": "glm-4.7",
-      "providerId": "aliyun-coding-p3fub58n",
-      "skills": []
+      "model": "doubao-seed-2.0-lite",
+      "providerId": "volcengine-coding-344z0p7e",
+      "skills": [
+        "doc_excel",
+        "screenshot"
+      ]
     },
     "writer": {
       "id": "writer",
-      "name": "执笔龙虾",
-      "emoji": "✍️",
+      "name": "星海章鱼",
+      "emoji": "🐙",
       "personality": "你是跨境电商文案专家，专注多语种文案创作、SEO 标题优化和商品详情页撰写，输出高转化率文案。",
-      "model": "qwen3-coder-plus",
-      "providerId": "aliyun-coding-p3fub58n",
-      "skills": []
+      "model": "doubao-seed-2.0-code",
+      "providerId": "volcengine-coding-344z0p7e",
+      "skills": [
+        "doc_ppt",
+        "doc_word"
+      ]
     },
     "designer": {
       "id": "designer",
-      "name": "幻影龙虾",
-      "emoji": "🎨",
+      "name": "珊瑚水母",
+      "emoji": "🪼",
       "personality": "你是电商视觉设计专家。当需要生成图片时，请先输出一段英文图片生成提示词（以 [IMAGE_PROMPT] 开头），然后再输出设计方案说明。",
-      "model": "qwen3.5-plus",
-      "providerId": "aliyun-coding-p3fub58n",
-      "skills": []
+      "model": "doubao-seed-2.0-lite",
+      "providerId": "volcengine-coding-344z0p7e",
+      "skills": [
+        "frontend",
+        "image_edit",
+        "screenshot"
+      ]
     },
     "performer": {
       "id": "performer",
-      "name": "戏精龙虾",
-      "emoji": "🎭",
+      "name": "逐浪海豚",
+      "emoji": "🐬",
       "personality": "你是短视频内容专家，专注数字人视频脚本、TikTok/抖音内容策略和多平台矩阵发布计划。",
-      "model": "qwen3.5-plus",
-      "providerId": "aliyun-coding-p3fub58n",
-      "skills": []
+      "model": "doubao-seed-2.0-lite",
+      "providerId": "volcengine-coding-344z0p7e",
+      "skills": [
+        "doc_ppt"
+      ]
     },
     "greeter": {
       "id": "greeter",
-      "name": "迎客龙虾",
-      "emoji": "💬",
+      "name": "招潮蟹",
+      "emoji": "🦀",
       "personality": "你是多语种客服专家，专注客服话术、评论回复模板和买家互动策略，保持友好专业语气。",
-      "model": "qwen3-coder-plus",
-      "providerId": "aliyun-coding-p3fub58n",
-      "skills": []
+      "model": "doubao-seed-2.0-code",
+      "providerId": "volcengine-coding-344z0p7e",
+      "skills": [
+        "doc_word"
+      ]
     }
   },
   "platformConfigs": {
     "telegram": {
       "enabled": false,
-      "fields": {},
+      "fields": {
+        "proxy": ""
+      },
       "status": "connected",
       "detail": "连接器已自动恢复，可直接接收和发送消息。",
       "healthScore": 100,
@@ -197,13 +216,37 @@
     }
   },
   "userNickname": "您",
+  "semanticMemoryConfig": {
+    "providerId": "local",
+    "autoRecallProjectMemories": true,
+    "autoRecallDeskNotes": true,
+    "autoRecallKnowledgeDocs": true,
+    "pgvector": {
+      "enabled": false,
+      "connectionString": "",
+      "schema": "public",
+      "table": "semantic_memory_documents",
+      "embeddingModel": "text-embedding-3-small",
+      "dimensions": 1536
+    }
+  },
   "desktopProgramSettings": {
     "enabled": true,
     "whitelistMode": false,
     "favorites": [],
-    "whitelist": [],
+    "whitelist": [
+      {
+        "id": "desktop-entry-1775495743254-nn3um",
+        "label": "Telegram.lnk",
+        "target": "C:\\Users\\14471\\Desktop\\Telegram.lnk",
+        "args": [],
+        "source": "manual",
+        "createdAt": 1775495743254,
+        "updatedAt": 1775495743254
+      }
+    ],
     "inputControl": {
-      "enabled": false,
+      "enabled": true,
       "autoOpenPanelOnAction": true,
       "requireManualTakeoverForVerification": true
     }

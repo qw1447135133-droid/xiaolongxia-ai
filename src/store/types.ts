@@ -6,6 +6,7 @@ export type AgentStatus = "idle" | "running" | "error";
 export type TaskComplexity = "high" | "medium" | "low";
 export type TaskStatus = "pending" | "running" | "done" | "failed";
 export type AssistantMessageFeedback = "up" | "down";
+export type AssistantReasoningStatus = "running" | "done" | "failed";
 export type AppTab = "dashboard" | "tasks" | "workspace" | "dispatch" | "meeting" | "settings";
 export type UiLocale = "zh-CN" | "zh-TW" | "en" | "ja";
 export type AutomationMode = "manual" | "supervised" | "autonomous";
@@ -48,6 +49,17 @@ export interface Task {
   completedAt?: number;
   isUserMessage?: boolean;
   feedback?: AssistantMessageFeedback;
+}
+
+export interface AssistantReasoningTrace {
+  taskId: string;
+  sessionId: string;
+  agentId: AgentId;
+  executionRunId?: string;
+  summary: string;
+  details: string[];
+  status: AssistantReasoningStatus;
+  updatedAt: number;
 }
 
 export interface AssistantFeedbackRecord {
@@ -328,37 +340,37 @@ export type PlatformConnectionStatus =
 export const AGENT_META: Record<AgentId, { name: string; emoji: string; badge: string; defaultPersonality: string }> = {
   orchestrator: {
     name: "鹦鹉螺",
-    emoji: "🦞",
+    emoji: "🐚",
     badge: "badge-orchestrator",
     defaultPersonality: "你是跨境电商 AI 团队的总调度员，负责任务拆解和团队协调。",
   },
   explorer: {
     name: "探海鲸鱼",
-    emoji: "🔎",
+    emoji: "🐋",
     badge: "badge-explorer",
     defaultPersonality: "你是跨境电商选品专家，专注竞品分析、选品趋势研究和市场数据分析，提供具体可执行的洞察。",
   },
   writer: {
     name: "星海章鱼",
-    emoji: "✍️",
+    emoji: "🐙",
     badge: "badge-writer",
     defaultPersonality: "你是跨境电商文案专家，专注多语种文案创作、SEO 标题优化和商品详情页撰写，输出高转化率文案。",
   },
   designer: {
     name: "珊瑚水母",
-    emoji: "🎨",
+    emoji: "🪼",
     badge: "badge-designer",
     defaultPersonality: "你是电商视觉设计专家。当需要生成图片时，请先输出一段英文图片生成提示词（以 [IMAGE_PROMPT] 开头），然后再输出设计方案说明。",
   },
   performer: {
     name: "逐浪海豚",
-    emoji: "🎭",
+    emoji: "🐬",
     badge: "badge-performer",
     defaultPersonality: "你是短视频内容专家，专注数字人视频脚本、TikTok/抖音内容策略和多平台矩阵发布计划。",
   },
   greeter: {
     name: "招潮蟹",
-    emoji: "💬",
+    emoji: "🦀",
     badge: "badge-greeter",
     defaultPersonality: "你是多语种客服专家，专注客服话术、评论回复模板和买家互动策略，保持友好专业语气。",
   },
@@ -370,6 +382,7 @@ export const PROVIDER_PRESETS: Omit<ModelProvider, "apiKey">[] = [
   { id: "siliconflow", name: "SiliconFlow", baseUrl: "https://api.siliconflow.cn/v1" },
   { id: "deepseek", name: "DeepSeek", baseUrl: "https://api.deepseek.com/v1" },
   { id: "aliyun-coding", name: "阿里云百炼 Coding Plan", baseUrl: "https://coding.dashscope.aliyuncs.com/v1" },
+  { id: "volcengine-coding", name: "火山方舟 Coding Plan", baseUrl: "https://ark.cn-beijing.volces.com/api/coding/v3" },
   { id: "4sapi", name: "4sAPI", baseUrl: "https://api.4sapi.com/v1" },
   { id: "custom", name: "自定义", baseUrl: "" },
 ];
@@ -411,6 +424,17 @@ export const PROVIDER_MODELS: Record<string, string[]> = {
     "kimi-k2.5",
     "MiniMax-M2.5",
   ],
+  "volcengine-coding": [
+    "doubao-seed-2.0-code",
+    "doubao-seed-2.0-pro",
+    "doubao-seed-2.0-lite",
+    "doubao-seed-code",
+    "minimax-m2.5",
+    "glm-4.7",
+    "deepseek-v3.2",
+    "kimi-k2.5",
+    "ark-code-latest",
+  ],
   "4sapi": [
     "gpt-4o",
     "gpt-4o-mini",
@@ -446,6 +470,11 @@ const PROVIDER_MODEL_PRESETS: Record<string, Record<ModelPresetTier, string>> = 
     balanced: "qwen3-coder-plus",
     budget: "glm-4.7",
   },
+  "volcengine-coding": {
+    reasoning: "doubao-seed-2.0-pro",
+    balanced: "doubao-seed-2.0-code",
+    budget: "doubao-seed-2.0-lite",
+  },
   "4sapi": {
     reasoning: "claude-3-7-sonnet-20250219",
     balanced: "gpt-4o",
@@ -476,7 +505,7 @@ export const AGENT_MODEL_ROUTING_PROFILES: Record<AgentId, AgentModelRoutingProf
     focusLabel: "多模态总控",
     summary: "永远优先分配可处理复杂桌面、视觉和高复杂度协同任务的多模态模型。",
     allowProviderFallback: true,
-    preferredProviderIds: ["openai", "aliyun-coding", "4sapi", "anthropic"],
+    preferredProviderIds: ["openai", "volcengine-coding", "aliyun-coding", "4sapi", "anthropic"],
   },
   explorer: {
     defaultTier: "reasoning",
@@ -495,14 +524,14 @@ export const AGENT_MODEL_ROUTING_PROFILES: Record<AgentId, AgentModelRoutingProf
     focusLabel: "视觉多模态",
     summary: "优先支持视觉理解和图像创作提示的多模态模型。",
     allowProviderFallback: true,
-    preferredProviderIds: ["openai", "aliyun-coding", "4sapi", "anthropic"],
+    preferredProviderIds: ["openai", "volcengine-coding", "aliyun-coding", "4sapi", "anthropic"],
   },
   performer: {
     defaultTier: "balanced",
     focusLabel: "音视频多模态",
     summary: "优先支持视频脚本、分镜和多模态内容理解的模型。",
     allowProviderFallback: true,
-    preferredProviderIds: ["openai", "aliyun-coding", "4sapi", "anthropic"],
+    preferredProviderIds: ["openai", "volcengine-coding", "aliyun-coding", "4sapi", "anthropic"],
   },
   greeter: {
     defaultTier: "budget",
@@ -562,6 +591,23 @@ const PROVIDER_AGENT_MODEL_OVERRIDES: Partial<Record<string, Partial<Record<Agen
       reasoning: ["qwen3-max-2026-01-23", "qwen3.5-plus", "kimi-k2.5", "MiniMax-M2.5"],
       balanced: ["qwen3.5-plus", "qwen3-max-2026-01-23", "kimi-k2.5", "MiniMax-M2.5"],
       budget: ["qwen3.5-plus", "kimi-k2.5", "MiniMax-M2.5", "glm-5"],
+    },
+  },
+  "volcengine-coding": {
+    orchestrator: {
+      reasoning: ["doubao-seed-2.0-code", "doubao-seed-2.0-pro", "minimax-m2.5", "deepseek-v3.2"],
+      balanced: ["doubao-seed-2.0-code", "doubao-seed-2.0-pro", "minimax-m2.5", "glm-4.7"],
+      budget: ["doubao-seed-2.0-lite", "glm-4.7", "kimi-k2.5", "ark-code-latest"],
+    },
+    designer: {
+      reasoning: ["doubao-seed-2.0-code", "doubao-seed-2.0-pro", "minimax-m2.5", "deepseek-v3.2"],
+      balanced: ["doubao-seed-2.0-code", "doubao-seed-2.0-pro", "minimax-m2.5", "glm-4.7"],
+      budget: ["doubao-seed-2.0-lite", "glm-4.7", "kimi-k2.5", "ark-code-latest"],
+    },
+    performer: {
+      reasoning: ["doubao-seed-2.0-code", "doubao-seed-2.0-pro", "deepseek-v3.2", "minimax-m2.5"],
+      balanced: ["doubao-seed-2.0-code", "doubao-seed-2.0-pro", "kimi-k2.5", "minimax-m2.5"],
+      budget: ["doubao-seed-2.0-lite", "glm-4.7", "kimi-k2.5", "ark-code-latest"],
     },
   },
   "4sapi": {
@@ -1081,10 +1127,64 @@ export function getModelsForProvider(providerId: string): string[] {
   return preset ? (PROVIDER_MODELS[preset.id] ?? []) : [];
 }
 
+function inferProviderPresetIdFromBaseUrl(baseUrl: string | undefined): string | null {
+  const normalizedBaseUrl = String(baseUrl || "").trim().toLowerCase();
+  if (!normalizedBaseUrl) return null;
+  if (normalizedBaseUrl.includes("coding.dashscope.aliyuncs.com") || normalizedBaseUrl.includes("dashscope")) return "aliyun-coding";
+  if (normalizedBaseUrl.includes("ark.cn-beijing.volces.com") || normalizedBaseUrl.includes("volces.com/api/coding") || normalizedBaseUrl.includes("volcengine.com")) return "volcengine-coding";
+  if (normalizedBaseUrl.includes("api.anthropic.com")) return "anthropic";
+  if (normalizedBaseUrl.includes("api.openai.com")) return "openai";
+  if (normalizedBaseUrl.includes("siliconflow")) return "siliconflow";
+  if (normalizedBaseUrl.includes("api.deepseek.com") || normalizedBaseUrl.includes("deepseek")) return "deepseek";
+  if (normalizedBaseUrl.includes("4sapi")) return "4sapi";
+  return null;
+}
+
 function resolveProviderPresetId(providerId: string): string | null {
   if (PROVIDER_MODELS[providerId] || PROVIDER_MODEL_PRESETS[providerId]) return providerId;
   const preset = PROVIDER_PRESETS.find(p => providerId.startsWith(`${p.id}-`) || providerId === p.id);
   return preset?.id ?? null;
+}
+
+function resolveProviderPresetIdFromProvider(provider: Pick<ModelProvider, "id" | "baseUrl"> | null | undefined): string | null {
+  if (!provider) return null;
+  return resolveProviderPresetId(provider.id) ?? inferProviderPresetIdFromBaseUrl(provider.baseUrl);
+}
+
+export function isProviderConfigured(
+  provider: Pick<ModelProvider, "id" | "apiKey" | "baseUrl"> | null | undefined,
+): boolean {
+  if (!provider) return false;
+
+  const apiKey = provider.apiKey.trim();
+  const baseUrl = provider.baseUrl.trim();
+  const presetId = resolveProviderPresetId(provider.id) ?? inferProviderPresetIdFromBaseUrl(baseUrl);
+  const isCustomProvider = !presetId || presetId === "custom";
+
+  if (!apiKey) return false;
+  if (isCustomProvider) return Boolean(baseUrl);
+  return true;
+}
+
+export function getConfiguredProviders<T extends Pick<ModelProvider, "id" | "apiKey" | "baseUrl">>(providers: T[]): T[] {
+  return providers.filter(provider => isProviderConfigured(provider));
+}
+
+export function getModelsForProviderInstance(
+  provider: Pick<ModelProvider, "id" | "baseUrl"> | null | undefined,
+): string[] {
+  const presetId = resolveProviderPresetIdFromProvider(provider);
+  if (!presetId) return [];
+  return PROVIDER_MODELS[presetId] ?? [];
+}
+
+export function getRecommendedModelForProviderInstance(
+  provider: Pick<ModelProvider, "id" | "baseUrl"> | null | undefined,
+  tier: ModelPresetTier,
+): string | null {
+  const presetId = resolveProviderPresetIdFromProvider(provider);
+  if (!presetId) return null;
+  return PROVIDER_MODEL_PRESETS[presetId]?.[tier] ?? null;
 }
 
 export function getRecommendedModelForProvider(providerId: string, tier: ModelPresetTier): string | null {
@@ -1118,6 +1218,24 @@ function getRoleSpecificModelsForProvider(providerId: string, agentId: AgentId, 
   return uniqueModels(roleSpecific).filter(model => availableSet.has(model));
 }
 
+function getRoleSpecificModelsForConfiguredProvider(
+  provider: Pick<ModelProvider, "id" | "baseUrl"> | null | undefined,
+  agentId: AgentId,
+  tier: ModelPresetTier,
+): string[] {
+  const presetId = resolveProviderPresetIdFromProvider(provider);
+  if (!presetId) return [];
+
+  const availableModels = getModelsForProviderInstance(provider);
+  const availableSet = new Set(availableModels);
+  const roleSpecific =
+    PROVIDER_AGENT_MODEL_OVERRIDES[presetId]?.[agentId]?.[tier]
+    ?? PROVIDER_AGENT_MODEL_OVERRIDES[presetId]?.[agentId]?.[AGENT_MODEL_ROUTING_PROFILES[agentId].defaultTier]
+    ?? [];
+
+  return uniqueModels(roleSpecific).filter(model => availableSet.has(model));
+}
+
 function getRoleAwareModelsForProvider(providerId: string, agentId: AgentId, tier: ModelPresetTier): string[] {
   const availableModels = getModelsForProvider(providerId);
   const availableSet = new Set(availableModels);
@@ -1139,18 +1257,28 @@ export interface AgentModelSelection {
 }
 
 export function getRecommendedModelSelectionForAgent(
-  providers: Array<Pick<ModelProvider, "id">>,
+  providers: Array<Pick<ModelProvider, "id" | "apiKey" | "baseUrl">>,
   preferredProviderId: string | null | undefined,
   agentId: AgentId,
   tier: ModelPresetTier = getRecommendedTierForAgent(agentId),
 ): AgentModelSelection | null {
   const profile = getAgentModelRoutingProfile(agentId);
-  const providerIds = uniqueModels([preferredProviderId, ...providers.map(provider => provider.id)]);
-  const primaryProviderId = providerIds[0];
+  const configuredProviders = getConfiguredProviders(providers);
+  const configuredProviderIds = configuredProviders.map(provider => provider.id);
+  const providerById = new Map(configuredProviders.map(provider => [provider.id, provider]));
+  const preferredProviderPresetId = preferredProviderId ? resolveProviderPresetId(preferredProviderId) : null;
+  const primaryProviderId =
+    (preferredProviderId && providerById.has(preferredProviderId) ? preferredProviderId : null)
+    ?? (preferredProviderPresetId
+      ? configuredProviders.find(provider => resolveProviderPresetIdFromProvider(provider) === preferredProviderPresetId)?.id
+      : null)
+    ?? configuredProviderIds[0];
 
   if (!primaryProviderId) return null;
 
-  const primaryRoleSpecific = getRoleSpecificModelsForProvider(primaryProviderId, agentId, tier);
+  const primaryProvider = providerById.get(primaryProviderId);
+
+  const primaryRoleSpecific = getRoleSpecificModelsForConfiguredProvider(primaryProvider, agentId, tier);
   if (primaryRoleSpecific[0]) {
     return {
       providerId: primaryProviderId,
@@ -1161,14 +1289,20 @@ export function getRecommendedModelSelectionForAgent(
   }
 
   if (profile.allowProviderFallback) {
+    const preferredConfiguredProviderIds = (profile.preferredProviderIds ?? []).flatMap(providerId =>
+      configuredProviders
+        .filter(provider => resolveProviderPresetIdFromProvider(provider) === providerId)
+        .map(provider => provider.id),
+    );
     const fallbackProviderIds = uniqueModels([
-      ...(profile.preferredProviderIds ?? []),
-      ...providerIds,
+      ...preferredConfiguredProviderIds,
+      ...configuredProviderIds,
     ]);
 
     for (const providerId of fallbackProviderIds) {
       if (!providerId || providerId === primaryProviderId) continue;
-      const roleSpecificModels = getRoleSpecificModelsForProvider(providerId, agentId, tier);
+      const provider = providerById.get(providerId);
+      const roleSpecificModels = getRoleSpecificModelsForConfiguredProvider(provider, agentId, tier);
       if (!roleSpecificModels[0]) continue;
 
       return {
@@ -1180,7 +1314,9 @@ export function getRecommendedModelSelectionForAgent(
     }
   }
 
-  const defaultModel = getRecommendedModelForProvider(primaryProviderId, tier) ?? getModelsForProvider(primaryProviderId)[0] ?? null;
+  const defaultModel = getRecommendedModelForProviderInstance(primaryProvider, tier)
+    ?? getModelsForProviderInstance(primaryProvider)[0]
+    ?? null;
   return {
     providerId: primaryProviderId,
     model: defaultModel,

@@ -1,15 +1,18 @@
 // 服务端运行时配置存储（内存单例）
 // 前端通过 POST /api/settings 同步配置到服务端
 import type { AgentId, AgentConfig, ModelProvider } from "@/store/types";
+import type { SemanticMemoryConfig } from "@/types/semantic-memory";
 
 export interface RuntimeSettings {
   providers: ModelProvider[];
   agentConfigs: Record<AgentId, AgentConfig>;
+  semanticMemoryConfig: SemanticMemoryConfig | null;
 }
 
 let _settings: RuntimeSettings = {
   providers: [],
   agentConfigs: {} as Record<AgentId, AgentConfig>,
+  semanticMemoryConfig: null,
 };
 
 export function getSettings(): RuntimeSettings {
@@ -59,6 +62,7 @@ function getDefaultModel(baseURL?: string): string {
   if (process.env.OPENAI_MODEL) return process.env.OPENAI_MODEL;
   if (baseURL?.includes("siliconflow")) return "Qwen/Qwen2.5-72B-Instruct";
   if (baseURL?.includes("dashscope")) return "qwen3.5-plus";
+  if (baseURL?.includes("ark.cn-beijing.volces.com") || baseURL?.includes("volces.com/api/coding")) return "doubao-seed-2.0-code";
   if (baseURL?.includes("deepseek")) return "deepseek-chat";
   return "gpt-5.4-mini";
 }

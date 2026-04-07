@@ -1,9 +1,11 @@
 import type { WorkspaceDeskNote, WorkspaceProjectMemory } from "@/types/desktop-workspace";
+import { resolveBackendUrl } from "@/lib/backend-url";
 import type {
   SemanticKnowledgeDocument,
   SemanticMemoryConfig,
   SemanticMemoryProviderId,
 } from "@/types/semantic-memory";
+import type { ModelProvider } from "@/store/types";
 
 export interface SemanticMemorySearchContext {
   query?: string;
@@ -46,6 +48,11 @@ export interface SemanticMemoryProvider {
 export interface SemanticMemorySearchOptions {
   limit?: number;
   provider?: SemanticMemoryProvider;
+}
+
+export interface SemanticMemoryAsyncSearchOptions extends SemanticMemorySearchOptions {
+  config?: SemanticMemoryConfig;
+  providers?: ModelProvider[];
 }
 
 function normalizePath(path: string | null | undefined) {
@@ -216,8 +223,8 @@ export function getSemanticMemoryProviderStatus(config: SemanticMemoryConfig) {
   }
 
   return {
-    label: "Pgvector 预备中",
-    detail: "配置已录入，等后端检索接口接通后即可替换本地检索。",
+    label: "Pgvector 已配置",
+    detail: "配置已经录入；召回会优先尝试 pgvector，不可用时再回退到本地检索。",
     tone: "ready" as const,
   };
 }
@@ -228,6 +235,85 @@ export function searchSemanticMemory<TItem>(
   options: SemanticMemorySearchOptions = {},
 ) {
   return (options.provider ?? defaultProvider).search(documents, context, options.limit);
+}
+
+export function resolveSemanticMemoryEmbeddingTransport(
+  providers: ModelProvider[] | undefined,
+  config: SemanticMemoryConfig | undefined,
+) {
+  const model = String(config?.pgvector?.embeddingModel || "").trim();
+  if (!providers || !model) return null;
+
+  const provider = providers.find(item => {
+    const apiKey = String(item.apiKey || "").trim();
+    const baseUrl = String(item.baseUrl || "").trim().toLowerCase();
+    return apiKey && (item.id.startsWith("openai") || baseUrl.includes("api.openai.com"));
+  });
+
+  if (!provider) return null;
+  return {
+    apiKey: provider.apiKey,
+    baseUrl: provider.baseUrl,
+    model,
+  };
+}
+
+export async function searchSemanticMemoryAsync<TItem>(
+  documents: SemanticMemoryDocument<TItem>[],
+  context: SemanticMemorySearchContext,
+  options: SemanticMemoryAsyncSearchOptions = {},
+) {
+  const config = options.config;
+  const limit = options.limit ?? 3;
+  if (!config || config.providerId !== "pgvector" || !config.pgvector.enabled || !config.pgvector.connectionString.trim()) {
+    return searchSemanticMemory(documents, context, options);
+  }
+
+  try {
+    const url = await resolveBackendUrl("/api/semantic-memory/query");
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        config: config.pgvector,
+        documents: documents.map(document => ({
+          id: document.id,
+          kind: document.kind,
+          title: document.title,
+          content: document.content,
+          rootPath: document.rootPath,
+          focusPath: document.focusPath,
+          linkedPaths: document.linkedPaths,
+          updatedAt: document.updatedAt,
+        })),
+        context,
+        limit,
+        embedding: resolveSemanticMemoryEmbeddingTransport(options.providers, config),
+      }),
+    });
+    const payload = await response.json();
+    if (!payload?.ok || !Array.isArray(payload?.results)) {
+      throw new Error(payload?.error || "Semantic memory query failed.");
+    }
+
+    const documentMap = new Map(documents.map(document => [document.id, document]));
+    return payload.results
+      .map((item: { id: string; score: number; reasons?: string[] }) => {
+        const document = documentMap.get(item.id);
+        if (!document) return null;
+        return {
+          document,
+          score: Number(item.score ?? 0),
+          reasons: Array.isArray(item.reasons) ? item.reasons : [],
+        } satisfies SemanticMemorySearchResult<TItem>;
+      })
+      .filter((item: SemanticMemorySearchResult<TItem> | null): item is SemanticMemorySearchResult<TItem> => Boolean(item));
+  } catch {
+    return searchSemanticMemory(documents, context, options).map((result: SemanticMemorySearchResult<TItem>) => ({
+      ...result,
+      reasons: ["pgvector unavailable", ...result.reasons],
+    }));
+  }
 }
 
 export function buildProjectMemoryDocument(memory: WorkspaceProjectMemory): SemanticMemoryDocument<WorkspaceProjectMemory> {

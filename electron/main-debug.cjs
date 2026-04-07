@@ -28,7 +28,7 @@ const { spawn } = require('child_process');
 const fs = require('fs');
 
 const isDev = () => process.env.NODE_ENV === 'development' || !app.isPackaged;
-const WS_PORT = 3001;
+const WS_PORT = Number(process.env.WS_PORT || 3001);
 
 let mainWindow = null;
 

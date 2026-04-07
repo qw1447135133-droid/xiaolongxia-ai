@@ -30,6 +30,7 @@ import { startPlatform, stopPlatform, sendToPlatform, sendFileToPlatform, isPlat
 import { exportMeetingDocument } from "./meeting-exporter.js";
 import { queryAgent, clearAllSessions } from "./agent-engine.js";
 import { getAgentTools } from "./agent-tools.js";
+import { checkSemanticMemoryStore, querySemanticMemoryStore } from "./semantic-memory-store.js";
 import {
   cleanupClientLaunchRequests,
   getDesktopRuntimeSummary,
@@ -94,6 +95,20 @@ let settings = {
   agentConfigs: {},
   platformConfigs: {},
   userNickname: "您",
+  semanticMemoryConfig: {
+    providerId: "local",
+    autoRecallProjectMemories: true,
+    autoRecallDeskNotes: true,
+    autoRecallKnowledgeDocs: true,
+    pgvector: {
+      enabled: false,
+      connectionString: "",
+      schema: "public",
+      table: "semantic_memory_documents",
+      embeddingModel: "text-embedding-3-small",
+      dimensions: 1536,
+    },
+  },
   desktopProgramSettings: {
     enabled: true,
     whitelistMode: false,
@@ -109,6 +124,7 @@ let settings = {
 };
 const hermesDispatchRuns = new Map();
 const hermesDispatchRuntime = new Map();
+const activeExecutionControllers = new Map();
 const PLATFORM_WEBHOOK_PATHS = {
   line: "/webhook/line",
   feishu: "/webhook/feishu",
@@ -515,22 +531,37 @@ const ROUTING_RULES = [
 ];
 
 const BREVITY = "\n\n【输出要求】言简意赅、直入主题；先结论后补充；避免冗长寒暄与套话；除必须条目外尽量控制在300字内。";
+const DESKTOP_AUTOMATION_PROMPT =
+  "\n\n【桌面执行能力】当任务要求真实打开本机程序、外部浏览器、网站页面，或通过鼠标键盘在桌面界面中点击、点开、播放、输入、滚动时，你可以使用桌面工具链：desktop_list_installed_applications、desktop_open_external_browser、desktop_launch_native_application、desktop_cdp_open_app、desktop_cdp_snapshot、desktop_cdp_act、desktop_capture_screenshot、desktop_control_input。对 Chrome、Edge、飞书、Figma、Notion 这类 Chromium / Electron 应用，优先进入 CDP App Mode，再读取结构化快照并基于 ref 操作；只有在结构化控制不可用时，才退回“先截图定位 → 再点击/输入 → 再截图验证”的物理桌面闭环。若第一次验证失败，优先参考 retrySuggestions 做一次偏移重试。只有验证码、人机验证、OTP/2FA 等验证场景必须转人工接管，不要口头假设自己没有鼠标键盘能力。若用户要求真实打开视频网站、视频页、播放器并点开/播放视频，不要先空口解释限制，必须先实际尝试桌面工具链。对于物理桌面操作请求，除验证场景外，不要只给文字建议而不动手。";
 
 const SYSTEM_PROMPTS = {
   orchestrator: "你是跨境电商 AI 团队的总协调员鹦鹉螺，负责任务拆解和团队协调。回复与汇报都要简短有力。"
     + "\n\n你拥有浏览器控制能力，可以使用以下工具：browser_goto（导航到URL）、browser_get_text（读取页面文字内容，搜索后必须用这个提取结果）、browser_page_info（获取页面信息）、browser_screenshot（截图识图）、browser_act（自然语言操作，如点击/填写/滚动）、browser_act_single（精确选择器操作）、browser_act_multi（批量操作）。"
+    + "\n\n你还拥有真实外部浏览器启动能力：desktop_open_external_browser 可打开 Chrome、Edge、Firefox 或系统默认浏览器。凡是用户明确要求打开浏览器，或要求打开/访问某个网站、链接、URL，都应优先使用它；只有自主搜索、读取网页、抓取资料、验证页面时，才继续使用内置 browser_*。"
     + "\n\n你还可以使用 desktop_list_installed_applications 工具先读取本机已安装程序列表，再用 desktop_launch_native_application 启动对应程序，例如微信、飞书、Chrome、VS Code、资源管理器或指定 exe。只有当用户明确要求打开/启动本机程序，或任务确实需要调用本机应用时才使用。"
+    + "\n\n对于 Chrome、Edge、飞书、Figma、Notion 这类 Chromium / Electron 应用，应优先使用 desktop_cdp_open_app 进入 CDP App Mode，再用 desktop_cdp_snapshot 获取结构化 ref，最后用 desktop_cdp_act 执行 click/fill/type/press。只有当 CDP 模式不可用时，才回退到桌面截图 + 鼠标键盘链路。"
     + "\n\n当桌面端应用无法通过代码或普通浏览器自动化完成时，你还可以先用 desktop_capture_screenshot 观察当前桌面，再用 desktop_control_input 模拟鼠标和键盘，处理桌面端应用、系统弹窗和纯 UI 交互。若任务涉及验证码、人机验证、OTP/2FA 或类似验证步骤，不要尝试自动绕过，应切换到人工接管。"
-    + "\n\n【桌面视觉闭环】对于桌面点击/输入任务，优先采用这套顺序：1. desktop_capture_screenshot 获取当前桌面；2. 基于图片与尺寸估算目标元素中心点坐标（左上角为 0,0）；3. 用 desktop_control_input 执行 click/type/key/hotkey；4. 再次 desktop_capture_screenshot 验证是否成功；5. 若第一次验证仍失败，优先使用 desktop_control_input 返回的 retrySuggestions 做一次附近偏移重试；6. 再次截图确认；7. 如连续两次仍无法确认结果，停止自动操作并转人工接管。"
+    + "\n\n【桌面视觉闭环】只有在结构化控制不可用时，才采用这套顺序：1. desktop_capture_screenshot 获取当前桌面；2. 基于图片与尺寸估算目标元素中心点坐标（左上角为 0,0）；3. 用 desktop_control_input 执行 click/type/key/hotkey；4. 再次 desktop_capture_screenshot 验证是否成功；5. 若第一次验证仍失败，优先使用 desktop_control_input 返回的 retrySuggestions 做一次附近偏移重试；6. 再次截图确认；7. 如连续两次仍无法确认结果，停止自动操作并转人工接管。"
+    + "\n\n【浏览器边界】：如果只是为了自主搜索、读取网页、抓取资料、验证页面或获取最新信息，一律优先使用内置 browser_* 工具，不要因为需要联网就启动外部浏览器。只要用户明确要求打开浏览器，或明确要求打开/访问某个网站、链接、URL，就优先使用 desktop_open_external_browser 或 desktop_launch_native_application。"
     + "\n\n【自主联网规则】：当任务依赖最新信息、网页资料、实时趋势、新闻、公告、价格、页面内容、链接内容或外部站点证据时，你应主动使用浏览器工具，不需要等用户明确要求“去搜索”或“打开网页”。"
     + "\n\n【搜索流程】：1.browser_goto 导航到搜索页或目标页 → 2.browser_get_text 读取页面内容 → 3.整理结果回复用户。不要反复跳转，读到内容就总结。"
     + "\n\n【遇到登录页】：换用百度/必应搜索该关键词，或直接总结已知信息。"
     + BREVITY,
-  explorer: "你是探海鲸鱼，跨境电商选品专家，专注竞品分析、选品趋势研究和市场数据分析，提供可执行洞察。" + BREVITY,
-  writer: "你是星海章鱼，跨境电商文案专家，专注多语种文案创作、SEO 标题和详情页撰写，输出高转化文案。" + BREVITY,
-  designer: "你是珊瑚水母，电商视觉设计专家；需要出图时先给出 [IMAGE_PROMPT] 英文提示词，再补充设计说明。" + BREVITY,
-  performer: "你是逐浪海豚，短视频内容专家，专注数字人视频脚本、TikTok/抖音内容策略和多平台矩阵发布。" + BREVITY,
-  greeter: "你是招潮蟹，多语种客服专家，专注客服话术、评论回复模板和买家互动策略。" + BREVITY,
+  explorer: "你是探海鲸鱼，跨境电商选品专家，专注竞品分析、选品趋势研究和市场数据分析，提供可执行洞察。"
+    + DESKTOP_AUTOMATION_PROMPT
+    + BREVITY,
+  writer: "你是星海章鱼，跨境电商文案专家，专注多语种文案创作、SEO 标题和详情页撰写，输出高转化文案。"
+    + DESKTOP_AUTOMATION_PROMPT
+    + BREVITY,
+  designer: "你是珊瑚水母，电商视觉设计专家；需要出图时先给出 [IMAGE_PROMPT] 英文提示词，再补充设计说明。"
+    + DESKTOP_AUTOMATION_PROMPT
+    + BREVITY,
+  performer: "你是逐浪海豚，短视频内容专家，专注数字人视频脚本、TikTok/抖音内容策略和多平台矩阵发布。"
+    + DESKTOP_AUTOMATION_PROMPT
+    + BREVITY,
+  greeter: "你是招潮蟹，多语种客服专家，专注客服话术、评论回复模板和买家互动策略。"
+    + DESKTOP_AUTOMATION_PROMPT
+    + BREVITY,
 };
 
 const AGENT_IDS = ["orchestrator", "explorer", "writer", "designer", "performer", "greeter"];
@@ -1839,6 +1870,166 @@ function broadcastExecutionUpdate(payload) {
   });
 }
 
+function normalizeExecutionAbortReason(reason) {
+  if (typeof reason === "string" && reason.trim()) return reason.trim();
+  if (reason && typeof reason === "object" && typeof reason.message === "string" && reason.message.trim()) {
+    return reason.message.trim();
+  }
+  return "用户已中止本次生成。";
+}
+
+function createExecutionAbortError(reason) {
+  const error = new Error(normalizeExecutionAbortReason(reason));
+  error.name = "ExecutionCancelledError";
+  return error;
+}
+
+function isExecutionAbortError(error) {
+  const name = typeof error?.name === "string" ? error.name : "";
+  const message = typeof error?.message === "string" ? error.message : String(error ?? "");
+  return (
+    name === "ExecutionCancelledError"
+    || name === "AbortError"
+    || name === "APIUserAbortError"
+    || /aborted|aborterror|cancelled|canceled|中止生成|停止生成/i.test(message)
+  );
+}
+
+function registerActiveExecutionRun(runId, payload) {
+  activeExecutionControllers.set(runId, {
+    runId,
+    currentTaskId: null,
+    currentAgentId: "orchestrator",
+    cancelled: false,
+    cancelReason: undefined,
+    ...payload,
+  });
+}
+
+function updateActiveExecutionRun(runId, updates) {
+  const current = activeExecutionControllers.get(runId);
+  if (!current) return null;
+  const next = { ...current, ...updates };
+  activeExecutionControllers.set(runId, next);
+  return next;
+}
+
+function getActiveExecutionRun(runId) {
+  return activeExecutionControllers.get(runId) ?? null;
+}
+
+function throwIfExecutionCancelled(runId) {
+  const current = getActiveExecutionRun(runId);
+  if (current?.cancelled || current?.controller?.signal?.aborted) {
+    throw createExecutionAbortError(current?.cancelReason ?? current?.controller?.signal?.reason);
+  }
+}
+
+function requestExecutionCancellation(runId, reason) {
+  const current = getActiveExecutionRun(runId);
+  if (!current) return null;
+  if (current.cancelled || current.controller?.signal?.aborted) {
+    return current;
+  }
+
+  const cancelReason = normalizeExecutionAbortReason(reason);
+  const next = updateActiveExecutionRun(runId, {
+    cancelled: true,
+    cancelReason,
+    cancelledAt: Date.now(),
+  });
+
+  try {
+    current.controller?.abort(cancelReason);
+  } catch {
+    try {
+      current.controller?.abort();
+    } catch {
+      // Ignore best-effort abort failures.
+    }
+  }
+
+  return next;
+}
+
+function finalizeCancelledExecution({
+  runId,
+  sessionId,
+  totalTasks,
+  completedTasks,
+  failedTasks,
+  currentTaskId,
+  currentAgentId,
+  reason,
+}) {
+  const normalizedReason = normalizeExecutionAbortReason(reason);
+  const timestamp = Date.now();
+  const resolvedAgentId = currentAgentId || "orchestrator";
+  const nextFailedTasks = Math.min(totalTasks, failedTasks + (currentTaskId ? 1 : 0));
+
+  if (currentTaskId) {
+    broadcast({
+      type: "task_stream_delta",
+      executionRunId: runId,
+      taskId: currentTaskId,
+      delta: "\n\n[已停止生成]",
+    });
+    broadcast({
+      type: "task_update",
+      executionRunId: runId,
+      taskId: currentTaskId,
+      updates: {
+        status: "failed",
+        completedAt: timestamp,
+      },
+    });
+    broadcast({
+      type: "assistant_reasoning",
+      executionRunId: runId,
+      sessionId,
+      agentId: resolvedAgentId,
+      taskId: currentTaskId,
+      summary: "已停止生成",
+      detail: normalizedReason,
+      status: "failed",
+      timestamp,
+    });
+    broadcast({
+      type: "activity",
+      executionRunId: runId,
+      activity: {
+        agentId: resolvedAgentId,
+        type: "task_fail",
+        summary: "本次生成已中止",
+        detail: normalizedReason,
+        timestamp,
+        taskId: currentTaskId,
+      },
+    });
+  }
+
+  broadcast({ type: "agent_status", agentId: resolvedAgentId, status: "idle", executionRunId: runId });
+  idleAllExcept();
+  broadcastExecutionUpdate({
+    executionRunId: runId,
+    sessionId,
+    status: "failed",
+    totalTasks,
+    completedTasks,
+    failedTasks: nextFailedTasks,
+    currentAgentId: resolvedAgentId,
+    completedAt: timestamp,
+    event: makeExecutionEvent({
+      type: "error",
+      title: "本轮生成已中止",
+      detail: normalizedReason,
+      agentId: resolvedAgentId,
+      taskId: currentTaskId ?? undefined,
+      timestamp,
+    }),
+  });
+}
+
 function buildChannelSessionSnapshot({
   platformId,
   targetId,
@@ -2017,6 +2208,53 @@ function buildDesktopToolEvent({ toolName, phase, input, result, error, agentId,
   const query = typeof input?.query === "string" ? input.query.trim() : "";
   const resolvedResult = parseToolResultPayload(result);
 
+  if (toolName === "desktop_open_external_browser") {
+    const requestedBrowser = typeof input?.browser === "string" ? input.browser.trim() : "";
+    const url = typeof input?.url === "string" ? input.url.trim() : "";
+
+    if (phase === "start") {
+      return makeExecutionEvent({
+        type: "system",
+        title: "请求打开外部浏览器",
+        detail: [
+          requestedBrowser ? `浏览器：${requestedBrowser}` : "浏览器：auto",
+          url ? `网址：${url}` : "",
+        ].filter(Boolean).join(" · "),
+        agentId,
+        taskId,
+      });
+    }
+
+    if (phase === "success") {
+      const browserLabel = typeof resolvedResult === "object" && resolvedResult && "browserLabel" in resolvedResult
+        ? String(resolvedResult.browserLabel || "")
+        : "";
+      const openedUrl = typeof resolvedResult === "object" && resolvedResult && "url" in resolvedResult
+        ? String(resolvedResult.url || "")
+        : "";
+      return makeExecutionEvent({
+        type: "result",
+        title: "外部浏览器已打开",
+        detail: [
+          browserLabel || requestedBrowser,
+          openedUrl ? `网址：${openedUrl}` : "",
+        ].filter(Boolean).join(" · ") || "桌面客户端已打开真实外部浏览器。",
+        agentId,
+        taskId,
+      });
+    }
+
+    if (phase === "denied" || phase === "error") {
+      return makeExecutionEvent({
+        type: "error",
+        title: phase === "denied" ? "外部浏览器启动被拒绝" : "外部浏览器启动失败",
+        detail: String(error || url || requestedBrowser || "桌面客户端未能打开外部浏览器。"),
+        agentId,
+        taskId,
+      });
+    }
+  }
+
   if (toolName === "desktop_launch_native_application") {
     if (phase === "start") {
       return makeExecutionEvent({
@@ -2046,6 +2284,115 @@ function buildDesktopToolEvent({ toolName, phase, input, result, error, agentId,
         type: "error",
         title: phase === "denied" ? "本机程序启动被拒绝" : "本机程序启动失败",
         detail: String(error || target || "桌面客户端未能启动目标程序。"),
+        agentId,
+        taskId,
+      });
+    }
+  }
+
+  if (toolName === "desktop_cdp_open_app") {
+    const appLabel = typeof input?.app === "string" ? input.app.trim() : "";
+    const url = typeof input?.url === "string" ? input.url.trim() : "";
+
+    if (phase === "start") {
+      return makeExecutionEvent({
+        type: "system",
+        title: "请求 CDP App Mode",
+        detail: [appLabel ? `应用：${appLabel}` : "", url ? `网址：${url}` : ""].filter(Boolean).join(" · ") || "正在打开结构化控制应用。",
+        agentId,
+        taskId,
+      });
+    }
+
+    if (phase === "success") {
+      const label = typeof resolvedResult === "object" && resolvedResult && "label" in resolvedResult
+        ? String(resolvedResult.label || "")
+        : "";
+      const pageUrl = typeof resolvedResult === "object" && resolvedResult && "pageUrl" in resolvedResult
+        ? String(resolvedResult.pageUrl || "")
+        : "";
+      return makeExecutionEvent({
+        type: "result",
+        title: "CDP App Mode 已连接",
+        detail: [label || appLabel, pageUrl ? `地址：${pageUrl}` : ""].filter(Boolean).join(" · ") || "已连接结构化控制会话。",
+        agentId,
+        taskId,
+      });
+    }
+
+    if (phase === "denied" || phase === "error") {
+      return makeExecutionEvent({
+        type: "error",
+        title: phase === "denied" ? "CDP App Mode 被拒绝" : "CDP App Mode 连接失败",
+        detail: String(error || appLabel || "未能连接结构化控制应用。"),
+        agentId,
+        taskId,
+      });
+    }
+  }
+
+  if (toolName === "desktop_cdp_snapshot") {
+    if (phase === "start") {
+      return makeExecutionEvent({
+        type: "system",
+        title: "读取 CDP 结构化快照",
+        detail: "正在抓取当前应用的结构化元素列表。",
+        agentId,
+        taskId,
+      });
+    }
+
+    if (phase === "success") {
+      const elements = typeof resolvedResult === "object" && resolvedResult && Array.isArray(resolvedResult.elements)
+        ? resolvedResult.elements.length
+        : 0;
+      return makeExecutionEvent({
+        type: "result",
+        title: "CDP 快照已返回",
+        detail: elements > 0 ? `共返回 ${elements} 个结构化元素。` : "已返回结构化页面快照。",
+        agentId,
+        taskId,
+      });
+    }
+
+    if (phase === "denied" || phase === "error") {
+      return makeExecutionEvent({
+        type: "error",
+        title: phase === "denied" ? "CDP 快照被拒绝" : "CDP 快照失败",
+        detail: String(error || "未能获取结构化页面快照。"),
+        agentId,
+        taskId,
+      });
+    }
+  }
+
+  if (toolName === "desktop_cdp_act") {
+    const action = typeof input?.action === "string" ? input.action : "act";
+    if (phase === "start") {
+      return makeExecutionEvent({
+        type: "system",
+        title: "执行 CDP 结构化动作",
+        detail: `动作：${action}`,
+        agentId,
+        taskId,
+      });
+    }
+
+    if (phase === "success") {
+      return makeExecutionEvent({
+        type: "result",
+        title: "CDP 动作已执行",
+        detail: `动作：${action}`,
+        agentId,
+        taskId,
+      });
+    }
+
+    if (phase === "denied" || phase === "error") {
+      return makeExecutionEvent({
+        type: "error",
+        title: phase === "denied" ? "CDP 动作被拒绝" : "CDP 动作失败",
+        detail: String(error || action || "结构化页面动作执行失败。"),
         agentId,
         taskId,
       });
@@ -2174,6 +2521,50 @@ function buildDesktopToolActivity({ toolName, phase, input, result, error, agent
   const resolvedResult = parseToolResultPayload(result);
   const timestamp = Date.now();
 
+  if (toolName === "desktop_open_external_browser") {
+    const requestedBrowser = typeof input?.browser === "string" ? input.browser.trim() : "";
+    const url = typeof input?.url === "string" ? input.url.trim() : "";
+
+    if (phase === "start") {
+      return {
+        agentId,
+        type: "tool_start",
+        summary: requestedBrowser ? `请求打开 ${requestedBrowser}` : "请求打开外部浏览器",
+        detail: url || (typeof input?.reason === "string" && input.reason.trim() ? input.reason.trim() : undefined),
+        timestamp,
+        taskId,
+      };
+    }
+
+    if (phase === "success") {
+      const browserLabel = typeof resolvedResult === "object" && resolvedResult && "browserLabel" in resolvedResult
+        ? String(resolvedResult.browserLabel || "")
+        : "";
+      const openedUrl = typeof resolvedResult === "object" && resolvedResult && "url" in resolvedResult
+        ? String(resolvedResult.url || "")
+        : "";
+      return {
+        agentId,
+        type: "tool_done",
+        summary: browserLabel ? `${browserLabel} 已打开` : "外部浏览器已打开",
+        detail: openedUrl || undefined,
+        timestamp,
+        taskId,
+      };
+    }
+
+    if (phase === "denied" || phase === "error") {
+      return {
+        agentId,
+        type: "tool_fail",
+        summary: requestedBrowser ? `${requestedBrowser} 启动失败` : "外部浏览器启动失败",
+        detail: String(error || "桌面客户端未能打开外部浏览器。"),
+        timestamp,
+        taskId,
+      };
+    }
+  }
+
   if (toolName === "desktop_launch_native_application") {
     if (phase === "start") {
       return {
@@ -2206,6 +2597,120 @@ function buildDesktopToolActivity({ toolName, phase, input, result, error, agent
         type: "tool_fail",
         summary: target ? `${target} 启动失败` : "本机程序启动失败",
         detail: String(error || "桌面客户端未能启动目标程序。"),
+        timestamp,
+        taskId,
+      };
+    }
+  }
+
+  if (toolName === "desktop_cdp_open_app") {
+    const appLabel = typeof input?.app === "string" ? input.app.trim() : "";
+    const pageUrl = typeof resolvedResult === "object" && resolvedResult && "pageUrl" in resolvedResult
+      ? String(resolvedResult.pageUrl || "")
+      : "";
+
+    if (phase === "start") {
+      return {
+        agentId,
+        type: "tool_start",
+        summary: appLabel ? `连接 ${appLabel} 的 CDP 模式` : "连接 CDP App Mode",
+        detail: typeof input?.url === "string" && input.url.trim() ? input.url.trim() : undefined,
+        timestamp,
+        taskId,
+      };
+    }
+
+    if (phase === "success") {
+      return {
+        agentId,
+        type: "tool_done",
+        summary: appLabel ? `${appLabel} 已进入 CDP 模式` : "CDP App Mode 已连接",
+        detail: pageUrl || undefined,
+        timestamp,
+        taskId,
+      };
+    }
+
+    if (phase === "denied" || phase === "error") {
+      return {
+        agentId,
+        type: "tool_fail",
+        summary: appLabel ? `${appLabel} CDP 连接失败` : "CDP App Mode 连接失败",
+        detail: String(error || "未能连接结构化控制应用。"),
+        timestamp,
+        taskId,
+      };
+    }
+  }
+
+  if (toolName === "desktop_cdp_snapshot") {
+    if (phase === "start") {
+      return {
+        agentId,
+        type: "tool_start",
+        summary: "抓取 CDP 结构化快照",
+        detail: undefined,
+        timestamp,
+        taskId,
+      };
+    }
+
+    if (phase === "success") {
+      const elements = typeof resolvedResult === "object" && resolvedResult && Array.isArray(resolvedResult.elements)
+        ? resolvedResult.elements.length
+        : undefined;
+      return {
+        agentId,
+        type: "tool_done",
+        summary: typeof elements === "number" ? `已返回 ${elements} 个结构化元素` : "CDP 快照已返回",
+        detail: undefined,
+        timestamp,
+        taskId,
+      };
+    }
+
+    if (phase === "denied" || phase === "error") {
+      return {
+        agentId,
+        type: "tool_fail",
+        summary: "CDP 快照失败",
+        detail: String(error || "未能获取结构化页面快照。"),
+        timestamp,
+        taskId,
+      };
+    }
+  }
+
+  if (toolName === "desktop_cdp_act") {
+    const action = typeof input?.action === "string" ? input.action : "act";
+    if (phase === "start") {
+      return {
+        agentId,
+        type: "tool_start",
+        summary: `执行 CDP 动作：${action}`,
+        detail: undefined,
+        timestamp,
+        taskId,
+      };
+    }
+
+    if (phase === "success") {
+      return {
+        agentId,
+        type: "tool_done",
+        summary: `CDP 动作完成：${action}`,
+        detail: undefined,
+        timestamp,
+        taskId,
+      };
+    }
+
+    if (phase === "denied" || phase === "error") {
+      return {
+        agentId,
+        type: "tool_fail",
+        summary: `CDP 动作失败：${action}`,
+        detail: String(error || "结构化页面动作执行失败。"),
         timestamp,
         taskId,
       };
@@ -2415,6 +2920,84 @@ function shouldPreferOrchestratorForWebResearch(text) {
   ].some(keyword => t.includes(keyword));
 }
 
+function shouldPreferOrchestratorForDesktopControl(text) {
+  const t = String(text || "").trim().toLowerCase();
+  if (!t) return false;
+
+  if (shouldExplicitlyOpenExternalBrowser(t)) {
+    return true;
+  }
+
+  if (isDesktopFileDestinationRequest(t)) {
+    return false;
+  }
+
+  const directDesktopPatterns = [
+    /(?:鼠标|鍵盤|键盘|截图|截圖|接管|点开|點開|点击|點擊|双击|雙擊|右键|右鍵|滚动|滾動|输入|輸入|按下|播放)/i,
+    /(?:桌面|desktop).{0,12}(?:点击|點擊|操作|接管|程序|應用|应用|窗口|視窗|弹窗|彈窗)/i,
+    /(?:点击|點擊|操作|接管|启动|啟動).{0,12}(?:桌面|desktop)/i,
+    /(?:打开|打開|进入|進入|前往|跳转到|跳轉到|去到).{0,18}(?:视频|影片|视频页|影片頁|直播|网页播放器|網頁播放器)/i,
+    /(?:网页|網頁|网站|網站|浏览器|瀏覽器).{0,18}(?:点击|點擊|点开|點開|播放|输入|輸入|滚动|滾動|操作)/i,
+    /(?:打开|打開|进入|進入|前往|跳转到|跳轉到|去到).{0,20}(?:b\s*站|bilibili|you\s*tube|youtube|优酷|腾讯视频|爱奇艺|抖音|tiktok|快手|视频站|視頻站|视频网站|視頻網站|播放器)/i,
+    /(?:b\s*站|bilibili|you\s*tube|youtube|优酷|腾讯视频|爱奇艺|抖音|tiktok|快手|视频站|視頻站|视频网站|視頻網站|播放器).{0,18}(?:打开|打開|点击|點擊|点开|點開|播放|滚动|滾動|输入|輸入|进入|進入)/i,
+  ];
+
+  return directDesktopPatterns.some(pattern => pattern.test(t));
+}
+
+function shouldExplicitlyOpenExternalBrowser(text) {
+  const t = String(text || "").trim().toLowerCase();
+  if (!t) return false;
+
+  if (/(?:浏览器打不开|打不开浏览器|无法打开浏览器|browser won't open|browser cannot open)/i.test(t)) {
+    return false;
+  }
+
+  const directPatterns = [
+    /^(?:请)?(?:帮我)?(?:麻烦)?(?:打开|启动|开启|唤起)(?:一下)?(?:外部|系统|真实)?(?:浏览器|chrome|google chrome|edge|msedge|firefox)/i,
+    /(?:用|使用|在)(?:外部|系统|真实)?(?:浏览器|chrome|google chrome|edge|msedge|firefox).{0,12}(?:打开|访问|启动)/i,
+    /\b(?:open|launch|start)\b.{0,18}\b(?:browser|chrome|edge|firefox)\b/i,
+    /\b(?:browser|chrome|edge|firefox)\b.{0,18}\b(?:open|launch|start)\b/i,
+    /(?:打开|访问|进入|前往|跳转到|去到|go to|visit|open).{0,24}(?:网页|页面|网站|网址|链接|url|官网|web\s*site|website|site|page|link)\b/i,
+    /(?:打开|访问|进入|前往|跳转到|去到|go to|visit|open).{0,32}(?:https?:\/\/|www\.|[a-z0-9-]+(?:\.[a-z0-9-]+)+\/?)/i,
+    /(?:用|使用|在).{0,12}(?:浏览器|chrome|google chrome|edge|msedge|firefox).{0,18}(?:打开|访问|进入).{0,24}(?:网页|页面|网站|网址|链接|url|官网|https?:\/\/|www\.)/i,
+    /(?:打开|访问|进入|前往|跳转到|去到|go to|visit|open).{0,24}(?:b\s*站|bilibili|you\s*tube|youtube|优酷|腾讯视频|爱奇艺|抖音|tiktok|快手|视频站|視頻站|视频网站|視頻網站|播放器)/i,
+    /(?:b\s*站|bilibili|you\s*tube|youtube|优酷|腾讯视频|爱奇艺|抖音|tiktok|快手|视频站|視頻站|视频网站|視頻網站|播放器).{0,18}(?:打开|访问|进入|前往|播放|点开|點開)/i,
+  ];
+
+  return directPatterns.some(pattern => pattern.test(t));
+}
+
+function isDesktopFileDestinationRequest(text) {
+  const t = String(text || "").trim().toLowerCase();
+  if (!t) return false;
+
+  return [
+    /(?:保存|存到|放到|导出到|輸出到|发送到|發送到|发到|傳到|下载到|下載到).{0,12}(?:桌面|desktop)/i,
+    /(?:桌面|desktop).{0,12}(?:文档|文件|word|docx|pdf|markdown|md|总结|報告|报告|附件)/i,
+  ].some(pattern => pattern.test(t));
+}
+
+function buildBrowserExecutionGuardrail(text) {
+  if (shouldExplicitlyOpenExternalBrowser(text)) {
+    return [
+      "【浏览器执行边界】",
+      "- 用户这次明确要求打开浏览器，或要求打开/访问某个网站、链接、URL。",
+      "- 这种场景一律先使用 desktop_open_external_browser 打开真实外部浏览器；只有在必须指定本机程序细节时才退回 desktop_launch_native_application。",
+      "- 外部浏览器打开后，如还需要继续查资料、抓网页或读页面文字，仍可继续使用内置 browser_* 工具完成后续信息检索。",
+    ].join("\n");
+  }
+
+  return [
+    "【浏览器执行边界】",
+    "- 若只是为了搜索网页、查资料、访问链接、读取页面、抓取页面内容或验证网页结果，一律优先使用内置 browser_*。",
+    "- 不要因为任务需要联网就启动真实外部浏览器。",
+    "- 只有当用户明确要求“打开浏览器”，或明确要求“打开/访问某个网站、链接、URL”，才允许使用 desktop_open_external_browser 或 desktop_launch_native_application。",
+    "- 如果任务是“先查资料，再生成 Word / 文档 / 总结 / 附件，并保存到桌面或本地目录”，检索阶段仍然只用内置 browser_*；保存到桌面不等于打开桌面浏览器。",
+    "- “发到桌面 / 保存到桌面 / 导出到桌面” 只是本地交付目标，不属于外部浏览器打开指令。",
+  ].join("\n");
+}
+
 function shouldReplyDirectlyByOrchestrator(text) {
   const t = String(text || "").trim();
   if (!t) return true;
@@ -2477,6 +3060,9 @@ function nextTaskTimestamp() {
 
 function routeTask(instruction) {
   const lower = String(instruction || "").toLowerCase();
+  if (shouldPreferOrchestratorForDesktopControl(lower)) {
+    return { agent: "orchestrator", complexity: "high" };
+  }
   if (shouldPreferOrchestratorForWebResearch(lower)) {
     return { agent: "orchestrator", complexity: "medium" };
   }
@@ -2524,12 +3110,80 @@ function buildClient(agentId) {
   };
 }
 
+function createAssistantStreamReporter({ executionRunId, sessionId, agentId, taskId }) {
+  let lastSummary = "";
+  let lastDetail = "";
+
+  return {
+    onTextDelta(delta) {
+      if (!delta) return;
+      broadcast({
+        type: "task_stream_delta",
+        executionRunId,
+        taskId,
+        delta,
+      });
+    },
+    onReasoningEvent({ summary, detail, status = "running" }) {
+      const timestamp = Date.now();
+      broadcast({
+        type: "assistant_reasoning",
+        executionRunId,
+        taskId,
+        sessionId,
+        agentId,
+        summary,
+        detail,
+        status,
+        timestamp,
+      });
+
+      const normalizedSummary = String(summary || "").trim();
+      const normalizedDetail = String(detail || "").trim();
+      const shouldLogEvent =
+        (normalizedSummary && normalizedSummary !== lastSummary)
+        || (normalizedDetail && normalizedDetail !== lastDetail)
+        || status === "failed";
+
+      if (shouldLogEvent) {
+        const title = normalizedSummary ? `思考摘要 · ${normalizedSummary}` : "思考摘要";
+        const eventDetail = normalizedDetail || normalizedSummary || "模型正在更新内部思路摘要。";
+        broadcastExecutionUpdate({
+          executionRunId,
+          sessionId,
+          currentAgentId: agentId,
+          timestamp,
+          event: makeExecutionEvent({
+            type: status === "failed" ? "error" : "agent",
+            title,
+            detail: eventDetail,
+            agentId,
+            taskId,
+            timestamp,
+          }),
+        });
+      }
+
+      if (normalizedSummary) lastSummary = normalizedSummary;
+      if (normalizedDetail) lastDetail = normalizedDetail;
+    },
+  };
+}
+
 async function callAgent(agentId, task, complexity, maxTokensOverride, sessionId = "default", executionMeta = {}) {
   const { client, clientType, model, systemPrompt } = buildClient(agentId);
   // 若 Agent 已显式配置了模型则尊重该设置，否则按复杂度自动选择
   const hasCustomModel = !!settings.agentConfigs?.[agentId]?.model;
   const actualModel = hasCustomModel ? model : getModelForComplexity(complexity);
   const defaultMax = complexity === "high" ? 1024 : complexity === "medium" ? 600 : 400;
+  const streamReporter = executionMeta.executionRunId && executionMeta.taskId
+    ? createAssistantStreamReporter({
+        executionRunId: executionMeta.executionRunId,
+        sessionId,
+        agentId,
+        taskId: executionMeta.taskId,
+      })
+    : null;
 
   return await queryAgent({
     agentId,
@@ -2549,48 +3203,97 @@ async function callAgent(agentId, task, complexity, maxTokensOverride, sessionId
           taskId: executionMeta.taskId,
         })
       : undefined,
+    onTextDelta: streamReporter?.onTextDelta,
+    onReasoningEvent: streamReporter?.onReasoningEvent,
+    signal: executionMeta.signal,
     toolContext: executionMeta.requesterWs
       ? {
           desktopClientWs: executionMeta.requesterWs,
           executionRunId: executionMeta.executionRunId,
           taskId: executionMeta.taskId,
           sessionId,
+          signal: executionMeta.signal,
+          userInstruction: executionMeta.userInstruction,
+          currentTaskDescription: executionMeta.currentTaskDescription,
         }
       : undefined,
   });
 }
 
-async function dispatch(instruction, sessionId = "default", executionRunId = randomUUID(), source = "chat", requesterWs = null) {
+async function dispatch(
+  instruction,
+  sessionId = "default",
+  executionRunId = randomUUID(),
+  source = "chat",
+  requesterWs = null,
+  userInstruction = instruction,
+) {
   const runId = executionRunId || randomUUID();
   const createdAt = Date.now();
-  broadcastExecutionUpdate({
-    executionRunId: runId,
+  const controller = new AbortController();
+  registerActiveExecutionRun(runId, {
+    controller,
     sessionId,
-    instruction,
     source,
-    status: "analyzing",
-    timestamp: createdAt,
-    event: makeExecutionEvent({
-      type: "dispatch",
-      title: "开始分析需求",
-      detail: instruction,
-      timestamp: createdAt,
-    }),
+    requesterWs,
+    userInstruction,
+    createdAt,
   });
+  let totalTasksForCancellation = 0;
+  let completedTasksForCancellation = 0;
+  let failedTasksForCancellation = 0;
 
-  idleAllExcept("orchestrator");
-  broadcast({ type: "agent_status", agentId: "orchestrator", status: "running", currentTask: "理解指令中...", executionRunId: runId });
+  try {
+    broadcastExecutionUpdate({
+      executionRunId: runId,
+      sessionId,
+      instruction: userInstruction,
+      source,
+      status: "analyzing",
+      timestamp: createdAt,
+      event: makeExecutionEvent({
+        type: "dispatch",
+        title: "开始分析需求",
+        detail: userInstruction,
+        timestamp: createdAt,
+      }),
+    });
 
-  if (shouldReplyDirectlyByOrchestrator(instruction)) {
-    try {
-      const directReply = buildDirectOrchestratorReply(instruction);
-      let text = directReply;
-      let tokens = 0;
+    idleAllExcept("orchestrator");
+    broadcast({ type: "agent_status", agentId: "orchestrator", status: "running", currentTask: "理解指令中...", executionRunId: runId });
 
-      if (!text) {
-        const response = await callAgent(
-          "orchestrator",
-          `用户发来的是简单对话或短问句，请你以鹦鹉螺身份直接接话回复。
+    if (shouldReplyDirectlyByOrchestrator(userInstruction)) {
+      totalTasksForCancellation = 1;
+      let taskId = randomUUID();
+      try {
+        const directReply = buildDirectOrchestratorReply(userInstruction);
+        let text = directReply;
+        let tokens = 0;
+        let directStatus = "completed";
+
+        if (!text) {
+          throwIfExecutionCancelled(runId);
+          const taskCreatedAt = nextTaskTimestamp();
+          updateActiveExecutionRun(runId, {
+            currentTaskId: taskId,
+            currentAgentId: "orchestrator",
+          });
+          broadcast({
+            type: "task_add",
+            executionRunId: runId,
+            task: {
+              id: taskId,
+              description: userInstruction,
+              assignedTo: "orchestrator",
+              complexity: "low",
+              status: "running",
+              result: "",
+              createdAt: taskCreatedAt,
+            },
+          });
+          const response = await callAgent(
+            "orchestrator",
+            `用户发来的是简单对话或短问句，请你以鹦鹉螺身份直接接话回复。
 
 要求：
 - 不要拆解任务
@@ -2598,209 +3301,214 @@ async function dispatch(instruction, sessionId = "default", executionRunId = ran
 - 不要写“收到指令”“本次由某某处理”这类调度话术
 - 像真实对话一样自然、简短、友好
 
-用户消息：${instruction}`,
-          "low",
-          220,
+用户消息：${userInstruction}`,
+            "low",
+            220,
+            sessionId,
+            {
+              executionRunId: runId,
+              requesterWs,
+              taskId,
+              signal: controller.signal,
+              userInstruction,
+              currentTaskDescription: userInstruction,
+            },
+          );
+          throwIfExecutionCancelled(runId);
+          text = response.text;
+          tokens = response.tokens;
+          const finalStatus = String(text || "").startsWith("API 调用失败：") ? "failed" : "done";
+          directStatus = finalStatus === "failed" ? "failed" : "completed";
+          broadcast({
+            type: "task_update",
+            executionRunId: runId,
+            taskId,
+            updates: {
+              status: finalStatus,
+              result: text,
+              completedAt: Date.now(),
+            },
+          });
+        }
+
+        if (directReply) {
+          const ts = nextTaskTimestamp();
+          broadcast({
+            type: "task_add",
+            executionRunId: runId,
+            task: {
+              id: taskId,
+              description: userInstruction,
+              assignedTo: "orchestrator",
+              complexity: "low",
+              status: "done",
+              result: text,
+              createdAt: ts,
+              completedAt: ts,
+            },
+          });
+        }
+        if (tokens > 0) {
+          broadcast({ type: "cost", agentId: "orchestrator", tokens });
+        }
+        broadcastExecutionUpdate({
+          executionRunId: runId,
           sessionId,
-          { executionRunId: runId, requesterWs },
-        );
-        text = response.text;
-        tokens = response.tokens;
+          status: directStatus,
+          totalTasks: 1,
+          completedTasks: directStatus === "completed" ? 1 : 0,
+          failedTasks: directStatus === "failed" ? 1 : 0,
+          currentAgentId: "orchestrator",
+          completedAt: Date.now(),
+          event: makeExecutionEvent({
+            type: directStatus === "completed" ? "result" : "error",
+            title: directStatus === "completed" ? "鹦鹉螺直接完成回复" : "鹦鹉螺直接回复失败",
+            detail: String(text || "").slice(0, 200),
+            agentId: "orchestrator",
+          }),
+        });
+        completedTasksForCancellation = directStatus === "completed" ? 1 : 0;
+        failedTasksForCancellation = directStatus === "failed" ? 1 : 0;
+      } catch (err) {
+        if (isExecutionAbortError(err) || controller.signal.aborted || getActiveExecutionRun(runId)?.cancelled) {
+          finalizeCancelledExecution({
+            runId,
+            sessionId,
+            totalTasks: 1,
+            completedTasks: 0,
+            failedTasks: 0,
+            currentTaskId: getActiveExecutionRun(runId)?.currentTaskId,
+            currentAgentId: "orchestrator",
+            reason: err,
+          });
+          return;
+        }
+
+        const ts = nextTaskTimestamp();
+        broadcast({
+          type: "task_add",
+          executionRunId: runId,
+          task: {
+            id: randomUUID(),
+            description: userInstruction,
+            assignedTo: "orchestrator",
+            complexity: "low",
+            status: "done",
+            result: `我在，${settings.userNickname || "您"}可以直接说需求。`,
+            createdAt: ts,
+            completedAt: ts,
+          },
+        });
+        console.error("[dispatch] direct orchestrator reply failed:", err?.message || err);
+        broadcastExecutionUpdate({
+          executionRunId: runId,
+          sessionId,
+          status: "failed",
+          totalTasks: 1,
+          failedTasks: 1,
+          currentAgentId: "orchestrator",
+          completedAt: Date.now(),
+          event: makeExecutionEvent({
+            type: "error",
+            title: "鹦鹉螺回复时发生异常",
+            detail: String(err?.message || err),
+            agentId: "orchestrator",
+          }),
+        });
+        failedTasksForCancellation = 1;
+      } finally {
+        updateActiveExecutionRun(runId, { currentTaskId: null, currentAgentId: "orchestrator" });
+        broadcast({ type: "agent_status", agentId: "orchestrator", status: "idle", executionRunId: runId });
       }
 
-      const ts = nextTaskTimestamp();
-      broadcast({
-        type: "task_add",
-        executionRunId: runId,
-        task: {
-          id: randomUUID(),
-          description: instruction,
-          assignedTo: "orchestrator",
-          complexity: "low",
-          status: "done",
-          result: text,
-          createdAt: ts,
-          completedAt: ts,
-        },
-      });
-      if (tokens > 0) {
-        broadcast({ type: "cost", agentId: "orchestrator", tokens });
-      }
-      broadcastExecutionUpdate({
-        executionRunId: runId,
-        sessionId,
-        status: "completed",
-        totalTasks: 1,
-        completedTasks: 1,
-        currentAgentId: "orchestrator",
-        completedAt: Date.now(),
-        event: makeExecutionEvent({
-          type: "result",
-          title: "鹦鹉螺直接完成回复",
-          detail: String(text || "").slice(0, 200),
-          agentId: "orchestrator",
-        }),
-      });
-    } catch (err) {
-      const ts = nextTaskTimestamp();
-      broadcast({
-        type: "task_add",
-        executionRunId: runId,
-        task: {
-          id: randomUUID(),
-          description: instruction,
-          assignedTo: "orchestrator",
-          complexity: "low",
-          status: "done",
-          result: `我在，${settings.userNickname || "您"}可以直接说需求。`,
-          createdAt: ts,
-          completedAt: ts,
-        },
-      });
-      console.error("[dispatch] direct orchestrator reply failed:", err?.message || err);
-      broadcastExecutionUpdate({
-        executionRunId: runId,
-        sessionId,
-        status: "failed",
-        totalTasks: 1,
-        failedTasks: 1,
-        currentAgentId: "orchestrator",
-        completedAt: Date.now(),
-        event: makeExecutionEvent({
-          type: "error",
-          title: "鹦鹉螺回复时发生异常",
-          detail: String(err?.message || err),
-          agentId: "orchestrator",
-        }),
-      });
+      return;
     }
 
-    broadcast({ type: "agent_status", agentId: "orchestrator", status: "idle", executionRunId: runId });
-    return;
-  }
-
-  const reportTaskId = randomUUID();
-  broadcast({ type: "activity", executionRunId: runId, activity: { agentId: "orchestrator", type: "dispatch", summary: instruction, timestamp: Date.now(), taskId: reportTaskId } });
-
-  let tasks = [];
-
-  if (shouldForceDecomposition(instruction)) {
-    const candidateTasks = [
-      "先分析用户需求并提炼核心目标",
-      instruction,
-    ];
-    tasks = candidateTasks.map((desc) => {
-      const routed = routeTask(desc);
-      return {
-        id: randomUUID(),
-        description: desc === instruction ? instruction : `围绕“${instruction}”：${desc}`,
-        assignedTo: routed.agent,
-        complexity: routed.complexity,
-      };
-    });
-  } else {
-    const routed = routeTask(instruction);
-    tasks = [{
-      id: randomUUID(),
-      description: instruction,
-      assignedTo: routed.agent,
-      complexity: routed.complexity,
-    }];
-  }
-
-  const reportText = tasks.length > 1
-    ? `收到指令：${instruction}\n\n我已拆解为 ${tasks.length} 个子任务：\n${tasks.map((t, i) => `${i + 1}. ${t.description} -> ${AGENT_DISPLAY[t.assignedTo]}`).join("\n")}`
-    : `收到指令：${instruction}\n\n本次由 ${AGENT_DISPLAY[tasks[0].assignedTo]} 直接处理。`;
-
-  const reportTs = nextTaskTimestamp();
-  broadcast({
-    type: "task_add",
-    executionRunId: runId,
-    task: {
-      id: reportTaskId,
-        description: "鹦鹉螺汇报",
-      assignedTo: "orchestrator",
-      complexity: "low",
-      status: "done",
-      result: reportText,
-      createdAt: reportTs,
-      completedAt: reportTs,
-    },
-  });
-  broadcastExecutionUpdate({
-    executionRunId: runId,
-    sessionId,
-    status: "running",
-    totalTasks: tasks.length,
-    completedTasks: 0,
-    failedTasks: 0,
-    currentAgentId: "orchestrator",
-    event: makeExecutionEvent({
-      type: "dispatch",
-      title: `任务已拆解为 ${tasks.length} 个步骤`,
-      detail: tasks.map((task, index) => `${index + 1}. ${task.description} -> ${AGENT_DISPLAY[task.assignedTo]}`).join("\n"),
-      agentId: "orchestrator",
-      taskId: reportTaskId,
-    }),
-  });
-  broadcast({ type: "agent_status", agentId: "orchestrator", status: "idle", executionRunId: runId });
-
-  let completedTasks = 0;
-  let failedTasks = 0;
-  for (const task of tasks) {
-    const start = Date.now();
-    const createdAt = nextTaskTimestamp();
-    idleAllExcept(task.assignedTo);
     broadcast({
-      type: "task_add",
+      type: "activity",
       executionRunId: runId,
-      task: {
-        ...task,
-        status: "running",
-        createdAt,
+      activity: {
+        agentId: "orchestrator",
+        type: "dispatch",
+        summary: userInstruction,
+        timestamp: Date.now(),
       },
     });
-    broadcast({ type: "agent_status", agentId: task.assignedTo, status: "running", currentTask: task.description, executionRunId: runId });
-    broadcast({ type: "activity", executionRunId: runId, activity: { agentId: task.assignedTo, type: "task_start", summary: task.description, timestamp: Date.now(), taskId: task.id } });
+
+    let tasks = [];
+    const browserExecutionGuardrail = buildBrowserExecutionGuardrail(userInstruction);
+
+    if (shouldForceDecomposition(userInstruction)) {
+      const candidateTasks = [
+        "先分析用户需求并提炼核心目标",
+        userInstruction,
+      ];
+      tasks = candidateTasks.map((desc) => {
+        const routed = routeTask(desc);
+        const isPrimaryInstruction = desc === userInstruction;
+        return {
+          id: randomUUID(),
+          description: isPrimaryInstruction ? userInstruction : `围绕“${userInstruction}”：${desc}`,
+          prompt: isPrimaryInstruction
+            ? `${instruction}\n\n${browserExecutionGuardrail}`
+            : `用户原始需求：${userInstruction}\n\n完整上下文：\n${instruction}\n\n${browserExecutionGuardrail}\n\n当前子任务：${desc}`,
+          assignedTo: routed.agent,
+          complexity: routed.complexity,
+        };
+      });
+    } else {
+      const routed = routeTask(userInstruction);
+      tasks = [{
+        id: randomUUID(),
+        description: userInstruction,
+        prompt: `${instruction}\n\n${browserExecutionGuardrail}`,
+        assignedTo: routed.agent,
+        complexity: routed.complexity,
+      }];
+    }
+
+    throwIfExecutionCancelled(runId);
+    totalTasksForCancellation = tasks.length;
     broadcastExecutionUpdate({
       executionRunId: runId,
       sessionId,
       status: "running",
       totalTasks: tasks.length,
-      completedTasks,
-      failedTasks,
-      currentAgentId: task.assignedTo,
+      completedTasks: 0,
+      failedTasks: 0,
+      currentAgentId: "orchestrator",
       event: makeExecutionEvent({
-        type: "agent",
-        title: `${AGENT_DISPLAY[task.assignedTo]} 开始执行`,
-        detail: task.description,
-        agentId: task.assignedTo,
-        taskId: task.id,
+        type: "dispatch",
+        title: `任务已拆解为 ${tasks.length} 个步骤`,
+        detail: tasks.map((task, index) => `${index + 1}. ${task.description} -> ${AGENT_DISPLAY[task.assignedTo]}`).join("\n"),
+        agentId: "orchestrator",
       }),
     });
+    broadcast({ type: "agent_status", agentId: "orchestrator", status: "idle", executionRunId: runId });
 
-    try {
-      const { text, tokens } = await callAgent(
-        task.assignedTo,
-        task.description,
-        task.complexity,
-        undefined,
-        sessionId,
-        { executionRunId: runId, taskId: task.id, requesterWs },
-      );
+    let completedTasks = 0;
+    let failedTasks = 0;
+    for (const task of tasks) {
+      throwIfExecutionCancelled(runId);
+      const start = Date.now();
+      const taskCreatedAt = nextTaskTimestamp();
+      const { prompt, ...taskView } = task;
+      updateActiveExecutionRun(runId, {
+        currentTaskId: task.id,
+        currentAgentId: task.assignedTo,
+      });
+      idleAllExcept(task.assignedTo);
       broadcast({
-        type: "task_update",
+        type: "task_add",
         executionRunId: runId,
-        taskId: task.id,
-        updates: {
-          status: "done",
-          result: text,
-          completedAt: Date.now(),
+        task: {
+          ...taskView,
+          status: "running",
+          createdAt: taskCreatedAt,
         },
       });
-      completedTasks += 1;
-      broadcast({ type: "agent_status", agentId: task.assignedTo, status: "idle", executionRunId: runId });
-      broadcast({ type: "activity", executionRunId: runId, activity: { agentId: task.assignedTo, type: "task_done", summary: task.description, timestamp: Date.now(), durationMs: Date.now() - start, taskId: task.id } });
+      broadcast({ type: "agent_status", agentId: task.assignedTo, status: "running", currentTask: task.description, executionRunId: runId });
+      broadcast({ type: "activity", executionRunId: runId, activity: { agentId: task.assignedTo, type: "task_start", summary: task.description, timestamp: Date.now(), taskId: task.id } });
       broadcastExecutionUpdate({
         executionRunId: runId,
         sessionId,
@@ -2810,53 +3518,164 @@ async function dispatch(instruction, sessionId = "default", executionRunId = ran
         failedTasks,
         currentAgentId: task.assignedTo,
         event: makeExecutionEvent({
-          type: "result",
-          title: `${AGENT_DISPLAY[task.assignedTo]} 已完成`,
-          detail: String(text || "").slice(0, 200),
+          type: "agent",
+          title: `${AGENT_DISPLAY[task.assignedTo]} 开始执行`,
+          detail: task.description,
           agentId: task.assignedTo,
           taskId: task.id,
         }),
       });
-      if (tokens > 0) broadcast({ type: "cost", agentId: task.assignedTo, tokens });
-    } catch (err) {
-      failedTasks += 1;
-      broadcast({ type: "task_update", executionRunId: runId, taskId: task.id, updates: { status: "failed" } });
-      broadcast({ type: "agent_status", agentId: task.assignedTo, status: "error", executionRunId: runId });
-      broadcast({ type: "activity", executionRunId: runId, activity: { agentId: task.assignedTo, type: "task_fail", summary: String(err?.message || err), timestamp: Date.now(), taskId: task.id } });
-      broadcastExecutionUpdate({
-        executionRunId: runId,
-        sessionId,
-        status: "running",
-        totalTasks: tasks.length,
-        completedTasks,
-        failedTasks,
-        currentAgentId: task.assignedTo,
-        event: makeExecutionEvent({
-          type: "error",
-          title: `${AGENT_DISPLAY[task.assignedTo]} 执行失败`,
-          detail: String(err?.message || err),
-          agentId: task.assignedTo,
-          taskId: task.id,
-        }),
-      });
-    }
-  }
 
-  const finalStatus = failedTasks > 0 ? "failed" : "completed";
-  broadcastExecutionUpdate({
-    executionRunId: runId,
-    sessionId,
-    status: finalStatus,
-    totalTasks: tasks.length,
-    completedTasks,
-    failedTasks,
-    completedAt: Date.now(),
-    event: makeExecutionEvent({
-      type: finalStatus === "completed" ? "system" : "error",
-      title: finalStatus === "completed" ? "本轮执行完成" : "本轮执行结束，包含失败步骤",
-      detail: `完成 ${completedTasks} / ${tasks.length}，失败 ${failedTasks}`,
-    }),
-  });
+      try {
+        const { text, tokens } = await callAgent(
+          task.assignedTo,
+          prompt || task.description,
+          task.complexity,
+          undefined,
+          sessionId,
+          {
+            executionRunId: runId,
+            taskId: task.id,
+            requesterWs,
+            signal: controller.signal,
+            userInstruction,
+            currentTaskDescription: task.description,
+          },
+        );
+        throwIfExecutionCancelled(runId);
+        const finalStatus = String(text || "").startsWith("API 调用失败：") ? "failed" : "done";
+        broadcast({
+          type: "task_update",
+          executionRunId: runId,
+          taskId: task.id,
+          updates: {
+            status: finalStatus,
+            result: text,
+            completedAt: Date.now(),
+          },
+        });
+        if (finalStatus === "failed") {
+          failedTasks += 1;
+          failedTasksForCancellation = failedTasks;
+          broadcast({ type: "agent_status", agentId: task.assignedTo, status: "error", executionRunId: runId });
+          broadcast({ type: "activity", executionRunId: runId, activity: { agentId: task.assignedTo, type: "task_fail", summary: String(text || "API 调用失败"), timestamp: Date.now(), durationMs: Date.now() - start, taskId: task.id } });
+          broadcastExecutionUpdate({
+            executionRunId: runId,
+            sessionId,
+            status: "running",
+            totalTasks: tasks.length,
+            completedTasks,
+            failedTasks,
+            currentAgentId: task.assignedTo,
+            event: makeExecutionEvent({
+              type: "error",
+              title: `${AGENT_DISPLAY[task.assignedTo]} 执行失败`,
+              detail: String(text || "").slice(0, 200),
+              agentId: task.assignedTo,
+              taskId: task.id,
+            }),
+          });
+        } else {
+          completedTasks += 1;
+          completedTasksForCancellation = completedTasks;
+          broadcast({ type: "agent_status", agentId: task.assignedTo, status: "idle", executionRunId: runId });
+          broadcast({ type: "activity", executionRunId: runId, activity: { agentId: task.assignedTo, type: "task_done", summary: task.description, timestamp: Date.now(), durationMs: Date.now() - start, taskId: task.id } });
+          broadcastExecutionUpdate({
+            executionRunId: runId,
+            sessionId,
+            status: "running",
+            totalTasks: tasks.length,
+            completedTasks,
+            failedTasks,
+            currentAgentId: task.assignedTo,
+            event: makeExecutionEvent({
+              type: "result",
+              title: `${AGENT_DISPLAY[task.assignedTo]} 已完成`,
+              detail: String(text || "").slice(0, 200),
+              agentId: task.assignedTo,
+              taskId: task.id,
+            }),
+          });
+        }
+        if (tokens > 0) broadcast({ type: "cost", agentId: task.assignedTo, tokens });
+      } catch (err) {
+        if (isExecutionAbortError(err) || controller.signal.aborted || getActiveExecutionRun(runId)?.cancelled) {
+          finalizeCancelledExecution({
+            runId,
+            sessionId,
+            totalTasks: tasks.length,
+            completedTasks,
+            failedTasks,
+            currentTaskId: task.id,
+            currentAgentId: task.assignedTo,
+            reason: err,
+          });
+          return;
+        }
+
+        failedTasks += 1;
+        failedTasksForCancellation = failedTasks;
+        broadcast({ type: "task_update", executionRunId: runId, taskId: task.id, updates: { status: "failed" } });
+        broadcast({ type: "agent_status", agentId: task.assignedTo, status: "error", executionRunId: runId });
+        broadcast({ type: "activity", executionRunId: runId, activity: { agentId: task.assignedTo, type: "task_fail", summary: String(err?.message || err), timestamp: Date.now(), taskId: task.id } });
+        broadcastExecutionUpdate({
+          executionRunId: runId,
+          sessionId,
+          status: "running",
+          totalTasks: tasks.length,
+          completedTasks,
+          failedTasks,
+          currentAgentId: task.assignedTo,
+          event: makeExecutionEvent({
+            type: "error",
+            title: `${AGENT_DISPLAY[task.assignedTo]} 执行失败`,
+            detail: String(err?.message || err),
+            agentId: task.assignedTo,
+            taskId: task.id,
+          }),
+        });
+      } finally {
+        updateActiveExecutionRun(runId, { currentTaskId: null });
+      }
+    }
+
+    throwIfExecutionCancelled(runId);
+    const finalStatus = failedTasks > 0 ? "failed" : "completed";
+    completedTasksForCancellation = completedTasks;
+    failedTasksForCancellation = failedTasks;
+    broadcastExecutionUpdate({
+      executionRunId: runId,
+      sessionId,
+      status: finalStatus,
+      totalTasks: tasks.length,
+      completedTasks,
+      failedTasks,
+      completedAt: Date.now(),
+      event: makeExecutionEvent({
+        type: finalStatus === "completed" ? "system" : "error",
+        title: finalStatus === "completed" ? "本轮执行完成" : "本轮执行结束，包含失败步骤",
+        detail: `完成 ${completedTasks} / ${tasks.length}，失败 ${failedTasks}`,
+      }),
+    });
+  } catch (err) {
+    if (isExecutionAbortError(err) || controller.signal.aborted || getActiveExecutionRun(runId)?.cancelled) {
+      const current = getActiveExecutionRun(runId);
+      finalizeCancelledExecution({
+        runId,
+        sessionId,
+        totalTasks: totalTasksForCancellation || 1,
+        completedTasks: completedTasksForCancellation,
+        failedTasks: failedTasksForCancellation,
+        currentTaskId: current?.currentTaskId,
+        currentAgentId: current?.currentAgentId || "orchestrator",
+        reason: err,
+      });
+      return;
+    }
+    throw err;
+  } finally {
+    activeExecutionControllers.delete(runId);
+  }
 }
 
 async function meeting(topic, participants = ["explorer", "writer", "performer", "greeter"]) {
@@ -3309,6 +4128,7 @@ const httpServer = createServer(async (req, res) => {
       if (body.agentConfigs) settings.agentConfigs = body.agentConfigs;
       if (body.platformConfigs) settings.platformConfigs = mergePlatformConfigs(body.platformConfigs);
       if (body.userNickname !== undefined) settings.userNickname = body.userNickname;
+      if (body.semanticMemoryConfig) settings.semanticMemoryConfig = body.semanticMemoryConfig;
       if (body.desktopProgramSettings) settings.desktopProgramSettings = body.desktopProgramSettings;
       if (body.hermesDispatchSettings) settings.hermesDispatchSettings = normalizeHermesDispatchSettings(body.hermesDispatchSettings);
       await persistRuntimeSettings();
@@ -3407,6 +4227,47 @@ const httpServer = createServer(async (req, res) => {
 
       const error = msg.slice(0, 120);
       writeJson(res, 200, { ok: false, error, detail });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/semantic-memory/query") {
+    try {
+      const body = await readJson(req);
+      const connectionString = String(body?.config?.connectionString || "").trim();
+      const result = await querySemanticMemoryStore({
+        connectionString,
+        config: body?.config ?? {},
+        documents: Array.isArray(body?.documents) ? body.documents : [],
+        context: body?.context ?? {},
+        limit: Number(body?.limit || 5),
+        embedding: body?.embedding ?? {},
+      });
+      writeJson(res, 200, { ok: true, ...result });
+    } catch (err) {
+      writeJson(res, 200, {
+        ok: false,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/semantic-memory/health") {
+    try {
+      const body = await readJson(req);
+      const connectionString = String(body?.config?.connectionString || "").trim();
+      const result = await checkSemanticMemoryStore({
+        connectionString,
+        config: body?.config ?? {},
+        embedding: body?.embedding ?? {},
+      });
+      writeJson(res, 200, { ok: true, ...result });
+    } catch (err) {
+      writeJson(res, 200, {
+        ok: false,
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
     return;
   }
@@ -3639,6 +4500,7 @@ wss.on("connection", (ws) => {
         if (msg.agentConfigs) settings.agentConfigs = msg.agentConfigs;
         if (msg.platformConfigs) settings.platformConfigs = mergePlatformConfigs(msg.platformConfigs);
         if (msg.userNickname !== undefined) settings.userNickname = msg.userNickname;
+        if (msg.semanticMemoryConfig) settings.semanticMemoryConfig = msg.semanticMemoryConfig;
         if (msg.desktopProgramSettings) settings.desktopProgramSettings = msg.desktopProgramSettings;
         if (msg.hermesDispatchSettings) settings.hermesDispatchSettings = normalizeHermesDispatchSettings(msg.hermesDispatchSettings);
         if (msg.runtime) updateClientRuntime(ws, msg.runtime);
@@ -3876,7 +4738,22 @@ wss.on("connection", (ws) => {
       case "dispatch":
         if (msg.instruction?.trim()) {
           const sessionId = msg.sessionId || "default";
-          dispatch(msg.instruction, sessionId, msg.executionRunId, msg.source || "chat", ws).catch((err) => console.error("[dispatch] error:", err?.message || err));
+          dispatch(
+            msg.instruction,
+            sessionId,
+            msg.executionRunId,
+            msg.source || "chat",
+            ws,
+            msg.userInstruction || msg.instruction,
+          ).catch((err) => console.error("[dispatch] error:", err?.message || err));
+        }
+        break;
+      case "cancel_execution":
+        if (msg.executionRunId?.trim()) {
+          requestExecutionCancellation(
+            msg.executionRunId,
+            msg.reason || "用户已中止本次生成。",
+          );
         }
         break;
       case "new_session":

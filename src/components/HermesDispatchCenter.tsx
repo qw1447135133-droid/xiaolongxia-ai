@@ -213,6 +213,7 @@ export function HermesDispatchCenter({ compact = false }: { compact?: boolean } 
       agentConfigs: store.agentConfigs,
       platformConfigs: store.platformConfigs,
       userNickname: store.userNickname,
+      semanticMemoryConfig: store.semanticMemoryConfig,
       desktopProgramSettings: store.desktopProgramSettings,
       hermesDispatchSettings: nextSettings,
     };
@@ -227,6 +228,7 @@ export function HermesDispatchCenter({ compact = false }: { compact?: boolean } 
           agentConfigs: store.agentConfigs,
           platformConfigs: store.platformConfigs,
           userNickname: store.userNickname,
+          semanticMemoryConfig: store.semanticMemoryConfig,
           desktopProgramSettings: store.desktopProgramSettings,
           hermesDispatchSettings: nextSettings,
         }),

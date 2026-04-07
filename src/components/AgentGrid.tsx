@@ -4,6 +4,7 @@ import { pickLocaleText } from "@/lib/ui-locale";
 import { useStore } from "@/store";
 import { AGENT_META, AGENT_SKILLS } from "@/store/types";
 import type { AgentId } from "@/store/types";
+import { AgentIcon } from "./AgentIcon";
 
 const STATUS_ICON = {
   idle: "●",
@@ -31,7 +32,7 @@ function AgentCard({ agentId }: { agentId: AgentId }) {
   return (
     <div className={`agent-grid__card animate-fade-in agent-grid__card--${agent.status}`}>
       <div className="agent-grid__head">
-        <span className="agent-grid__emoji">{config.emoji || meta.emoji}</span>
+        <span className="agent-grid__emoji"><AgentIcon agentId={agentId} size={18} /></span>
         <div className="agent-grid__identity">
           <div className="agent-grid__name">{config.name || meta.name}</div>
           <div className="agent-grid__id">{agentId}</div>

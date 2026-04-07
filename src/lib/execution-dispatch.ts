@@ -8,10 +8,19 @@ import {
   buildDeskNoteCollectionSnippet,
   buildKnowledgeDocumentCollectionSnippet,
   buildProjectMemorySnippet,
-  getAutoRecalledWorkspaceContext,
+  getAutoRecalledWorkspaceContextAsync,
 } from "@/lib/workspace-memory";
-import { filterByProjectScope } from "@/lib/project-context";
+import { filterByProjectScope, getSessionProjectLabel } from "@/lib/project-context";
 import { randomId } from "@/lib/utils";
+import { buildBusinessEntityGraph, buildBusinessGraphSnippet } from "@/lib/business-graph";
+import {
+  buildLongTermMemoryCompressionDoc,
+  estimateContextTokens,
+  isLongTermMemoryCompressionDoc,
+  LONG_TERM_MEMORY_CONTEXT_LIMIT_TOKENS,
+  shouldAutoCompressLongTermMemory,
+} from "@/lib/memory-compression";
+import { buildWorldModelSnippet, deriveWorldModelSnapshot } from "@/lib/world-model";
 
 type DispatchAttachmentMeta = {
   id: string;
@@ -40,7 +49,21 @@ function buildAssistantFeedbackSnippet(profile: AssistantFeedbackProfile) {
     .join("\n");
 }
 
-export function sendExecutionDispatch({
+function buildSessionTranscriptForEstimation(tasks: Task[]) {
+  if (tasks.length === 0) return "";
+
+  return [...tasks]
+    .sort((left, right) => left.createdAt - right.createdAt)
+    .map(task => {
+      const role = task.isUserMessage ? "User" : "Assistant";
+      const content = String(task.isUserMessage ? task.description : (task.result ?? task.description) ?? "").trim();
+      return content ? `${role}: ${content}` : "";
+    })
+    .filter(Boolean)
+    .join("\n");
+}
+
+export async function sendExecutionDispatch({
   instruction,
   source = "chat",
   attachments = [],
@@ -77,7 +100,32 @@ export function sendExecutionDispatch({
   const activeSession = store.chatSessions.find(session => session.id === resolvedSessionId) ?? null;
   const scopedProjectMemories = filterByProjectScope(store.workspaceProjectMemories, activeSession ?? {});
   const scopedDeskNotes = filterByProjectScope(store.workspaceDeskNotes, activeSession ?? {});
-  const scopedKnowledgeDocs = filterByProjectScope(store.semanticKnowledgeDocs, activeSession ?? {});
+  const scopedBusinessApprovals = filterByProjectScope(store.businessApprovals, activeSession ?? {});
+  const scopedBusinessOperationLogs = filterByProjectScope(store.businessOperationLogs, activeSession ?? {});
+  const scopedBusinessCustomers = filterByProjectScope(store.businessCustomers, activeSession ?? {});
+  const scopedBusinessLeads = filterByProjectScope(store.businessLeads, activeSession ?? {});
+  const scopedBusinessTickets = filterByProjectScope(store.businessTickets, activeSession ?? {});
+  const scopedBusinessContentTasks = filterByProjectScope(store.businessContentTasks, activeSession ?? {});
+  const scopedBusinessChannelSessions = filterByProjectScope(store.businessChannelSessions, activeSession ?? {});
+  const scopedExecutionRuns = store.executionRuns.filter(run => (run.projectId ?? null) === (activeSession?.projectId ?? null));
+  const businessGraph = buildBusinessEntityGraph({
+    customers: scopedBusinessCustomers,
+    leads: scopedBusinessLeads,
+    tickets: scopedBusinessTickets,
+    contentTasks: scopedBusinessContentTasks,
+    channelSessions: scopedBusinessChannelSessions,
+  });
+  const worldSnapshot = deriveWorldModelSnapshot({
+    projectId: activeSession?.projectId ?? null,
+    rootPath: activeSession?.workspaceRoot ?? store.workspaceRoot,
+    graph: businessGraph,
+    approvals: scopedBusinessApprovals,
+    channelSessions: scopedBusinessChannelSessions,
+    contentTasks: scopedBusinessContentTasks,
+    tickets: scopedBusinessTickets,
+    operationLogs: scopedBusinessOperationLogs,
+    executionRuns: scopedExecutionRuns,
+  });
   const activeProjectMemory = includeActiveProjectMemory && store.activeWorkspaceProjectMemoryId
     ? scopedProjectMemories.find(memory => memory.id === store.activeWorkspaceProjectMemoryId) ?? null
     : null;
@@ -85,21 +133,32 @@ export function sendExecutionDispatch({
     ? buildAssistantFeedbackSnippet(store.assistantFeedbackProfile)
     : "";
   const enableSemanticRecall = includeActiveProjectMemory || !store.activeWorkspaceProjectMemoryId;
-  const recentTasks = recentTasksOverride ?? store.tasks;
+  const sessionTasks = recentTasksOverride ?? activeSession?.tasks ?? store.tasks;
+  const orderedSessionTasks = [...sessionTasks].sort((left, right) => left.createdAt - right.createdAt);
+  const recentTasks = sessionTasks;
   const recallContext = {
     instruction: trimmed,
     workspaceRoot: store.workspaceRoot,
     workspaceCurrentPath: store.workspaceCurrentPath,
     activePreviewPath: store.workspaceActivePreviewPath,
     pinnedPaths: store.workspacePinnedPreviews.map(preview => preview.path),
-    recentTranscript: recentTasks.slice(-8).map(task => task.result ?? task.description).join("\n\n"),
+    recentTranscript: orderedSessionTasks
+      .slice(-8)
+      .map(task => task.result ?? task.description)
+      .filter(Boolean)
+      .join("\n\n"),
   };
+  const scopedKnowledgeDocs = filterByProjectScope(store.semanticKnowledgeDocs, activeSession ?? {})
+    .filter(document => !isLongTermMemoryCompressionDoc(document));
+
   const autoRecalledWorkspaceContext = enableSemanticRecall
-    ? getAutoRecalledWorkspaceContext(
+    ? await getAutoRecalledWorkspaceContextAsync(
         scopedProjectMemories,
         store.semanticMemoryConfig.autoRecallDeskNotes ? scopedDeskNotes : [],
         store.semanticMemoryConfig.autoRecallKnowledgeDocs ? scopedKnowledgeDocs : [],
         recallContext,
+        store.semanticMemoryConfig,
+        store.providers,
         store.semanticMemoryConfig.autoRecallProjectMemories ? 10 : Number.MAX_SAFE_INTEGER,
         store.semanticMemoryConfig.autoRecallDeskNotes ? 9 : Number.MAX_SAFE_INTEGER,
         store.semanticMemoryConfig.autoRecallKnowledgeDocs ? 9 : Number.MAX_SAFE_INTEGER,
@@ -116,17 +175,54 @@ export function sendExecutionDispatch({
   const knowledgeSnippet = recalledKnowledgeDocs.length > 0
     ? buildKnowledgeDocumentCollectionSnippet(recalledKnowledgeDocs)
     : "";
-  const finalInstruction = resolvedProjectMemory || noteSnippet || knowledgeSnippet
+  const graphSnippet = businessGraph.nodes.length > 0
+    ? buildBusinessGraphSnippet(businessGraph, { entityType, entityId })
+    : "";
+  const worldSnippet = buildWorldModelSnippet(worldSnapshot);
+  const standardInstructionSections = resolvedProjectMemory || noteSnippet || knowledgeSnippet || graphSnippet || worldSnippet
     ? [
         feedbackSnippet,
+        activeSession ? `Project scope:\n${getSessionProjectLabel(activeSession)}` : "",
         resolvedProjectMemory ? buildProjectMemorySnippet(resolvedProjectMemory) : "",
         noteSnippet,
         knowledgeSnippet,
+        graphSnippet,
+        worldSnippet,
+        `User request:\n${trimmed}`,
+      ]
+    : feedbackSnippet
+      ? [feedbackSnippet, `User request:\n${trimmed}`]
+      : [trimmed];
+  const standardInstruction = standardInstructionSections.filter(Boolean).join("\n\n---\n\n");
+  const sessionTranscript = buildSessionTranscriptForEstimation(orderedSessionTasks);
+  const estimatedContextTokens =
+    estimateContextTokens(standardInstruction)
+    + estimateContextTokens(sessionTranscript);
+  const shouldUseCompression = shouldAutoCompressLongTermMemory(estimatedContextTokens);
+  const compressionDoc = shouldUseCompression
+    ? buildLongTermMemoryCompressionDoc({
+        projectId: activeSession?.projectId ?? null,
+        rootPath: activeSession?.workspaceRoot ?? store.workspaceRoot,
+        session: activeSession,
+        recentTasks,
+        executionRuns: scopedExecutionRuns,
+        projectMemories: resolvedProjectMemory
+          ? [resolvedProjectMemory, ...scopedProjectMemories.filter(memory => memory.id !== resolvedProjectMemory.id)]
+          : scopedProjectMemories,
+        deskNotes: recalledDeskNotes.length > 0 ? recalledDeskNotes : scopedDeskNotes,
+        worldSnapshot,
+        graph: businessGraph,
+      })
+    : null;
+  const finalInstruction = compressionDoc
+    ? [
+        feedbackSnippet,
+        activeSession ? `Project scope:\n${getSessionProjectLabel(activeSession)}` : "",
+        `System note: Long-term memory compression triggered automatically because the estimated context is approaching ${LONG_TERM_MEMORY_CONTEXT_LIMIT_TOKENS} tokens. Use the compressed snapshot below as the working memory baseline, and do not ask the user to repeat context that is already captured here.`,
+        `Compressed context snapshot:\n${compressionDoc.content}`,
         `User request:\n${trimmed}`,
       ].filter(Boolean).join("\n\n---\n\n")
-    : feedbackSnippet
-      ? [feedbackSnippet, `User request:\n${trimmed}`].join("\n\n---\n\n")
-      : trimmed;
+    : standardInstruction;
   const executionRunId = store.createExecutionRun({
     sessionId: resolvedSessionId,
     instruction: trimmed,
@@ -153,7 +249,11 @@ export function sendExecutionDispatch({
       event: {
         id: `evt-memory-${Date.now()}`,
         type: "system",
-        title: activeProjectMemory ? "已附加项目记忆" : "已自动召回项目记忆",
+        title: compressionDoc
+          ? "项目记忆已纳入压缩快照"
+          : activeProjectMemory
+            ? "已附加项目记忆"
+            : "已自动召回项目记忆",
         detail: activeProjectMemory
           ? resolvedProjectMemory.name
           : `${resolvedProjectMemory.name}${autoRecalledWorkspaceContext.memoryRecommendation?.reasons.length ? ` · ${autoRecalledWorkspaceContext.memoryRecommendation.reasons.join(", ")}` : ""}`,
@@ -168,7 +268,7 @@ export function sendExecutionDispatch({
       event: {
         id: `evt-note-${Date.now()}`,
         type: "system",
-        title: "已自动召回 Desk Notes",
+        title: compressionDoc ? "Desk Notes 已纳入压缩快照" : "已自动召回 Desk Notes",
         detail: autoRecalledWorkspaceContext.deskNoteRecommendations
           .slice(0, 2)
           .map(item => `${item.note.title}${item.reasons.length ? ` · ${item.reasons.join(", ")}` : ""}`)
@@ -184,7 +284,7 @@ export function sendExecutionDispatch({
       event: {
         id: `evt-knowledge-${Date.now()}`,
         type: "system",
-        title: "已自动召回知识文档",
+        title: compressionDoc ? "知识文档已纳入压缩快照" : "已自动召回知识文档",
         detail: autoRecalledWorkspaceContext.knowledgeRecommendations
           .slice(0, 2)
           .map(item => `${item.document.title}${item.reasons.length ? ` · ${item.reasons.join(", ")}` : ""}`)
@@ -212,6 +312,7 @@ export function sendExecutionDispatch({
   const ok = sendWs({
     type: "dispatch",
     instruction: finalInstruction,
+    userInstruction: trimmed,
     attachments,
     sessionId: resolvedSessionId,
     executionRunId,
@@ -233,10 +334,44 @@ export function sendExecutionDispatch({
     }
   }
 
+  if (compressionDoc) {
+    store.upsertSemanticKnowledgeDoc(compressionDoc);
+    store.updateExecutionRun({
+      id: executionRunId,
+      event: {
+        id: `evt-compression-${Date.now()}`,
+        type: "system",
+        title: "已自动压缩上下文",
+        detail: `估算上下文 ${estimatedContextTokens.toLocaleString()} / ${LONG_TERM_MEMORY_CONTEXT_LIMIT_TOKENS.toLocaleString()} tokens，已切换为长期记忆压缩快照。`,
+        timestamp: Date.now(),
+      },
+    });
+  }
+
+  store.updateExecutionRun({
+    id: executionRunId,
+    event: {
+      id: `evt-graph-${Date.now()}`,
+      type: "system",
+      title: compressionDoc ? "业务关系图已纳入压缩快照" : "已附加业务关系图",
+      detail: `${businessGraph.nodes.length} 个实体 / ${businessGraph.edges.length} 条关系`,
+      timestamp: Date.now(),
+    },
+  });
+  store.updateExecutionRun({
+    id: executionRunId,
+    event: {
+      id: `evt-world-${Date.now()}`,
+      type: "system",
+      title: compressionDoc ? "世界状态已纳入压缩快照" : "已附加世界状态快照",
+      detail: `${worldSnapshot.summary} · Automation readiness ${worldSnapshot.automationReadiness}`,
+      timestamp: Date.now(),
+    },
+  });
   return { ok, executionRunId };
 }
 
-export function retryExecutionDispatch(
+export async function retryExecutionDispatch(
   run: Pick<ExecutionRun, "id" | "instruction" | "source" | "sessionId">,
   options?: {
     includeUserMessage?: boolean;
@@ -254,5 +389,19 @@ export function retryExecutionDispatch(
     sessionId: run.sessionId,
     retryOfRunId: run.id,
     lastRecoveryHint: options?.lastRecoveryHint,
+  });
+}
+
+export function cancelExecutionRun(
+  executionRunId: string,
+  reason = "用户已中止本次生成。",
+) {
+  const normalizedRunId = executionRunId.trim();
+  if (!normalizedRunId) return false;
+
+  return sendWs({
+    type: "cancel_execution",
+    executionRunId: normalizedRunId,
+    reason,
   });
 }

@@ -6,6 +6,7 @@ import type {
   AgentState,
   AgentStatus,
   Activity,
+  AssistantReasoningTrace,
   AppTab,
   AutomationMode,
   CostSummary,
@@ -99,8 +100,24 @@ interface TaskSlice {
   tasks: Task[];
   addTask: (task: Task) => void;
   updateTask: (id: string, updates: Partial<Task>) => void;
+  appendTaskResult: (id: string, delta: string) => void;
   truncateTasksAfter: (id: string) => void;
   clearTasks: () => void;
+}
+
+interface AssistantReasoningSlice {
+  assistantReasoning: Record<string, AssistantReasoningTrace>;
+  upsertAssistantReasoning: (payload: {
+    taskId: string;
+    sessionId: string;
+    agentId: AgentId;
+    executionRunId?: string;
+    summary?: string;
+    detail?: string;
+    status?: AssistantReasoningTrace["status"];
+    updatedAt?: number;
+  }) => void;
+  clearAssistantReasoning: (taskId: string) => void;
 }
 
 interface AssistantFeedbackSlice {
@@ -400,6 +417,9 @@ interface BusinessEntitiesSlice {
 interface SemanticKnowledgeSlice {
   semanticKnowledgeDocs: SemanticKnowledgeDocument[];
   createSemanticKnowledgeDoc: (payload: Pick<SemanticKnowledgeDocument, "title" | "content" | "tags" | "sourceLabel">) => void;
+  upsertSemanticKnowledgeDoc: (
+    payload: Omit<SemanticKnowledgeDocument, "createdAt" | "updatedAt"> & Partial<Pick<SemanticKnowledgeDocument, "createdAt" | "updatedAt">>,
+  ) => string;
   updateSemanticKnowledgeDoc: (
     id: string,
     updates: Partial<Pick<SemanticKnowledgeDocument, "title" | "content" | "tags" | "sourceLabel">>,
@@ -523,6 +543,7 @@ interface WorkspaceProjectViewState {
 type Store =
   & AgentSlice
   & TaskSlice
+  & AssistantReasoningSlice
   & AssistantFeedbackSlice
   & ChatSlice
   & ActivitySlice
@@ -572,6 +593,34 @@ function initAgentConfigs(): Record<AgentId, AgentConfig> {
   return result;
 }
 
+const LEGACY_AGENT_NAMES: Record<AgentId, string[]> = {
+  orchestrator: ["虾总管", "蝦總管", "Orchestrator Lobster", "統括ロブスター"],
+  explorer: ["探海龙虾", "探海龍蝦", "Explorer Lobster", "探索ロブスター"],
+  writer: ["执笔龙虾", "執筆龍蝦", "Writer Lobster", "執筆ロブスター"],
+  designer: ["幻影龙虾", "幻影龍蝦", "Designer Lobster", "デザイナーロブスター"],
+  performer: ["戏精龙虾", "戲精龍蝦", "Performer Lobster", "パフォーマーロブスター"],
+  greeter: ["迎客龙虾", "迎客龍蝦", "Greeter Lobster", "接客ロブスター"],
+};
+
+const LEGACY_AGENT_EMOJIS: Record<AgentId, string[]> = {
+  orchestrator: ["🦞"],
+  explorer: ["🔎"],
+  writer: ["✍️"],
+  designer: ["🎨"],
+  performer: ["🎭", "🎬"],
+  greeter: ["💬"],
+};
+
+function shouldMigrateLegacyAgentName(agentId: AgentId, value?: string) {
+  if (!value) return false;
+  return LEGACY_AGENT_NAMES[agentId]?.includes(value.trim()) ?? false;
+}
+
+function shouldMigrateLegacyAgentEmoji(agentId: AgentId, value?: string) {
+  if (!value) return false;
+  return LEGACY_AGENT_EMOJIS[agentId]?.includes(value.trim()) ?? false;
+}
+
 function normalizeAgentConfigs(
   currentConfigs: Record<AgentId, AgentConfig>,
   persistedConfigs?: Partial<Record<AgentId, Partial<AgentConfig>>>
@@ -585,6 +634,8 @@ function normalizeAgentConfigs(
         {
           ...fallback,
           ...persisted,
+          name: shouldMigrateLegacyAgentName(id, persisted?.name) ? fallback.name : (persisted?.name ?? fallback.name),
+          emoji: shouldMigrateLegacyAgentEmoji(id, persisted?.emoji) ? fallback.emoji : (persisted?.emoji ?? fallback.emoji),
           skills: Array.isArray(persisted?.skills) ? persisted.skills : fallback.skills,
         },
       ];
@@ -783,7 +834,7 @@ const DEFAULT_DESKTOP_PROGRAM_SETTINGS: DesktopProgramSettings = {
   whitelist: [],
   inputControl: {
     enabled: false,
-    autoOpenPanelOnAction: true,
+    autoOpenPanelOnAction: false,
     requireManualTakeoverForVerification: true,
   },
 };
@@ -941,6 +992,24 @@ function capExecutionRuns(runs: ExecutionRun[]): ExecutionRun[] {
   return [...runs]
     .sort((left, right) => right.updatedAt - left.updatedAt)
     .slice(0, MAX_EXECUTION_RUNS);
+}
+
+function removeAssistantReasoningByTaskIds(
+  reasoning: Record<string, AssistantReasoningTrace>,
+  taskIds: Set<string>,
+) {
+  return Object.fromEntries(
+    Object.entries(reasoning).filter(([taskId]) => !taskIds.has(taskId)),
+  );
+}
+
+function removeAssistantReasoningBySessionId(
+  reasoning: Record<string, AssistantReasoningTrace>,
+  sessionId: string,
+) {
+  return Object.fromEntries(
+    Object.entries(reasoning).filter(([, trace]) => trace.sessionId !== sessionId),
+  );
 }
 
 function deriveExecutionRecoveryState(params: {
@@ -1455,7 +1524,7 @@ function getContentFailureStreak(task: BusinessContentTask) {
 function buildSessionActivationState(
   state: Store,
   session: ChatSession,
-  overrides?: Partial<Pick<Store, "chatSessions" | "activeSessionId">>,
+  overrides?: Partial<Pick<Store, "chatSessions" | "activeSessionId" | "assistantReasoning">>,
 ) {
   const scope = {
     projectId: session.projectId,
@@ -1536,27 +1605,82 @@ export const useStore = create<Store>()(
             .map(sess => (sess.id === sid ? { ...sess, tasks: nextTasks, updatedAt: Date.now() } : sess));
           return { tasks: nextTasks, chatSessions: sortChatSessions(sessions) };
         }),
+      appendTaskResult: (id, delta) =>
+        set(s => {
+          if (!delta) return {};
+          const nextTasks = s.tasks.map(task =>
+            task.id === id
+              ? { ...task, result: `${task.result ?? ""}${delta}` }
+              : task,
+          );
+          const sid = s.activeSessionId;
+          const sessions = s.chatSessions
+            .map(sess => (sess.id === sid ? { ...sess, tasks: nextTasks, updatedAt: Date.now() } : sess));
+          return { tasks: nextTasks, chatSessions: sortChatSessions(sessions) };
+        }),
       truncateTasksAfter: (id) =>
         set(s => {
           const targetIndex = s.tasks.findIndex(task => task.id === id);
           if (targetIndex === -1) return {};
 
           const nextTasks = s.tasks.slice(targetIndex);
+          const removedTaskIds = new Set(
+            s.tasks
+              .slice(0, targetIndex)
+              .map(task => task.id),
+          );
           const sid = s.activeSessionId;
           const sessions = s.chatSessions
             .map(sess => (sess.id === sid ? { ...sess, tasks: nextTasks, updatedAt: Date.now() } : sess));
 
-          return { tasks: nextTasks, chatSessions: sortChatSessions(sessions) };
+          return {
+            tasks: nextTasks,
+            chatSessions: sortChatSessions(sessions),
+            assistantReasoning: removeAssistantReasoningByTaskIds(s.assistantReasoning, removedTaskIds),
+          };
         }),
       clearTasks: () =>
         set(s => ({
           tasks: [],
+          assistantReasoning: removeAssistantReasoningBySessionId(s.assistantReasoning, s.activeSessionId),
           chatSessions: s.chatSessions.map(sess =>
             sess.id === s.activeSessionId
               ? { ...sess, tasks: [], updatedAt: Date.now(), title: DEFAULT_CHAT_TITLE }
               : sess
           ),
         })),
+
+      assistantReasoning: {},
+      upsertAssistantReasoning: ({ taskId, sessionId, agentId, executionRunId, summary, detail, status = "running", updatedAt }) =>
+        set(s => {
+          const current = s.assistantReasoning[taskId];
+          const nextDetails = detail
+            ? [...(current?.details ?? []), detail].filter((item, index, list) => list.indexOf(item) === index).slice(-8)
+            : (current?.details ?? []);
+
+          return {
+            assistantReasoning: {
+              ...s.assistantReasoning,
+              [taskId]: {
+                taskId,
+                sessionId,
+                agentId,
+                executionRunId: executionRunId ?? current?.executionRunId,
+                summary: summary ?? current?.summary ?? "",
+                details: nextDetails,
+                status,
+                updatedAt: updatedAt ?? Date.now(),
+              },
+            },
+          };
+        }),
+      clearAssistantReasoning: (taskId) =>
+        set(s => {
+          if (!s.assistantReasoning[taskId]) return {};
+          const nextReasoning = { ...s.assistantReasoning };
+          delete nextReasoning[taskId];
+          return { assistantReasoning: nextReasoning };
+        }),
 
       chatSessions: [seedSession],
       activeSessionId: seedSession.id,
@@ -1585,11 +1709,13 @@ export const useStore = create<Store>()(
       deleteChatSession: (id) =>
         set(s => {
           const sessions = s.chatSessions.filter(sess => sess.id !== id);
+          const nextReasoning = removeAssistantReasoningBySessionId(s.assistantReasoning, id);
           if (sessions.length === 0) {
             const empty = makeEmptySession();
             return buildSessionActivationState(s, empty, {
               chatSessions: [empty],
               activeSessionId: empty.id,
+              assistantReasoning: nextReasoning,
             });
           }
 
@@ -1601,6 +1727,7 @@ export const useStore = create<Store>()(
           return buildSessionActivationState(s, active, {
             chatSessions: sessions,
             activeSessionId: nextActive,
+            assistantReasoning: nextReasoning,
           });
         }),
       renameChatSession: (id, title) =>
@@ -1854,8 +1981,8 @@ export const useStore = create<Store>()(
           },
         })),
       resetSemanticMemory: () =>
-        set(() => ({
-          semanticMemoryConfig: DEFAULT_SEMANTIC_MEMORY_CONFIG,
+        set(s => ({
+          semanticMemoryConfig: s.semanticMemoryConfig,
           semanticKnowledgeDocs: [],
         })),
       updateDesktopProgramSettings: (updates) =>
@@ -3081,6 +3208,21 @@ export const useStore = create<Store>()(
             ].slice(0, 120),
           };
         }),
+      upsertSemanticKnowledgeDoc: (payload) => {
+        const now = Date.now();
+        const nextDoc: SemanticKnowledgeDocument = {
+          ...payload,
+          createdAt: payload.createdAt ?? now,
+          updatedAt: payload.updatedAt ?? now,
+        };
+        set(s => ({
+          semanticKnowledgeDocs: [
+            nextDoc,
+            ...s.semanticKnowledgeDocs.filter(item => item.id !== nextDoc.id),
+          ].slice(0, 120),
+        }));
+        return nextDoc.id;
+      },
       updateSemanticKnowledgeDoc: (id, updates) =>
         set(s => ({
           semanticKnowledgeDocs: s.semanticKnowledgeDocs.map(item =>

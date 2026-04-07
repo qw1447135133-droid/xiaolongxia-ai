@@ -6,11 +6,13 @@
  * 3. 加载 Next.js 前端（dev 模式用 localhost:3000，生产用打包文件）
  */
 
-const { app, BrowserWindow, dialog, ipcMain, shell } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, shell, desktopCapturer, screen } = require('electron');
 const path = require('path');
 const { spawn } = require('child_process');
 const fs = require('fs');
 const http = require('http');
+const net = require('net');
+const readline = require('readline');
 
 const startupLog = path.join(process.env.APPDATA || process.cwd(), 'xiaolongxia-web-startup.log');
 function log(...args) {
@@ -31,17 +33,24 @@ function log(...args) {
 
 // 使用函数延迟访问 app.isPackaged，避免在 app 初始化前访问
 const isDev = () => process.env.NODE_ENV === 'development' || !app.isPackaged;
-const WS_PORT = 3001;
+const WS_PORT = Number(process.env.WS_PORT || 3001);
 
 let mainWindow = null;
 let wsServerProcess = null;
 let isQuitting = false;
+let wsHealthMonitor = null;
+let wsRecoveryPromise = null;
 const allowedWorkspaceRoots = new Set();
 const previewWindows = new Map();
 let installedApplicationsCache = {
   items: null,
   scannedAt: 0,
 };
+let desktopInputControllerProcess = null;
+let desktopInputControllerStartPromise = null;
+let desktopInputControllerReady = false;
+let desktopInputControllerRequestSeq = 0;
+const desktopInputControllerPending = new Map();
 
 const WORKSPACE_LIST_LIMIT = 500;
 const TEXT_PREVIEW_LIMIT = 512 * 1024;
@@ -73,6 +82,7 @@ const LANGUAGE_BY_EXTENSION = {
   '.sh': 'bash',
   '.sql': 'sql',
 };
+const DESKTOP_INPUT_CONTROLLER_READY_TIMEOUT_MS = 10_000;
 
 // 防止多实例启动
 const gotTheLock = app.requestSingleInstanceLock();
@@ -197,6 +207,210 @@ async function runPowerShellJson(script) {
   const trimmed = output.trim();
   if (!trimmed) return [];
   return JSON.parse(trimmed);
+}
+
+function getDesktopInputControllerScriptPath() {
+  return path.join(__dirname, 'desktop-input-controller.ps1');
+}
+
+function getPowerShellExecutable() {
+  if (process.platform !== 'win32') {
+    return 'powershell';
+  }
+
+  const systemRoot = process.env.SystemRoot || 'C:\\Windows';
+  const systemPowerShell = path.join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+  if (safeExists(systemPowerShell)) {
+    return systemPowerShell;
+  }
+  return 'powershell.exe';
+}
+
+function rejectAllDesktopInputControllerPending(error) {
+  for (const [requestId, pending] of desktopInputControllerPending.entries()) {
+    try {
+      pending.reject(error);
+    } catch {}
+    desktopInputControllerPending.delete(requestId);
+  }
+}
+
+function resetDesktopInputControllerState() {
+  desktopInputControllerProcess = null;
+  desktopInputControllerStartPromise = null;
+  desktopInputControllerReady = false;
+}
+
+function handleDesktopInputControllerLine(line, onReady) {
+  const trimmed = String(line || '').trim();
+  if (!trimmed) return;
+
+  let payload = null;
+  try {
+    payload = JSON.parse(trimmed);
+  } catch {
+    log('[desktop-input-controller] non-json output:', trimmed);
+    return;
+  }
+
+  if (payload?.type === 'ready' && payload?.ok) {
+    desktopInputControllerReady = true;
+    onReady();
+    return;
+  }
+
+  if (payload?.type !== 'result') {
+    return;
+  }
+
+  const requestId = typeof payload.requestId === 'string' ? payload.requestId : '';
+  const pending = requestId ? desktopInputControllerPending.get(requestId) : null;
+  if (!pending) {
+    return;
+  }
+
+  desktopInputControllerPending.delete(requestId);
+  if (payload.ok === false) {
+    pending.reject(new Error(String(payload.error || '桌面输入控制器执行失败。')));
+    return;
+  }
+
+  pending.resolve(payload.result ?? {
+    ok: true,
+    action: 'wait',
+    mode: 'executed',
+    manualRequired: false,
+    message: '桌面输入动作已执行。',
+  });
+}
+
+async function ensureDesktopInputController() {
+  if (process.platform !== 'win32') {
+    throw new Error('当前桌面输入控制仅支持 Windows Electron 运行态。');
+  }
+
+  if (desktopInputControllerProcess && desktopInputControllerReady) {
+    return desktopInputControllerProcess;
+  }
+
+  if (desktopInputControllerStartPromise) {
+    return desktopInputControllerStartPromise;
+  }
+
+  const scriptPath = getDesktopInputControllerScriptPath();
+  if (!safeExists(scriptPath)) {
+    throw new Error('桌面输入控制器脚本不存在，无法启动常驻 SendInput 控制器。');
+  }
+
+  desktopInputControllerStartPromise = new Promise((resolve, reject) => {
+    let settled = false;
+    const finishResolve = () => {
+      if (settled) return;
+      settled = true;
+      desktopInputControllerStartPromise = null;
+      resolve(desktopInputControllerProcess);
+    };
+    const finishReject = (error) => {
+      if (settled) return;
+      settled = true;
+      resetDesktopInputControllerState();
+      desktopInputControllerStartPromise = null;
+      reject(error);
+    };
+
+    const child = spawn(getPowerShellExecutable(), [
+      '-NoProfile',
+      '-ExecutionPolicy',
+      'Bypass',
+      '-File',
+      scriptPath,
+    ], {
+      windowsHide: true,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+
+    desktopInputControllerProcess = child;
+    desktopInputControllerReady = false;
+
+    const readyTimeout = setTimeout(() => {
+      try {
+        child.kill();
+      } catch {}
+      finishReject(new Error('桌面输入控制器启动超时。'));
+    }, DESKTOP_INPUT_CONTROLLER_READY_TIMEOUT_MS);
+
+    const stdoutInterface = readline.createInterface({ input: child.stdout });
+    stdoutInterface.on('line', (line) => {
+      try {
+        handleDesktopInputControllerLine(line, () => {
+          clearTimeout(readyTimeout);
+          finishResolve();
+        });
+      } catch (error) {
+        clearTimeout(readyTimeout);
+        finishReject(error instanceof Error ? error : new Error(String(error)));
+      }
+    });
+
+    child.stderr.on('data', (chunk) => {
+      const text = String(chunk || '').trim();
+      if (!text) return;
+      log('[desktop-input-controller][stderr]', text);
+    });
+
+    child.once('error', (error) => {
+      clearTimeout(readyTimeout);
+      rejectAllDesktopInputControllerPending(error);
+      finishReject(error);
+    });
+
+    child.once('exit', (code, signal) => {
+      clearTimeout(readyTimeout);
+      stdoutInterface.close();
+      const exitError = new Error(`桌面输入控制器已退出（code=${code ?? 'null'}, signal=${signal ?? 'null'}）。`);
+      rejectAllDesktopInputControllerPending(exitError);
+      if (!desktopInputControllerReady) {
+        finishReject(exitError);
+        return;
+      }
+      resetDesktopInputControllerState();
+    });
+  });
+
+  return desktopInputControllerStartPromise;
+}
+
+async function invokeDesktopInputController(payload) {
+  const controller = await ensureDesktopInputController();
+  if (!controller || !controller.stdin || controller.stdin.destroyed) {
+    throw new Error('桌面输入控制器不可用。');
+  }
+
+  desktopInputControllerRequestSeq += 1;
+  const requestId = `desktop-input-${Date.now()}-${desktopInputControllerRequestSeq}`;
+
+  return new Promise((resolve, reject) => {
+    desktopInputControllerPending.set(requestId, { resolve, reject });
+
+    const body = JSON.stringify({
+      requestId,
+      payload,
+    });
+
+    controller.stdin.write(`${body}\n`, 'utf8', (error) => {
+      if (!error) return;
+      desktopInputControllerPending.delete(requestId);
+      reject(error);
+    });
+  });
+}
+
+function shutdownDesktopInputController() {
+  if (!desktopInputControllerProcess) return;
+  try {
+    desktopInputControllerProcess.kill();
+  } catch {}
+  resetDesktopInputControllerState();
 }
 
 function collectProgramIdentitySet(target) {
@@ -579,9 +793,9 @@ async function controlDesktopInput(payload) {
   const durationMs = normalizeDesktopDuration(payload?.durationMs, action === 'wait' ? 600 : 120);
   const text = typeof payload?.text === 'string' ? payload.text : '';
   const key = typeof payload?.key === 'string' ? payload.key : '';
-  const rawHotkeys = Array.isArray(payload?.keys) ? payload.keys : [];
-  const hotkeySequence = rawHotkeys.length > 0 ? buildSendKeysChord(rawHotkeys) : '';
-  const keySequence = key ? buildSendKeysChord([key]) : '';
+  const rawHotkeys = Array.isArray(payload?.keys)
+    ? payload.keys.map(item => String(item ?? '').trim()).filter(Boolean)
+    : [];
   const retrySuggestions = buildDesktopRetrySuggestions(action, x, y);
 
   if ((action === 'move' || action === 'click' || action === 'double_click' || action === 'right_click') && (x === null || y === null)) {
@@ -600,132 +814,22 @@ async function controlDesktopInput(payload) {
     throw new Error('key 动作需要提供 key。');
   }
 
-  if (action === 'hotkey' && !hotkeySequence) {
+  if (action === 'hotkey' && rawHotkeys.length === 0) {
     throw new Error('hotkey 动作需要提供 keys。');
   }
 
-  const escapedText = escapePowerShellDoubleQuoted(escapeSendKeysText(text));
-  const escapedHotkey = escapePowerShellDoubleQuoted(hotkeySequence);
-  const escapedKey = escapePowerShellDoubleQuoted(keySequence);
   const clickButton = action === 'right_click' ? 'right' : 'left';
-
-  const script = `
-$ErrorActionPreference = 'Stop'
-Add-Type -AssemblyName System.Windows.Forms
-Add-Type @"
-using System;
-using System.Runtime.InteropServices;
-public static class DesktopInputNative {
-  [StructLayout(LayoutKind.Sequential)]
-  public struct POINT {
-    public int X;
-    public int Y;
-  }
-  [DllImport("user32.dll")] public static extern bool SetCursorPos(int X, int Y);
-  [DllImport("user32.dll")] public static extern bool GetCursorPos(out POINT lpPoint);
-  [DllImport("user32.dll")] public static extern void mouse_event(uint dwFlags, uint dx, uint dy, uint dwData, UIntPtr dwExtraInfo);
-}
-"@
-function Get-CursorPoint {
-  $point = New-Object DesktopInputNative+POINT
-  [DesktopInputNative]::GetCursorPos([ref]$point) | Out-Null
-  return @{ x = $point.X; y = $point.Y }
-}
-function Invoke-MouseClick([string]$button) {
-  if ($button -eq 'right') {
-    [DesktopInputNative]::mouse_event(0x0008, 0, 0, 0, [UIntPtr]::Zero)
-    Start-Sleep -Milliseconds 45
-    [DesktopInputNative]::mouse_event(0x0010, 0, 0, 0, [UIntPtr]::Zero)
-    return
-  }
-  [DesktopInputNative]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
-  Start-Sleep -Milliseconds 45
-  [DesktopInputNative]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
-}
-$action = "${action}"
-$x = ${x === null ? '$null' : x}
-$y = ${y === null ? '$null' : y}
-$deltaY = ${deltaY === null ? '$null' : deltaY}
-$durationMs = ${durationMs}
-$button = "${clickButton}"
-$text = "${escapedText}"
-$hotkey = "${escapedHotkey}"
-$keySequence = "${escapedKey}"
-$message = ""
-$retryStrategy = ""
-switch ($action) {
-  'move' {
-    [DesktopInputNative]::SetCursorPos($x, $y) | Out-Null
-    Start-Sleep -Milliseconds $durationMs
-    $message = "已移动鼠标到 ($x, $y)"
-  }
-  'click' {
-    [DesktopInputNative]::SetCursorPos($x, $y) | Out-Null
-    Start-Sleep -Milliseconds 80
-    Invoke-MouseClick $button
-    Start-Sleep -Milliseconds $durationMs
-    $retryStrategy = "visual-recheck-offset"
-    $message = "已在 ($x, $y) 执行鼠标点击；若界面未变化，请先截图复核，再按附近偏移点补点一次。"
-  }
-  'double_click' {
-    [DesktopInputNative]::SetCursorPos($x, $y) | Out-Null
-    Start-Sleep -Milliseconds 80
-    Invoke-MouseClick $button
-    Start-Sleep -Milliseconds 120
-    Invoke-MouseClick $button
-    Start-Sleep -Milliseconds $durationMs
-    $retryStrategy = "visual-recheck-offset"
-    $message = "已在 ($x, $y) 执行鼠标双击；若界面未变化，请先截图复核，再按附近偏移点补点一次。"
-  }
-  'right_click' {
-    [DesktopInputNative]::SetCursorPos($x, $y) | Out-Null
-    Start-Sleep -Milliseconds 80
-    Invoke-MouseClick $button
-    Start-Sleep -Milliseconds $durationMs
-    $retryStrategy = "visual-recheck-offset"
-    $message = "已在 ($x, $y) 执行鼠标右键；若菜单未出现，请先截图复核，再按附近偏移点补点一次。"
-  }
-  'scroll' {
-    [DesktopInputNative]::mouse_event(0x0800, 0, 0, [uint32]([int]$deltaY), [UIntPtr]::Zero)
-    Start-Sleep -Milliseconds $durationMs
-    $message = "已滚动鼠标滚轮 $deltaY"
-  }
-  'type' {
-    [System.Windows.Forms.SendKeys]::SendWait($text)
-    Start-Sleep -Milliseconds $durationMs
-    $message = "已输入文本"
-  }
-  'key' {
-    [System.Windows.Forms.SendKeys]::SendWait($keySequence)
-    Start-Sleep -Milliseconds $durationMs
-    $message = "已发送按键 ${escapePowerShellDoubleQuoted(key || '')}"
-  }
-  'hotkey' {
-    [System.Windows.Forms.SendKeys]::SendWait($hotkey)
-    Start-Sleep -Milliseconds $durationMs
-    $message = "已发送组合键"
-  }
-  'wait' {
-    Start-Sleep -Milliseconds $durationMs
-    $message = "已等待 $durationMs ms"
-  }
-  default {
-    throw "Unsupported action: $action"
-  }
-}
-$result = @{
-  ok = $true
-  action = $action
-  mode = 'executed'
-  manualRequired = $false
-  message = $message
-  retryStrategy = if ($retryStrategy) { $retryStrategy } else { $null }
-  cursor = Get-CursorPoint
-}
-$result | ConvertTo-Json -Compress
-`;
-
-  const result = await runPowerShellJson(script);
+  const result = await invokeDesktopInputController({
+    action,
+    x,
+    y,
+    deltaY,
+    durationMs,
+    text,
+    key,
+    keys: rawHotkeys,
+    button: clickButton,
+  });
   return typeof result === 'object' && result
     ? {
       ...result,
@@ -746,55 +850,59 @@ async function captureDesktopScreenshot(payload = {}) {
     throw new Error('当前桌面截图仅支持 Windows Electron 运行态。');
   }
 
-  const maxWidth = Math.max(480, Math.min(1920, Number(payload?.maxWidth) || 1440));
   const quality = Math.max(45, Math.min(90, Number(payload?.quality) || 72));
+  const primaryDisplay = screen.getPrimaryDisplay();
+  const scaleFactor = Number(primaryDisplay?.scaleFactor) || 1;
+  const sourceWidth = Math.max(1, Math.round((primaryDisplay?.bounds?.width || primaryDisplay?.size?.width || 0) * scaleFactor));
+  const sourceHeight = Math.max(1, Math.round((primaryDisplay?.bounds?.height || primaryDisplay?.size?.height || 0) * scaleFactor));
+  const requestedMaxWidth = Number(payload?.maxWidth);
+  const maxWidth = Number.isFinite(requestedMaxWidth) && requestedMaxWidth > 0
+    ? Math.max(480, Math.min(sourceWidth, Math.round(requestedMaxWidth)))
+    : sourceWidth;
 
-  const script = `
-$ErrorActionPreference = 'Stop'
-Add-Type -AssemblyName System.Windows.Forms
-Add-Type -AssemblyName System.Drawing
-$bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
-$sourceBitmap = New-Object System.Drawing.Bitmap $bounds.Width, $bounds.Height
-$graphics = [System.Drawing.Graphics]::FromImage($sourceBitmap)
-$graphics.CopyFromScreen($bounds.X, $bounds.Y, 0, 0, $bounds.Size)
-$targetWidth = [Math]::Min(${Math.round(maxWidth)}, $bounds.Width)
-$targetHeight = if ($targetWidth -lt $bounds.Width) { [int][Math]::Round($bounds.Height * ($targetWidth / $bounds.Width)) } else { $bounds.Height }
-$outputBitmap = if ($targetWidth -ne $bounds.Width) { New-Object System.Drawing.Bitmap $targetWidth, $targetHeight } else { $sourceBitmap }
-if ($targetWidth -ne $bounds.Width) {
-  $resizedGraphics = [System.Drawing.Graphics]::FromImage($outputBitmap)
-  $resizedGraphics.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
-  $resizedGraphics.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::HighQuality
-  $resizedGraphics.DrawImage($sourceBitmap, 0, 0, $targetWidth, $targetHeight)
-  $resizedGraphics.Dispose()
-}
-$codec = [System.Drawing.Imaging.ImageCodecInfo]::GetImageEncoders() | Where-Object { $_.MimeType -eq 'image/jpeg' } | Select-Object -First 1
-$encoder = [System.Drawing.Imaging.Encoder]::Quality
-$encoderParams = New-Object System.Drawing.Imaging.EncoderParameters 1
-$encoderParams.Param[0] = New-Object System.Drawing.Imaging.EncoderParameter($encoder, [long]${Math.round(quality)})
-$stream = New-Object System.IO.MemoryStream
-$outputBitmap.Save($stream, $codec, $encoderParams)
-$base64 = [System.Convert]::ToBase64String($stream.ToArray())
-$result = @{
-  ok = $true
-  message = '已抓取当前桌面截图。'
-  dataUrl = "data:image/jpeg;base64,$base64"
-  width = $targetWidth
-  height = $targetHeight
-  format = 'jpeg'
-}
-$graphics.Dispose()
-if ($outputBitmap -ne $sourceBitmap) { $outputBitmap.Dispose() }
-$sourceBitmap.Dispose()
-$stream.Dispose()
-$result | ConvertTo-Json -Compress
-`;
+  const sources = await desktopCapturer.getSources({
+    types: ['screen'],
+    fetchWindowIcons: false,
+    thumbnailSize: {
+      width: sourceWidth,
+      height: sourceHeight,
+    },
+  });
 
-  const result = await runPowerShellJson(script);
-  if (typeof result === 'object' && result) {
-    return result;
+  if (!Array.isArray(sources) || sources.length === 0) {
+    throw new Error('Electron 未返回可用的屏幕截图源。');
   }
 
-  throw new Error('桌面截图返回了无效结果。');
+  const targetSource = sources.find((item) => item.display_id === String(primaryDisplay.id)) || sources[0];
+  const thumbnail = targetSource?.thumbnail;
+  if (!thumbnail || thumbnail.isEmpty()) {
+    throw new Error('Electron 返回了空的桌面截图。');
+  }
+
+  const capturedSize = thumbnail.getSize();
+  const capturedWidth = Math.max(1, Number(capturedSize?.width) || sourceWidth);
+  const capturedHeight = Math.max(1, Number(capturedSize?.height) || sourceHeight);
+  const targetWidth = Math.min(maxWidth, capturedWidth);
+  const targetHeight = targetWidth < capturedWidth
+    ? Math.max(1, Math.round(capturedHeight * (targetWidth / capturedWidth)))
+    : capturedHeight;
+  const outputImage = targetWidth !== capturedWidth
+    ? thumbnail.resize({ width: targetWidth, height: targetHeight, quality: 'good' })
+    : thumbnail;
+  const jpegBuffer = outputImage.toJPEG(quality);
+
+  if (!jpegBuffer || jpegBuffer.length === 0) {
+    throw new Error('Electron 生成桌面截图失败。');
+  }
+
+  return {
+    ok: true,
+    message: '已抓取当前桌面截图。',
+    dataUrl: `data:image/jpeg;base64,${jpegBuffer.toString('base64')}`,
+    width: targetWidth,
+    height: targetHeight,
+    format: 'jpeg',
+  };
 }
 
 function readWorkspacePackageJson(rootPath) {
@@ -1299,35 +1407,118 @@ async function listWorkspaceEntries(targetPath) {
   };
 }
 
+function isWsPortOpen(timeout = 400) {
+  return new Promise((resolve) => {
+    const socket = new net.Socket();
+
+    const finish = (result) => {
+      socket.removeAllListeners();
+      socket.destroy();
+      resolve(result);
+    };
+
+    socket.setTimeout(timeout);
+    socket.once('connect', () => finish(true));
+    socket.once('timeout', () => finish(false));
+    socket.once('error', () => finish(false));
+    socket.connect(WS_PORT, '127.0.0.1');
+  });
+}
+
+function scheduleWsRecovery(reason) {
+  if (isQuitting) return;
+  setTimeout(() => {
+    void ensureWsServerHealthy(reason);
+  }, 1200);
+}
+
+function attachWsServerProcess(child, reason) {
+  wsServerProcess = child;
+
+  child.stdout.on('data', (d) => log('[ws-server]', d.toString().trim()));
+  child.stderr.on('data', (d) => log('[ws-server][err]', d.toString().trim()));
+
+  child.on('exit', (code) => {
+    log('[main] WS server exited with code', code, 'reason:', reason);
+    if (wsServerProcess === child) {
+      wsServerProcess = null;
+    }
+    if (!isQuitting) {
+      scheduleWsRecovery(`exit:${code ?? 'unknown'}`);
+    }
+  });
+
+  child.on('error', (error) => {
+    log('[main] WS server process error:', error);
+    if (wsServerProcess === child) {
+      wsServerProcess = null;
+    }
+    if (!isQuitting) {
+      scheduleWsRecovery('spawn-error');
+    }
+  });
+}
+
 // ── 启动 WS 服务器 ──
-async function startWsServer() {
-  // dev 模式下 ws-server 由 concurrently 独立启动，避免重复启动导致端口冲突
-  if (isDev()) {
-    log('[main] dev mode: ws-server started externally, skipping spawn');
-    return;
+async function startWsServer(reason = 'startup') {
+  if (await isWsPortOpen()) {
+    log('[main] WS server already reachable on port', WS_PORT, 'reason:', reason);
+    return { reused: true };
+  }
+
+  if (wsServerProcess && wsServerProcess.exitCode === null) {
+    log('[main] WS server process already managed by Electron, waiting for readiness');
+    return { reused: false, child: wsServerProcess };
   }
 
   const bootstrapScript = path.join(app.getAppPath(), 'electron', 'ws-bootstrap.cjs');
-  log('[main] starting WS server via bootstrap:', bootstrapScript);
+  log('[main] starting WS server via bootstrap:', bootstrapScript, 'reason:', reason);
 
-  wsServerProcess = spawn(process.execPath, [bootstrapScript], {
+  const child = spawn(process.execPath, [bootstrapScript], {
     env: {
       ...process.env,
       ELECTRON_RUN_AS_NODE: '1',
       WS_PORT: String(WS_PORT),
-      NODE_ENV: 'production',
+      NODE_ENV: isDev() ? 'development' : 'production',
     },
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
   });
 
-  wsServerProcess.stdout.on('data', (d) => log('[ws-server]', d.toString().trim()));
-  wsServerProcess.stderr.on('data', (d) => log('[ws-server][err]', d.toString().trim()));
+  attachWsServerProcess(child, reason);
+  return { reused: false, child };
+}
 
-  wsServerProcess.on('exit', (code) => {
-    log('[main] WS server exited with code', code);
-    wsServerProcess = null;
-  });
+async function ensureWsServerHealthy(reason = 'health-check') {
+  if (isQuitting) return;
+  if (wsRecoveryPromise) return wsRecoveryPromise;
+
+  wsRecoveryPromise = (async () => {
+    if (await isWsPortOpen()) {
+      return;
+    }
+
+    await startWsServer(reason);
+    await waitForWsServer(15000);
+    log('[main] WS server ready after recovery, reason:', reason);
+  })()
+    .catch((error) => {
+      log('[main] WS server recovery failed:', reason, error);
+    })
+    .finally(() => {
+      wsRecoveryPromise = null;
+    });
+
+  return wsRecoveryPromise;
+}
+
+function startWsHealthMonitor() {
+  if (wsHealthMonitor) {
+    clearInterval(wsHealthMonitor);
+  }
+  wsHealthMonitor = setInterval(() => {
+    void ensureWsServerHealthy('health-monitor');
+  }, 4000);
 }
 
 // ── 等待 WS 服务器就绪（轮询端口）──
@@ -1658,14 +1849,8 @@ app.whenReady().then(async () => {
     createMainWindow();
   });
 
-  await startWsServer();
-
-  try {
-    await waitForWsServer(15000);
-    log('[main] WS server ready');
-  } catch (e) {
-    log('[main] WS server failed to start:', e);
-  }
+  await ensureWsServerHealthy('app-ready');
+  startWsHealthMonitor();
 
   createMainWindow();
 
@@ -1682,6 +1867,11 @@ app.whenReady().then(async () => {
 app.on('before-quit', () => {
   log('[main] before-quit');
   isQuitting = true;
+  shutdownDesktopInputController();
+  if (wsHealthMonitor) {
+    clearInterval(wsHealthMonitor);
+    wsHealthMonitor = null;
+  }
   if (wsServerProcess) {
     log('[main] Killing WS server process');
     wsServerProcess.kill('SIGTERM');

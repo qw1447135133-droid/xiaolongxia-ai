@@ -27,4 +27,6 @@ export interface SemanticKnowledgeDocument {
   content: string;
   tags: string[];
   sourceLabel: string;
+  systemManaged?: boolean;
+  manualInjectable?: boolean;
 }

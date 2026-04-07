@@ -3,6 +3,14 @@
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { randomId } from "@/lib/utils";
 import { resolveBackendUrl } from "@/lib/backend-url";
+import { filterByProjectScope } from "@/lib/project-context";
+import { buildBusinessEntityGraph } from "@/lib/business-graph";
+import { deriveWorldModelSnapshot } from "@/lib/world-model";
+import {
+  getSemanticMemoryProviderStatus,
+  resolveSemanticMemoryEmbeddingTransport,
+} from "@/lib/semantic-memory";
+import { isManualInjectableKnowledgeDocument } from "@/lib/memory-compression";
 import { syncRuntimeSettings } from "@/lib/runtime-settings-sync";
 import { pickLocaleText } from "@/lib/ui-locale";
 import { useStore } from "@/store";
@@ -13,7 +21,8 @@ import {
   getRecommendedTierForAgent,
   PROVIDER_MODELS,
   PROVIDER_PRESETS,
-  getModelsForProvider,
+  getConfiguredProviders,
+  getModelsForProviderInstance,
   getRecommendedModelSelectionForAgent,
   inferRecommendedModelTier,
 } from "@/store/types";
@@ -27,10 +36,25 @@ import type {
 } from "@/store/types";
 import { PlatformSettings } from "./PlatformSettings";
 import { NativeAppsCenter } from "./NativeAppsCenter";
+import { AgentIcon, getAgentIconColor } from "./AgentIcon";
 
 type TestResult =
   | { ok: true; latencyMs: number; model: string; tokens: number; reply: string }
   | { ok: false; error: string };
+
+type SemanticHealthResult =
+  | {
+      ok: true;
+      schema: string;
+      table: string;
+      dimensions: number;
+      documentCount: number;
+      embeddingProvider: string;
+    }
+  | {
+      ok: false;
+      error: string;
+    };
 
 async function testModel(apiKey: string, baseUrl: string, model: string): Promise<TestResult> {
   const url = await resolveBackendUrl("/api/test-model");
@@ -92,7 +116,7 @@ export function SettingsPanel({
       },
       semantic: {
         title: "语义记忆",
-        copy: "AI 自动管理的语义记忆模块，通常无需手动干预。",
+        copy: "管理语义召回、pgvector 向量后端、知识图谱与长期记忆压缩。",
       },
       platforms: {
         title: "消息平台",
@@ -184,6 +208,8 @@ function AgentsSection() {
   } = useStore();
   const [editing, setEditing] = useState<AgentId | null>(null);
   const [nickDraft, setNickDraft] = useState(userNickname);
+  const configuredProviders = useMemo(() => getConfiguredProviders(providers), [providers]);
+  const defaultConfiguredProviderId = configuredProviders[0]?.id || "";
 
   const handleNicknameSave = async () => {
     setUserNickname(nickDraft);
@@ -195,7 +221,7 @@ function AgentsSection() {
     const recommendedTier = getRecommendedTierForAgent(agentId);
     const selection = getRecommendedModelSelectionForAgent(
       providers,
-      preferredProviderId || currentConfig.providerId || providers[0]?.id || "",
+      preferredProviderId || currentConfig.providerId || defaultConfiguredProviderId,
       agentId,
       recommendedTier,
     );
@@ -211,7 +237,7 @@ function AgentsSection() {
       const recommendedTier = getRecommendedTierForAgent(agentId);
       const selection = getRecommendedModelSelectionForAgent(
         providers,
-        currentConfig.providerId || providers[0]?.id || "",
+        currentConfig.providerId || defaultConfiguredProviderId,
         agentId,
         recommendedTier,
       );
@@ -233,7 +259,7 @@ function AgentsSection() {
       const tier = template.agentTiers[agentId];
       const selection = getRecommendedModelSelectionForAgent(
         providers,
-        currentConfig.providerId || providers[0]?.id || "",
+        currentConfig.providerId || defaultConfiguredProviderId,
         agentId,
         tier,
       );
@@ -300,14 +326,16 @@ function AgentsSection() {
               className="btn-primary"
               style={{ fontSize: 11, padding: "5px 10px" }}
               onClick={() => void applyRolePresetToAllAgents()}
-              disabled={providers.length === 0}
+              disabled={configuredProviders.length === 0}
             >
               按角色批量套用
             </button>
             <div style={{ fontSize: 10, color: "var(--text-muted)" }}>
-            {activeTeamOperatingTemplateId
-              ? `当前团队模式：${TEAM_OPERATING_TEMPLATES.find(item => item.id === activeTeamOperatingTemplateId)?.label ?? activeTeamOperatingTemplateId}`
-              : "还没有套用团队模板"}
+            {configuredProviders.length === 0
+              ? "请先配置至少一个可用的模型供应商"
+              : activeTeamOperatingTemplateId
+                ? `当前团队模式：${TEAM_OPERATING_TEMPLATES.find(item => item.id === activeTeamOperatingTemplateId)?.label ?? activeTeamOperatingTemplateId}`
+                : "还没有套用团队模板"}
             </div>
           </div>
         </div>
@@ -343,7 +371,7 @@ function AgentsSection() {
                   className={active ? "btn-primary" : "btn-ghost"}
                   style={{ fontSize: 11, padding: "5px 10px" }}
                   onClick={() => void applyOperatingTemplate(template.id)}
-                  disabled={providers.length === 0}
+                  disabled={configuredProviders.length === 0}
                 >
                   套用这个模板
                 </button>
@@ -401,22 +429,24 @@ function AgentConfigCard({
 }) {
   const meta = AGENT_META[agentId];
   const [draft, setDraft] = useState<AgentConfig>(config);
+  const configuredProviders = useMemo(() => getConfiguredProviders(providers), [providers]);
+  const defaultConfiguredProviderId = configuredProviders[0]?.id || "";
 
   useEffect(() => {
     setDraft(config);
   }, [config]);
 
   const selectedProvider = providers.find(p => p.id === draft.providerId);
-  const modelOptions = selectedProvider ? getModelsForProvider(selectedProvider.id) : [];
+  const modelOptions = selectedProvider ? getModelsForProviderInstance(selectedProvider) : [];
   const testApiKey = selectedProvider?.apiKey ?? "";
   const testBaseUrl = selectedProvider?.baseUrl ?? "";
-  const testModelName = draft.model || (selectedProvider ? (getModelsForProvider(selectedProvider.id)[0] ?? "") : "");
+  const testModelName = draft.model || (selectedProvider ? (getModelsForProviderInstance(selectedProvider)[0] ?? "") : "");
   const recommendedTier = inferRecommendedModelTier(draft.providerId, draft.model);
   const roleRecommendedTier = getRecommendedTierForAgent(agentId);
   const routingProfile = getAgentModelRoutingProfile(agentId);
   const roleRecommendedSelection = getRecommendedModelSelectionForAgent(
     providers,
-    draft.providerId || config.providerId || providers[0]?.id || "",
+    draft.providerId || config.providerId || defaultConfiguredProviderId,
     agentId,
     roleRecommendedTier,
   );
@@ -426,7 +456,7 @@ function AgentConfigCard({
   const handleApplyModelPreset = async (tier: ModelPresetTier) => {
     const selection = getRecommendedModelSelectionForAgent(
       providers,
-      draft.providerId || providers[0]?.id || "",
+      draft.providerId || defaultConfiguredProviderId,
       agentId,
       tier,
     );
@@ -449,11 +479,10 @@ function AgentConfigCard({
             placeItems: "center",
             background: "rgba(var(--accent-rgb), 0.08)",
             border: "1px solid rgba(var(--accent-rgb), 0.2)",
-            fontSize: 18,
             flexShrink: 0,
           }}
         >
-          {config.emoji || meta.emoji}
+          <AgentIcon agentId={agentId} size={20} color={getAgentIconColor(agentId)} />
         </div>
 
         <div style={{ flex: 1, minWidth: 0 }}>
@@ -509,14 +538,13 @@ function AgentConfigCard({
         <div style={{ display: "flex", flexDirection: "column", gap: 12, overflow: "visible" }}>
           <div style={{ display: "grid", gridTemplateColumns: "88px 1fr", gap: 10 }}>
             <div>
-              <label style={labelStyle}>Emoji</label>
-              <input
+              <label style={labelStyle}>图标</label>
+              <div
                 className="input"
-                style={{ fontSize: 22, textAlign: "center", padding: "8px 4px" }}
-                value={draft.emoji}
-                onChange={e => setDraft(prev => ({ ...prev, emoji: e.target.value }))}
-                maxLength={2}
-              />
+                style={{ display: "grid", placeItems: "center", minHeight: 42, padding: "8px 4px", color: "var(--text)" }}
+              >
+                <AgentIcon agentId={agentId} size={22} color={getAgentIconColor(agentId)} />
+              </div>
             </div>
             <div>
               <label style={labelStyle}>名称</label>
@@ -600,7 +628,7 @@ function AgentConfigCard({
                   className="btn-ghost"
                   style={{ fontSize: 12, padding: "6px 10px" }}
                   disabled={!roleRecommendedProvider || !roleRecommendedModel}
-                  onClick={() => void onApplyRolePreset(draft.providerId || providers[0]?.id || "")}
+                  onClick={() => void onApplyRolePreset(draft.providerId || defaultConfiguredProviderId)}
                 >
                   应用角色推荐
                 </button>
@@ -626,7 +654,7 @@ function AgentConfigCard({
                 ] as const).map(item => {
                   const selection = getRecommendedModelSelectionForAgent(
                     providers,
-                    draft.providerId || providers[0]?.id || "",
+                    draft.providerId || defaultConfiguredProviderId,
                     agentId,
                     item.tier,
                   );
@@ -707,78 +735,456 @@ function AgentConfigCard({
 }
 
 function SemanticSection() {
-  const locale = useStore(s => s.locale);
-  const resetSemanticMemory = useStore(s => s.resetSemanticMemory);
+  const {
+    locale,
+    providers,
+    workspaceRoot,
+    chatSessions,
+    activeSessionId,
+    executionRuns,
+    workspaceProjectMemories,
+    workspaceDeskNotes,
+    semanticKnowledgeDocs,
+    businessApprovals,
+    businessOperationLogs,
+    businessCustomers,
+    businessLeads,
+    businessTickets,
+    businessContentTasks,
+    businessChannelSessions,
+    semanticMemoryConfig,
+    updateSemanticMemoryConfig,
+    updateSemanticMemoryPgvectorConfig,
+    resetSemanticMemory,
+  } = useStore();
   const [isResetting, setIsResetting] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [isChecking, setIsChecking] = useState(false);
+  const [healthResult, setHealthResult] = useState<SemanticHealthResult | null>(null);
+
+  const activeSession = useMemo(
+    () => chatSessions.find(session => session.id === activeSessionId) ?? null,
+    [activeSessionId, chatSessions],
+  );
+  const scope = activeSession ?? { projectId: null, workspaceRoot };
+  const scopedProjectMemories = useMemo(
+    () => filterByProjectScope(workspaceProjectMemories, scope),
+    [scope, workspaceProjectMemories],
+  );
+  const scopedDeskNotes = useMemo(
+    () => filterByProjectScope(workspaceDeskNotes, scope),
+    [scope, workspaceDeskNotes],
+  );
+  const scopedKnowledgeDocs = useMemo(
+    () => filterByProjectScope(semanticKnowledgeDocs, scope),
+    [scope, semanticKnowledgeDocs],
+  );
+  const scopedVisibleKnowledgeDocs = useMemo(
+    () => scopedKnowledgeDocs.filter(isManualInjectableKnowledgeDocument),
+    [scopedKnowledgeDocs],
+  );
+  const scopedApprovals = useMemo(
+    () => filterByProjectScope(businessApprovals, scope),
+    [businessApprovals, scope],
+  );
+  const scopedOperationLogs = useMemo(
+    () => filterByProjectScope(businessOperationLogs, scope),
+    [businessOperationLogs, scope],
+  );
+  const scopedCustomers = useMemo(
+    () => filterByProjectScope(businessCustomers, scope),
+    [businessCustomers, scope],
+  );
+  const scopedLeads = useMemo(
+    () => filterByProjectScope(businessLeads, scope),
+    [businessLeads, scope],
+  );
+  const scopedTickets = useMemo(
+    () => filterByProjectScope(businessTickets, scope),
+    [businessTickets, scope],
+  );
+  const scopedContentTasks = useMemo(
+    () => filterByProjectScope(businessContentTasks, scope),
+    [businessContentTasks, scope],
+  );
+  const scopedChannelSessions = useMemo(
+    () => filterByProjectScope(businessChannelSessions, scope),
+    [businessChannelSessions, scope],
+  );
+  const scopedRuns = useMemo(
+    () =>
+      executionRuns.filter(run =>
+        (run.projectId ?? null) === (activeSession?.projectId ?? null)
+        || (!run.projectId && !activeSession?.projectId),
+      ),
+    [activeSession?.projectId, executionRuns],
+  );
+  const businessGraph = useMemo(
+    () =>
+      buildBusinessEntityGraph({
+        customers: scopedCustomers,
+        leads: scopedLeads,
+        tickets: scopedTickets,
+        contentTasks: scopedContentTasks,
+        channelSessions: scopedChannelSessions,
+      }),
+    [scopedChannelSessions, scopedContentTasks, scopedCustomers, scopedLeads, scopedTickets],
+  );
+  const worldSnapshot = useMemo(
+    () =>
+      deriveWorldModelSnapshot({
+        projectId: activeSession?.projectId ?? null,
+        rootPath: activeSession?.workspaceRoot ?? workspaceRoot,
+        graph: businessGraph,
+        approvals: scopedApprovals,
+        channelSessions: scopedChannelSessions,
+        contentTasks: scopedContentTasks,
+        tickets: scopedTickets,
+        operationLogs: scopedOperationLogs,
+        executionRuns: scopedRuns,
+      }),
+    [
+      activeSession?.projectId,
+      activeSession?.workspaceRoot,
+      businessGraph,
+      scopedApprovals,
+      scopedChannelSessions,
+      scopedContentTasks,
+      scopedOperationLogs,
+      scopedRuns,
+      scopedTickets,
+      workspaceRoot,
+    ],
+  );
+  const providerStatus = useMemo(
+    () => getSemanticMemoryProviderStatus(semanticMemoryConfig),
+    [semanticMemoryConfig],
+  );
+  const statusColor =
+    providerStatus.tone === "ready"
+      ? "var(--success)"
+      : providerStatus.tone === "partial"
+        ? "var(--warning)"
+        : "var(--text-muted)";
 
   const handleReset = async () => {
     setIsResetting(true);
     try {
       resetSemanticMemory();
+      setHealthResult(null);
       await syncToServer();
     } finally {
       setIsResetting(false);
     }
   };
 
+  const handleSave = async () => {
+    setIsSaving(true);
+    try {
+      await syncToServer();
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleHealthCheck = async () => {
+    setIsChecking(true);
+    setHealthResult(null);
+    try {
+      const url = await resolveBackendUrl("/api/semantic-memory/health");
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          config: semanticMemoryConfig.pgvector,
+          embedding: resolveSemanticMemoryEmbeddingTransport(providers, semanticMemoryConfig) ?? {},
+        }),
+      });
+      const payload = await response.json();
+      setHealthResult(payload as SemanticHealthResult);
+    } catch (error) {
+      setHealthResult({
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      setIsChecking(false);
+    }
+  };
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
       <div className="card" style={{ padding: 18 }}>
-        <div
-          style={{
-            display: "grid",
-            gap: 12,
-            minHeight: 180,
-            alignContent: "space-between",
-          }}
-        >
+        <div style={{ display: "grid", gap: 14 }}>
           <div style={{ display: "grid", gap: 8 }}>
-            <div style={{ fontSize: 15, fontWeight: 700, color: "var(--text)" }}>
-              {pickLocaleText(locale, {
-                "zh-CN": "语义记忆由 AI 自动管理",
-                "zh-TW": "語義記憶由 AI 自動管理",
-                en: "Semantic memory is managed automatically by AI",
-                ja: "セマンティック記憶は AI が自動管理します",
-              })}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+              <div style={{ fontSize: 15, fontWeight: 700, color: "var(--text)" }}>
+                {pickLocaleText(locale, {
+                  "zh-CN": "语义记忆由 AI 自动管理",
+                  "zh-TW": "語義記憶由 AI 自動管理",
+                  en: "Semantic memory is managed automatically by AI",
+                  ja: "セマンティック記憶は AI が自動管理します",
+                })}
+              </div>
+              <span
+                style={{
+                  padding: "4px 10px",
+                  borderRadius: 999,
+                  border: `1px solid ${statusColor}`,
+                  color: statusColor,
+                  fontSize: 11,
+                  fontWeight: 700,
+                  background: "rgba(255,255,255,0.02)",
+                }}
+              >
+                {providerStatus.label}
+              </span>
             </div>
             <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.8, maxWidth: 720 }}>
               {pickLocaleText(locale, {
-                "zh-CN": "这个模块会在后台自动维护召回策略、项目记忆与知识缓存。正常使用中不需要手动配置；如果语义上下文异常或需要回到初始状态，可执行一次重置。",
-                "zh-TW": "這個模組會在背景自動維護召回策略、專案記憶與知識快取。正常使用中不需要手動設定；如果語義上下文異常或需要回到初始狀態，可執行一次重置。",
-                en: "This module manages recall behavior, project memory, and knowledge cache automatically in the background. Manual tuning is usually unnecessary; use reset only when semantic context becomes noisy or you need a clean baseline.",
-                ja: "このモジュールは想起戦略、プロジェクト記憶、知識キャッシュをバックグラウンドで自動管理します。通常は手動調整不要で、文脈が乱れたときだけリセットします。",
+                "zh-CN": "这个模块会在后台自动维护召回策略、项目记忆与知识缓存。长期记忆压缩不会提供人工触发入口，只有在估算上下文接近 230K tokens 时才会自动执行。",
+                "zh-TW": "這個模組會在背景自動維護召回策略、專案記憶與知識快取。長期記憶壓縮不提供手動觸發入口，只有在估算上下文接近 230K tokens 時才會自動執行。",
+                en: "This module manages recall, project memory, and knowledge cache in the background. Long-term memory compression has no manual trigger and only runs automatically when the estimated context approaches 230K tokens.",
+                ja: "このモジュールは想起戦略、プロジェクト記憶、知識キャッシュを自動管理します。長期記憶圧縮は手動起動を提供せず、推定コンテキストが 230K tokens 付近に近づいた時だけ自動実行されます。",
               })}
+            </div>
+            <div style={{ fontSize: 11, color: statusColor, lineHeight: 1.7 }}>
+              {providerStatus.detail}
             </div>
           </div>
 
-          <div style={{ display: "flex", justifyContent: "flex-end" }}>
-            <button
-              type="button"
-              className="btn-ghost"
-              onClick={() => void handleReset()}
-              disabled={isResetting}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 8 }}>
+            {[
+              {
+                label: pickLocaleText(locale, { "zh-CN": "知识文档", "zh-TW": "知識文件", en: "Knowledge Docs", ja: "知識ドキュメント" }),
+                value: scopedVisibleKnowledgeDocs.length,
+              },
+              {
+                label: pickLocaleText(locale, { "zh-CN": "图谱节点", "zh-TW": "圖譜節點", en: "Graph Nodes", ja: "グラフノード" }),
+                value: businessGraph.nodes.length,
+              },
+              {
+                label: pickLocaleText(locale, { "zh-CN": "图谱关系", "zh-TW": "圖譜關係", en: "Graph Edges", ja: "グラフエッジ" }),
+                value: businessGraph.edges.length,
+              },
+              {
+                label: pickLocaleText(locale, { "zh-CN": "自动化就绪度", "zh-TW": "自動化就緒度", en: "Automation Readiness", ja: "自動化準備度" }),
+                value: `${worldSnapshot.automationReadiness}%`,
+              },
+            ].map(item => (
+              <div key={item.label} style={{ border: "1px solid var(--border)", borderRadius: 12, padding: "10px 12px", background: "rgba(255,255,255,0.02)" }}>
+                <div style={{ fontSize: 10, color: "var(--text-muted)", marginBottom: 4 }}>{item.label}</div>
+                <div style={{ fontSize: 18, fontWeight: 700, color: "var(--text)" }}>{item.value}</div>
+              </div>
+            ))}
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "140px minmax(0, 1fr)", gap: 12, alignItems: "start" }}>
+            <div style={{ display: "grid", gap: 4 }}>
+              <label style={labelStyle}>召回后端</label>
+              <select
+                className="input"
+                value={semanticMemoryConfig.providerId}
+                onChange={event => {
+                  const providerId = event.target.value as "local" | "pgvector";
+                  updateSemanticMemoryConfig({ providerId });
+                  setHealthResult(null);
+                }}
+              >
+                <option value="local">Local</option>
+                <option value="pgvector">pgvector</option>
+              </select>
+            </div>
+
+            <div style={{ display: "grid", gap: 10 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 8 }}>
+                {[
+                  {
+                    label: pickLocaleText(locale, { "zh-CN": "召回项目记忆", "zh-TW": "召回專案記憶", en: "Recall Project Memory", ja: "プロジェクト記憶を想起" }),
+                    checked: semanticMemoryConfig.autoRecallProjectMemories,
+                    onChange: (checked: boolean) => updateSemanticMemoryConfig({ autoRecallProjectMemories: checked }),
+                  },
+                  {
+                    label: pickLocaleText(locale, { "zh-CN": "召回 Desk Notes", "zh-TW": "召回 Desk Notes", en: "Recall Desk Notes", ja: "Desk Notes を想起" }),
+                    checked: semanticMemoryConfig.autoRecallDeskNotes,
+                    onChange: (checked: boolean) => updateSemanticMemoryConfig({ autoRecallDeskNotes: checked }),
+                  },
+                  {
+                    label: pickLocaleText(locale, { "zh-CN": "召回知识文档", "zh-TW": "召回知識文件", en: "Recall Knowledge Docs", ja: "知識ドキュメントを想起" }),
+                    checked: semanticMemoryConfig.autoRecallKnowledgeDocs,
+                    onChange: (checked: boolean) => updateSemanticMemoryConfig({ autoRecallKnowledgeDocs: checked }),
+                  },
+                ].map(item => (
+                  <label
+                    key={item.label}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 8,
+                      border: "1px solid var(--border)",
+                      borderRadius: 12,
+                      padding: "10px 12px",
+                      background: "rgba(255,255,255,0.02)",
+                      fontSize: 11,
+                      color: "var(--text)",
+                    }}
+                  >
+                    <input type="checkbox" checked={item.checked} onChange={event => item.onChange(event.target.checked)} />
+                    <span>{item.label}</span>
+                  </label>
+                ))}
+              </div>
+
+              {semanticMemoryConfig.providerId === "pgvector" ? (
+                <div style={{ display: "grid", gap: 10, border: "1px solid var(--border)", borderRadius: 14, padding: 12 }}>
+                  <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "var(--text)" }}>
+                    <input
+                      type="checkbox"
+                      checked={semanticMemoryConfig.pgvector.enabled}
+                      onChange={event => {
+                        updateSemanticMemoryPgvectorConfig({ enabled: event.target.checked });
+                        setHealthResult(null);
+                      }}
+                    />
+                    <span>启用 pgvector 向量后端</span>
+                  </label>
+
+                  <div style={{ display: "grid", gap: 10, gridTemplateColumns: "repeat(2, minmax(0, 1fr))" }}>
+                    <div style={{ gridColumn: "1 / -1" }}>
+                      <label style={labelStyle}>Connection String</label>
+                      <input
+                        className="input"
+                        placeholder="postgres://user:password@host:5432/db"
+                        value={semanticMemoryConfig.pgvector.connectionString}
+                        onChange={event => {
+                          updateSemanticMemoryPgvectorConfig({ connectionString: event.target.value });
+                          setHealthResult(null);
+                        }}
+                      />
+                    </div>
+                    <div>
+                      <label style={labelStyle}>Embedding Model</label>
+                      <input
+                        className="input"
+                        placeholder="text-embedding-3-small"
+                        value={semanticMemoryConfig.pgvector.embeddingModel}
+                        onChange={event => updateSemanticMemoryPgvectorConfig({ embeddingModel: event.target.value })}
+                      />
+                    </div>
+                    <div>
+                      <label style={labelStyle}>Dimensions</label>
+                      <input
+                        className="input"
+                        type="number"
+                        min={64}
+                        step={1}
+                        value={semanticMemoryConfig.pgvector.dimensions}
+                        onChange={event => updateSemanticMemoryPgvectorConfig({ dimensions: Number(event.target.value || 1536) })}
+                      />
+                    </div>
+                    <div>
+                      <label style={labelStyle}>Schema</label>
+                      <input
+                        className="input"
+                        value={semanticMemoryConfig.pgvector.schema}
+                        onChange={event => updateSemanticMemoryPgvectorConfig({ schema: event.target.value })}
+                      />
+                    </div>
+                    <div>
+                      <label style={labelStyle}>Table</label>
+                      <input
+                        className="input"
+                        value={semanticMemoryConfig.pgvector.table}
+                        onChange={event => updateSemanticMemoryPgvectorConfig({ table: event.target.value })}
+                      />
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          </div>
+
+          {healthResult ? (
+            <div
               style={{
-                minWidth: 140,
-                fontSize: 12,
-                padding: "8px 18px",
-                color: "var(--danger)",
-                borderColor: "rgba(var(--danger-rgb), 0.24)",
+                padding: "10px 12px",
+                borderRadius: 12,
+                border: `1px solid ${healthResult.ok ? "rgba(var(--success-rgb), 0.24)" : "rgba(var(--danger-rgb), 0.24)"}`,
+                background: healthResult.ok ? "rgba(var(--success-rgb), 0.08)" : "rgba(var(--danger-rgb), 0.08)",
+                color: healthResult.ok ? "var(--success)" : "var(--danger)",
+                fontSize: 11,
+                lineHeight: 1.7,
               }}
             >
-              {isResetting
-                ? pickLocaleText(locale, {
-                    "zh-CN": "重置中...",
-                    "zh-TW": "重置中...",
-                    en: "Resetting...",
-                    ja: "リセット中...",
-                  })
-                : pickLocaleText(locale, {
-                    "zh-CN": "重置语义记忆",
-                    "zh-TW": "重置語義記憶",
-                    en: "Reset Semantic Memory",
-                    ja: "セマンティック記憶をリセット",
-                  })}
-            </button>
+              {healthResult.ok
+                ? `pgvector 已连通 · ${healthResult.schema}.${healthResult.table} · ${healthResult.documentCount} docs · ${healthResult.dimensions} dims · ${healthResult.embeddingProvider}`
+                : healthResult.error}
+            </div>
+          ) : null}
+
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+            <div style={{ fontSize: 11, color: "var(--text-muted)", lineHeight: 1.6 }}>
+              {pickLocaleText(locale, {
+                "zh-CN": `当前世界状态：${worldSnapshot.summary} 打开的业务回路 ${worldSnapshot.openLoops.length} 条。长期记忆压缩由系统自动执行，不需要人工操作。`,
+                "zh-TW": `當前世界狀態：${worldSnapshot.summary} 打開中的業務回路 ${worldSnapshot.openLoops.length} 條。長期記憶壓縮由系統自動執行，不需要人工操作。`,
+                en: `Current world state: ${worldSnapshot.summary} ${worldSnapshot.openLoops.length} business loops remain open. Long-term memory compression is system-driven and requires no manual action.`,
+                ja: `現在のワールド状態: ${worldSnapshot.summary} 未完了の業務ループは ${worldSnapshot.openLoops.length} 件です。長期記憶圧縮はシステムが自動実行し、手動操作は不要です。`,
+              })}
+            </div>
+
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, flexWrap: "wrap" }}>
+              {semanticMemoryConfig.providerId === "pgvector" ? (
+                <button
+                  type="button"
+                  className="btn-ghost"
+                  onClick={() => void handleHealthCheck()}
+                  disabled={
+                    isChecking
+                    || !semanticMemoryConfig.pgvector.enabled
+                    || !semanticMemoryConfig.pgvector.connectionString.trim()
+                  }
+                  style={{ fontSize: 12, padding: "8px 14px" }}
+                >
+                  {isChecking ? "测试中..." : "测试 pgvector"}
+                </button>
+              ) : null}
+              <button
+                type="button"
+                className="btn-primary"
+                onClick={() => void handleSave()}
+                disabled={isSaving}
+                style={{ minWidth: 120, fontSize: 12, padding: "8px 16px" }}
+              >
+                {isSaving ? "保存中..." : "保存语义设置"}
+              </button>
+              <button
+                type="button"
+                className="btn-ghost"
+                onClick={() => void handleReset()}
+                disabled={isResetting}
+                style={{
+                  minWidth: 140,
+                  fontSize: 12,
+                  padding: "8px 18px",
+                  color: "var(--danger)",
+                  borderColor: "rgba(var(--danger-rgb), 0.24)",
+                }}
+              >
+                {isResetting
+                  ? pickLocaleText(locale, {
+                      "zh-CN": "重置中...",
+                      "zh-TW": "重置中...",
+                      en: "Resetting...",
+                      ja: "リセット中...",
+                    })
+                  : pickLocaleText(locale, {
+                      "zh-CN": "重置记忆缓存",
+                      "zh-TW": "重置記憶快取",
+                      en: "Reset Memory Cache",
+                      ja: "記憶キャッシュをリセット",
+                    })}
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -850,7 +1256,10 @@ function AddProviderForm({ onAdd, onCancel }: { onAdd: (provider: ModelProvider)
   const [customName, setCustomName] = useState("");
   const [customUrl, setCustomUrl] = useState("");
   const isCustom = preset.id === "custom";
-  const defaultModel = PROVIDER_MODELS[preset.id]?.[0] ?? "";
+  const previewProvider = isCustom
+    ? { id: `custom-preview`, baseUrl: customUrl }
+    : { id: preset.id, baseUrl: preset.baseUrl };
+  const defaultModel = getModelsForProviderInstance(previewProvider)[0] ?? PROVIDER_MODELS[preset.id]?.[0] ?? "";
 
   return (
     <div className="card" style={{ padding: 14, borderColor: "rgba(var(--accent-rgb), 0.3)", background: "var(--accent-dim)" }}>
@@ -939,8 +1348,7 @@ function ProviderCard({
     setDraft(provider);
   }, [provider]);
 
-  const isCustomId = provider.id === "custom" || provider.id.startsWith("custom-");
-  const defaultModel = isCustomId ? "" : (getModelsForProvider(provider.id)[0] ?? "");
+  const defaultModel = getModelsForProviderInstance(provider)[0] ?? "";
 
   return (
     <div className="card" style={{ padding: 14 }}>
@@ -1003,7 +1411,7 @@ function ProviderCard({
           {draft.apiKey.trim() && (
             <div>
               <label style={labelStyle}>测试连接</label>
-              <TestButton apiKey={draft.apiKey} baseUrl={draft.baseUrl} testModel={isCustomId ? "" : defaultModel} />
+              <TestButton apiKey={draft.apiKey} baseUrl={draft.baseUrl} testModel={getModelsForProviderInstance(draft)[0] ?? ""} />
             </div>
           )}
 

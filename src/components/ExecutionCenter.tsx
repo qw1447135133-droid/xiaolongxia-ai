@@ -11,7 +11,7 @@ import {
   getSessionProjectLabel,
   getSessionProjectScope,
 } from "@/lib/project-context";
-import { AGENT_META, type ExecutionRecoveryState, type ExecutionRun, type UiLocale } from "@/store/types";
+import { AGENT_META, AGENT_SKILLS, type ExecutionEvent, type ExecutionRecoveryState, type ExecutionRun, type UiLocale } from "@/store/types";
 import { AgentIcon } from "./AgentIcon";
 import { timeAgo } from "@/lib/utils";
 import { runExecutionVerification } from "@/lib/execution-verification";
@@ -65,6 +65,14 @@ function getSemanticRecallEvents(run: ExecutionRun) {
       event.title.includes("知识文档")
     ),
   );
+}
+
+function getSkillDisplayName(skillId: string, locale: UiLocale, skillLabelMap: Record<string, string>) {
+  return skillLabelMap[skillId] ?? skillId;
+}
+
+function hasStructuredSkillPayload(event?: Pick<ExecutionEvent, "matchedSkillIds" | "createdSkillIds"> | null) {
+  return Boolean((event?.matchedSkillIds?.length ?? 0) > 0 || (event?.createdSkillIds?.length ?? 0) > 0);
 }
 
 function getExecutionEntityLabel(
@@ -206,6 +214,16 @@ export function ExecutionCenter({ compact = false }: { compact?: boolean }) {
   const workflowRunMap = useMemo(
     () => Object.fromEntries(workflowRuns.map(run => [run.id, run])),
     [workflowRuns],
+  );
+  const skillLabelMap = useMemo(
+    () =>
+      Object.fromEntries(
+        AGENT_SKILLS.map(skill => [
+          skill.id,
+          skill.locales[locale]?.short || skill.locales[locale]?.name || skill.id,
+        ]),
+      ),
+    [locale],
   );
 
   const sortedRuns = useMemo(
@@ -590,6 +608,9 @@ export function ExecutionCenter({ compact = false }: { compact?: boolean }) {
                   >
                     <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{pickLocaleText(locale, { "zh-CN": "最新节点", "zh-TW": "最新節點", en: "Latest", ja: "最新" })}</div>
                     <div style={{ marginTop: 4, fontSize: 13, fontWeight: 700 }}>{lastEvent.title}</div>
+                    {hasStructuredSkillPayload(lastEvent) ? (
+                      <ExecutionEventSkillSummary event={lastEvent} locale={locale} skillLabelMap={skillLabelMap} />
+                    ) : null}
                     {lastEvent.detail && (
                       <div style={{ marginTop: 6, fontSize: 12, lineHeight: 1.75, color: "var(--text-muted)", whiteSpace: "pre-wrap" }}>
                         {lastEvent.detail}
@@ -634,6 +655,9 @@ export function ExecutionCenter({ compact = false }: { compact?: boolean }) {
                               {formatTimestamp(event.timestamp, locale)}
                             </div>
                           </div>
+                          {hasStructuredSkillPayload(event) ? (
+                            <ExecutionEventSkillSummary event={event} locale={locale} skillLabelMap={skillLabelMap} compact />
+                          ) : null}
                           {event.detail && (
                             <div style={{ marginTop: 4, fontSize: 11, lineHeight: 1.7, color: "var(--text-muted)", whiteSpace: "pre-wrap" }}>
                               {event.detail}
@@ -722,6 +746,66 @@ function TraceStat({ label, value }: { label: string; value: ReactNode }) {
   );
 }
 
+function ExecutionEventSkillSummary({
+  event,
+  locale,
+  skillLabelMap,
+  compact = false,
+}: {
+  event: Pick<ExecutionEvent, "matchedSkillIds" | "createdSkillIds">;
+  locale: UiLocale;
+  skillLabelMap: Record<string, string>;
+  compact?: boolean;
+}) {
+  const matchedSkillIds = event.matchedSkillIds ?? [];
+  const createdSkillIds = event.createdSkillIds ?? [];
+
+  if (matchedSkillIds.length === 0 && createdSkillIds.length === 0) return null;
+
+  return (
+    <div style={{ marginTop: compact ? 6 : 8, display: "grid", gap: 8 }}>
+      {matchedSkillIds.length > 0 ? (
+        <div style={{ display: "grid", gap: 6 }}>
+          <div style={{ fontSize: 10, color: "var(--text-muted)", letterSpacing: "0.06em", textTransform: "uppercase" }}>
+            {pickLocaleText(locale, {
+              "zh-CN": "命中 Skills",
+              "zh-TW": "命中 Skills",
+              en: "Matched Skills",
+              ja: "一致した Skills",
+            })}
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+            {matchedSkillIds.map(skillId => (
+              <span key={`matched-${skillId}`} style={skillChipStyle("rgba(125, 211, 252, 0.2)", "#7dd3fc")}>
+                {getSkillDisplayName(skillId, locale, skillLabelMap)}
+              </span>
+            ))}
+          </div>
+        </div>
+      ) : null}
+      {createdSkillIds.length > 0 ? (
+        <div style={{ display: "grid", gap: 6 }}>
+          <div style={{ fontSize: 10, color: "var(--text-muted)", letterSpacing: "0.06em", textTransform: "uppercase" }}>
+            {pickLocaleText(locale, {
+              "zh-CN": "新建草稿",
+              "zh-TW": "新建草稿",
+              en: "Created Drafts",
+              ja: "作成した下書き",
+            })}
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+            {createdSkillIds.map(skillId => (
+              <span key={`created-${skillId}`} style={skillChipStyle("rgba(187, 247, 208, 0.18)", "#86efac")}>
+                {getSkillDisplayName(skillId, locale, skillLabelMap)}
+              </span>
+            ))}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function badgeStyle(color: string): CSSProperties {
   return {
     padding: "4px 8px",
@@ -732,6 +816,19 @@ function badgeStyle(color: string): CSSProperties {
     fontSize: 10,
     fontWeight: 700,
     flexShrink: 0,
+  };
+}
+
+function skillChipStyle(background: string, color: string): CSSProperties {
+  return {
+    padding: "4px 8px",
+    borderRadius: 999,
+    border: `1px solid ${color}33`,
+    background,
+    color,
+    fontSize: 10,
+    fontWeight: 700,
+    lineHeight: 1.3,
   };
 }
 

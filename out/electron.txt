@@ -1,0 +1,28 @@
+2:I[6513,[],"ClientPageRoot"]
+3:I[6342,["29","static/chunks/app/electron/page-007dde059fb6e98c.js"],"default"]
+4:I[9275,[],""]
+5:I[1343,[],""]
+6:T4c8,
+              (function () {
+                try {
+                  var search = window.location && window.location.search ? window.location.search : "";
+                  var params = new URLSearchParams(search.charAt(0) === "?" ? search.slice(1) : search);
+                  var electronKeys = ["desktop-client","electronSafe","electron","desktop","runtime","shell","target","platform","client","app"];
+                  var isElectron =
+                    electronKeys.some(function (key) {
+                      var value = params.get(key);
+                      return value === "electron" || value === "1";
+                    })
+                    || /electron/i.test((window.navigator && window.navigator.userAgent) || "");
+                  if (!isElectron) return;
+                  window.__XLX_ELECTRON__ = true;
+                  document.documentElement.dataset.runtime = "electron";
+                  document.documentElement.classList.add("runtime-electron");
+                  document.body && document.body.classList.add("runtime-electron");
+                } catch (error) {
+                  console.warn("runtime-electron bootstrap failed", error);
+                }
+              })();
+            0:["a1PvZihnQKHyEwUgdjUxs",[[["",{"children":["electron",{"children":["__PAGE__",{}]}]},"$undefined","$undefined",true],["",{"children":["electron",{"children":["__PAGE__",{},[["$L1",["$","$L2",null,{"props":{"params":{},"searchParams":{}},"Component":"$3"}]],null],null]},["$","$L4",null,{"parallelRouterKey":"children","segmentPath":["children","electron","children"],"error":"$undefined","errorStyles":"$undefined","errorScripts":"$undefined","template":["$","$L5",null,{}],"templateStyles":"$undefined","templateScripts":"$undefined","notFound":"$undefined","notFoundStyles":"$undefined","styles":null}],null]},[["$","html",null,{"lang":"zh","suppressHydrationWarning":true,"children":["$","body",null,{"suppressHydrationWarning":true,"children":[["$","script",null,{"dangerouslySetInnerHTML":{"__html":"$6"}}],["$","$L4",null,{"parallelRouterKey":"children","segmentPath":["children"],"error":"$undefined","errorStyles":"$undefined","errorScripts":"$undefined","template":["$","$L5",null,{}],"templateStyles":"$undefined","templateScripts":"$undefined","notFound":[["$","title",null,{"children":"404: This page could not be found."}],["$","div",null,{"style":{"fontFamily":"system-ui,\"Segoe UI\",Roboto,Helvetica,Arial,sans-serif,\"Apple Color Emoji\",\"Segoe UI Emoji\"","height":"100vh","textAlign":"center","display":"flex","flexDirection":"column","alignItems":"center","justifyContent":"center"},"children":["$","div",null,{"children":[["$","style",null,{"dangerouslySetInnerHTML":{"__html":"body{color:#000;background:#fff;margin:0}.next-error-h1{border-right:1px solid rgba(0,0,0,.3)}@media (prefers-color-scheme:dark){body{color:#fff;background:#000}.next-error-h1{border-right:1px solid rgba(255,255,255,.3)}}"}}],["$","h1",null,{"className":"next-error-h1","style":{"display":"inline-block","margin":"0 20px 0 0","padding":"0 23px 0 0","fontSize":24,"fontWeight":500,"verticalAlign":"top","lineHeight":"49px"},"children":"404"}],["$","div",null,{"style":{"display":"inline-block"},"children":["$","h2",null,{"style":{"fontSize":14,"fontWeight":400,"lineHeight":"49px","margin":0},"children":"This page could not be found."}]}]]}]}]],"notFoundStyles":[],"styles":null}]]}]}],null],null],[[["$","link","0",{"rel":"stylesheet","href":"./_next/static/css/508311a6bdb0319a.css","precedence":"next","crossOrigin":"$undefined"}]],[null,"$L7"]]]]]
+7:[["$","meta","0",{"name":"viewport","content":"width=device-width, initial-scale=1"}],["$","meta","1",{"charSet":"utf-8"}],["$","title","2",{"children":"STARCRAW"}],["$","meta","3",{"name":"description","content":"跨境电商多 Agent 数字员工公司"}],["$","link","4",{"rel":"shortcut icon","href":"/brand-mark.png"}],["$","link","5",{"rel":"icon","href":"/brand-mark.png"}],["$","link","6",{"rel":"apple-touch-icon","href":"/brand-mark.png"}]]
+1:null

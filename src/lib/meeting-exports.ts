@@ -12,6 +12,17 @@ export interface MeetingExportPayload {
   finishedAt?: number;
 }
 
+export interface MeetingDeliveryResult {
+  ok: boolean;
+  fileName: string;
+  message?: string;
+  localFilePath?: string;
+  localSaveError?: string;
+  sentPlatforms: string[];
+  failedPlatforms: Array<{ platformId: string; error: string }>;
+  skippedPlatforms: Array<{ platformId: string; reason: string }>;
+}
+
 function parseFileName(contentDisposition: string | null, fallback: string): string {
   if (!contentDisposition) return fallback;
   const utf8Match = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i);
@@ -71,4 +82,41 @@ export async function sendMeetingExportToPlatform(
   }
 
   return data;
+}
+
+export async function deliverMeetingExport(
+  meeting: MeetingExportPayload,
+  options: {
+    format: MeetingExportFormat;
+    platformIds?: string[];
+    saveToLocal?: boolean;
+  },
+): Promise<MeetingDeliveryResult> {
+  const url = await resolveBackendUrl("/api/meeting/deliver");
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      meeting,
+      format: options.format,
+      platformIds: options.platformIds,
+      saveToLocal: options.saveToLocal !== false,
+    }),
+  });
+
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || !data.ok) {
+    throw new Error(data.error ?? data.message ?? `导出失败：HTTP ${res.status}`);
+  }
+
+  return {
+    ok: Boolean(data.ok),
+    fileName: String(data.fileName ?? `meeting-export.${options.format}`),
+    message: typeof data.message === "string" ? data.message : undefined,
+    localFilePath: typeof data.localFilePath === "string" ? data.localFilePath : undefined,
+    localSaveError: typeof data.localSaveError === "string" ? data.localSaveError : undefined,
+    sentPlatforms: Array.isArray(data.sentPlatforms) ? data.sentPlatforms : [],
+    failedPlatforms: Array.isArray(data.failedPlatforms) ? data.failedPlatforms : [],
+    skippedPlatforms: Array.isArray(data.skippedPlatforms) ? data.skippedPlatforms : [],
+  };
 }

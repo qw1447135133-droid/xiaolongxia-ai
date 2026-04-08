@@ -27,10 +27,12 @@ if (existsSync(envPath)) {
 }
 import { randomUUID } from "crypto";
 import { startPlatform, stopPlatform, sendToPlatform, sendFileToPlatform, isPlatformRunning } from "./platforms/platform-manager.js";
-import { exportMeetingDocument } from "./meeting-exporter.js";
+import { exportMeetingDocument, saveMeetingDocumentToLocalLibrary } from "./meeting-exporter.js";
+import { buildMeetingExportCaption, normalizeMeetingExportBrief } from "./meeting-export-brief.js";
 import { queryAgent, clearAllSessions } from "./agent-engine.js";
-import { getAgentTools } from "./agent-tools.js";
+import { getAgentTools, getMeetingTools } from "./agent-tools.js";
 import { checkSemanticMemoryStore, querySemanticMemoryStore } from "./semantic-memory-store.js";
+import { autoProvisionAgentSkills, buildAgentSkillPrompt, syncAgentSkillDocuments } from "./skill-provisioner.js";
 import {
   cleanupClientLaunchRequests,
   getDesktopRuntimeSummary,
@@ -120,6 +122,10 @@ let settings = {
       requireManualTakeoverForVerification: true,
     },
   },
+  skillProvisioning: {
+    enabled: true,
+    autoCreateLocalSkills: true,
+  },
   hermesDispatchSettings: DEFAULT_HERMES_DISPATCH_SETTINGS,
 };
 const hermesDispatchRuns = new Map();
@@ -149,6 +155,7 @@ const PLATFORM_RUNTIME_KEYS = [
   "lastEventAt",
   "lastInboundAt",
   "lastInboundMessageKey",
+  "lastInboundTarget",
   "lastOutboundSuccessAt",
   "lastOutboundFailureAt",
   "outboundRetryCount",
@@ -531,12 +538,15 @@ const ROUTING_RULES = [
 ];
 
 const BREVITY = "\n\n【输出要求】言简意赅、直入主题；先结论后补充；避免冗长寒暄与套话；除必须条目外尽量控制在300字内。";
+const DOCUMENT_EXPORT_PROMPT =
+  "\n\n【本地文档交付】当任务要求生成 Word / Excel / PPT 文档、报告、总结、表格、简报、纪要，并保存到桌面、本地目录或下载目录时，应优先使用文档导出工具：document_write_docx、document_write_xlsx、document_write_pptx。除非用户明确要求打开 Microsoft Word / Excel / PowerPoint 程序，否则不要为了交付文档去启动 Office 桌面应用。";
 const DESKTOP_AUTOMATION_PROMPT =
   "\n\n【桌面执行能力】当任务要求真实打开本机程序、外部浏览器、网站页面，或通过鼠标键盘在桌面界面中点击、点开、播放、输入、滚动时，你可以使用桌面工具链：desktop_list_installed_applications、desktop_open_external_browser、desktop_launch_native_application、desktop_cdp_open_app、desktop_cdp_snapshot、desktop_cdp_act、desktop_capture_screenshot、desktop_control_input。对 Chrome、Edge、飞书、Figma、Notion 这类 Chromium / Electron 应用，优先进入 CDP App Mode，再读取结构化快照并基于 ref 操作；只有在结构化控制不可用时，才退回“先截图定位 → 再点击/输入 → 再截图验证”的物理桌面闭环。若第一次验证失败，优先参考 retrySuggestions 做一次偏移重试。只有验证码、人机验证、OTP/2FA 等验证场景必须转人工接管，不要口头假设自己没有鼠标键盘能力。若用户要求真实打开视频网站、视频页、播放器并点开/播放视频，不要先空口解释限制，必须先实际尝试桌面工具链。对于物理桌面操作请求，除验证场景外，不要只给文字建议而不动手。";
 
 const SYSTEM_PROMPTS = {
   orchestrator: "你是跨境电商 AI 团队的总协调员鹦鹉螺，负责任务拆解和团队协调。回复与汇报都要简短有力。"
     + "\n\n你拥有浏览器控制能力，可以使用以下工具：browser_goto（导航到URL）、browser_get_text（读取页面文字内容，搜索后必须用这个提取结果）、browser_page_info（获取页面信息）、browser_screenshot（截图识图）、browser_act（自然语言操作，如点击/填写/滚动）、browser_act_single（精确选择器操作）、browser_act_multi（批量操作）。"
+    + DOCUMENT_EXPORT_PROMPT
     + "\n\n你还拥有真实外部浏览器启动能力：desktop_open_external_browser 可打开 Chrome、Edge、Firefox 或系统默认浏览器。凡是用户明确要求打开浏览器，或要求打开/访问某个网站、链接、URL，都应优先使用它；只有自主搜索、读取网页、抓取资料、验证页面时，才继续使用内置 browser_*。"
     + "\n\n你还可以使用 desktop_list_installed_applications 工具先读取本机已安装程序列表，再用 desktop_launch_native_application 启动对应程序，例如微信、飞书、Chrome、VS Code、资源管理器或指定 exe。只有当用户明确要求打开/启动本机程序，或任务确实需要调用本机应用时才使用。"
     + "\n\n对于 Chrome、Edge、飞书、Figma、Notion 这类 Chromium / Electron 应用，应优先使用 desktop_cdp_open_app 进入 CDP App Mode，再用 desktop_cdp_snapshot 获取结构化 ref，最后用 desktop_cdp_act 执行 click/fill/type/press。只有当 CDP 模式不可用时，才回退到桌面截图 + 鼠标键盘链路。"
@@ -548,23 +558,100 @@ const SYSTEM_PROMPTS = {
     + "\n\n【遇到登录页】：换用百度/必应搜索该关键词，或直接总结已知信息。"
     + BREVITY,
   explorer: "你是探海鲸鱼，跨境电商选品专家，专注竞品分析、选品趋势研究和市场数据分析，提供可执行洞察。"
+    + DOCUMENT_EXPORT_PROMPT
     + DESKTOP_AUTOMATION_PROMPT
     + BREVITY,
   writer: "你是星海章鱼，跨境电商文案专家，专注多语种文案创作、SEO 标题和详情页撰写，输出高转化文案。"
+    + DOCUMENT_EXPORT_PROMPT
     + DESKTOP_AUTOMATION_PROMPT
     + BREVITY,
   designer: "你是珊瑚水母，电商视觉设计专家；需要出图时先给出 [IMAGE_PROMPT] 英文提示词，再补充设计说明。"
+    + DOCUMENT_EXPORT_PROMPT
     + DESKTOP_AUTOMATION_PROMPT
     + BREVITY,
   performer: "你是逐浪海豚，短视频内容专家，专注数字人视频脚本、TikTok/抖音内容策略和多平台矩阵发布。"
+    + DOCUMENT_EXPORT_PROMPT
     + DESKTOP_AUTOMATION_PROMPT
     + BREVITY,
   greeter: "你是招潮蟹，多语种客服专家，专注客服话术、评论回复模板和买家互动策略。"
+    + DOCUMENT_EXPORT_PROMPT
     + DESKTOP_AUTOMATION_PROMPT
     + BREVITY,
 };
 
 const AGENT_IDS = ["orchestrator", "explorer", "writer", "designer", "performer", "greeter"];
+const MEETING_DEBATE_PARTICIPANTS = ["explorer", "writer", "designer", "performer", "greeter"];
+const MEETING_ROLE_STANCES = {
+  orchestrator: {
+    title: "中立主持与裁判",
+    brief: "负责追问矛盾、约束跑题、压缩分歧并给出最终裁决，但自己不代表任何业务条线站队。",
+  },
+  explorer: {
+    title: "市场与竞品",
+    brief: "从流量结构、价格带、搜索坑位、竞品动作和市场窗口判断方案胜率。",
+  },
+  writer: {
+    title: "文案与转化",
+    brief: "从标题、卖点表达、详情页说服链路和转化效率评估方案是否能卖动。",
+  },
+  designer: {
+    title: "视觉与点击",
+    brief: "从主图、首屏感知、包装表现、品牌信任和点击率判断方案能否打穿注意力。",
+  },
+  performer: {
+    title: "内容与传播",
+    brief: "从短视频、直播、种草传播、素材复用和流量放大能力判断方案能否跑起来。",
+  },
+  greeter: {
+    title: "客服与复购",
+    brief: "从用户疑虑、售后承接、退款风险、满意度和复购关系判断方案是否稳。",
+  },
+};
+
+const MEETING_AGENT_TEMPERAMENTS = {
+  orchestrator: {
+    temperament: "冷静、锋利、像评审会上的首席裁判，专门盯逻辑漏洞和拍板责任。",
+    style: "句子短，追问狠，少说废话，不卖萌，不站队。",
+    emoji: "⚖️🧭",
+    meme: "基本不用表情包，最多用一句冷幽默压场。",
+    evidence: "更看重证据质量和决策闭环，而不是情绪输出。",
+  },
+  explorer: {
+    temperament: "强势、现实、数据导向，最讨厌拍脑袋和空想。",
+    style: "喜欢先下判断，再拿价格带、搜索趋势、竞品动作压人。",
+    emoji: "📈🧊🦈",
+    meme: "偏市场打脸型，适合“流量不会为自我感动买单”这种表情包口吻。",
+    evidence: "擅长市场趋势、价格带、平台搜索页、竞品链接、公开行业报告。",
+  },
+  writer: {
+    temperament: "嘴毒、挑剔、极度在意转化表达，容易嫌别人说人话能力不行。",
+    style: "爱抓标题、卖点、说服链路里的漏洞，擅长用一句话把方案说破。",
+    emoji: "✍️🔥🙄",
+    meme: "偏文案吐槽型，适合“这句一上架就掉点击率”这类毒舌梗。",
+    evidence: "擅长标题案例、详情页对比、文案 AB 思路、用户决策心理。",
+  },
+  designer: {
+    temperament: "审美自尊很强，对丑、乱、廉价感容忍度极低。",
+    style: "会直接点名谁的方案看起来土、杂、没记忆点，但会给清晰的视觉判断标准。",
+    emoji: "🎯🎨😑",
+    meme: "偏审美嫌弃型，适合“这不是高级，是贵且乱”这种冷嘲卡。",
+    evidence: "擅长首屏对比、点击率直觉、视觉层级、品牌信任与包装感。",
+  },
+  performer: {
+    temperament: "冲劲大、节奏快、流量脑，讨厌保守到没有传播性的方案。",
+    style: "喜欢用传播爆点、素材复用率、短视频转场景来说服别人。",
+    emoji: "🚀🎬😏",
+    meme: "偏传播暴击型，适合“这条内容发出去连算法都懒得抬头”这种梗。",
+    evidence: "擅长内容选题、视频结构、传播钩子、平台案例、热点链接。",
+  },
+  greeter: {
+    temperament: "接地气、很懂用户真实抱怨，最烦脱离用户情绪的空中楼阁。",
+    style: "会拿售后、差评、客服对话、复购风险去戳穿不切实际的方案。",
+    emoji: "🗣️😮‍💨🦀",
+    meme: "偏用户吐槽型，适合“客服要真按你这话术发，今晚就炸工单”这种梗。",
+    evidence: "擅长用户疑虑、差评风险、退款点、售后成本、客服话术现场感。",
+  },
+};
 
 const AGENT_DISPLAY = {
   orchestrator: "鹦鹉螺",
@@ -574,6 +661,233 @@ const AGENT_DISPLAY = {
   performer: "逐浪海豚",
   greeter: "招潮蟹",
 };
+
+function buildMeetingAgentSystemPrompt(agentId) {
+  const stance = MEETING_ROLE_STANCES[agentId] ?? {
+    title: "参会成员",
+    brief: "站在自己的专业岗位上给出明确观点。",
+  };
+  const temperament = MEETING_AGENT_TEMPERAMENTS[agentId] ?? {
+    temperament: "有鲜明态度，不圆滑。",
+    style: "像真实会议中的专业角色。",
+    emoji: "🙂",
+    meme: "可以偶尔抛一句符合角色的表情包文案。",
+    evidence: "可引用公开证据、链接或轻量数据板支撑判断。",
+  };
+  const basePrompt = [
+    `你是内部策略会议中的固定参会者：${AGENT_DISPLAY[agentId] || agentId}。`,
+    `你的岗位立场是：${stance.title}。你必须始终从“${stance.brief}”这个角度发言。`,
+    `你的开会脾气与表达习惯：${temperament.temperament}${temperament.style ? ` ${temperament.style}` : ""}`,
+    `你常用的情绪表达参考：${temperament.emoji}。允许自然带 emoji，但不要每句都堆。`,
+    `你的表情包气质：${temperament.meme}`,
+    `你最擅长拿来压人的证据类型：${temperament.evidence}`,
+    "【会议模式】你现在只是在开会讨论，不是在执行桌面任务。",
+    "不要提启动程序、打开网站、读取本机应用、调用工具、查看安装列表、继续执行操作、等待用户补充操作目标。",
+    "不要说“如需我可以继续执行”“请告诉我要打开哪个程序/网站”这类话。",
+    "你的目标只有一个：站队、辩论、反驳、给出取舍，推动团队形成决策。",
+    "发言要像真实会议：直接、具体、带倾向、有取舍，不要端水，不要泛泛而谈。",
+    "允许有火气、允许点名回应、允许轻度呛声和回怼，但尺度保持在同事开会吵起来的程度；不要恶毒辱骂、不要仇恨、不要低俗脏话连篇。",
+    "你可以引用公开网页、平台页面、行业报告、产品链接、品牌站点作为证据，但只能把它们当作佐证，不要把发言写成“我要去打开/查看/启动某网站”。",
+    "你拥有会议专用网页取证能力：browser_goto、browser_get_text、browser_page_info、browser_list_images、browser_screenshot、browser_act。只有在需要证据时才使用；禁止转去桌面程序、安装应用或执行型工具。",
+    "若你要拿网页上的新闻配图、财报图、图表图做证据，可先 browser_goto 到页面，再用 browser_list_images 找公开图片 URL，然后在发言里输出 [IMAGE|标题|图片URL|这图说明了什么]。",
+    "若你想直接摆一个对比表，可用 ```table 代码块```；若想摆趋势对比，可用 ```chart 代码块```。",
+    "如果你要补充证据，请优先用以下轻量格式之一，并单独占行：",
+    "[LINK|证据标题|https://example.com|这条证据支持什么判断]",
+    "[IMAGE|图证标题|https://example.com/chart.png|这张图支持什么判断]",
+    "```chart",
+    "标题：可选",
+    "方案A ▇▇▇ 62%",
+    "方案B ▇▇ 38%",
+    "```",
+    "```table",
+    "| 方案 | 指标 | 判断 |",
+    "| --- | --- | --- |",
+    "| A | CTR 高 | 更适合投放 |",
+    "```",
+    "[MEME|一句符合你人设的表情包文案]",
+    "不是每次都必须带链接、图表或表情包；只有在它真的能让观点更有杀伤力时才用。",
+    "不要每轮都机械地用“1. 2. 3.”模板回答；优先像真人抢话、回嘴、补刀和拍板。",
+  ];
+
+  if (agentId === "orchestrator") {
+    return [
+      ...basePrompt.slice(0, 6),
+      "你是这场会的中立主持与裁判，不代表任何方案，不替任何业务角色说话。",
+      "你的职责是逼大家把分歧说透、把标准讲清、把取舍压实，最后基于辩论内容作出裁决。",
+      "不要把自己写成参会辩手，不要替自己设置业务立场，不要说自己支持哪个方案。",
+      ...basePrompt.slice(6, 9),
+      "你的目标只有一个：主持、追问、归纳冲突、做出裁决。",
+      "发言要像真正的主持人：冷静、强硬、客观，重点盯矛盾和取舍。",
+      "你可以要求别人收回空话、补充证据、正面回应被点名的问题，但你自己不要用表情包带节奏。",
+      ...basePrompt.slice(9),
+    ].join("\n");
+  }
+
+  return basePrompt.join("\n");
+}
+
+function stripMeetingPresentationSyntax(text = "") {
+  return String(text || "")
+    .replace(/^\[MEME\|.*?\]\s*$/gim, "")
+    .replace(/^\[IMAGE\|([^|\n]+)\|([^|\n]+)\|?([^\]]*)\]\s*$/gim, (_match, title, url, note) => {
+      const summaryParts = [String(title || "").trim(), String(note || "").trim()].filter(Boolean);
+      return `图证：${summaryParts.join(" - ")} ${String(url || "").trim()}`.trim();
+    })
+    .replace(/^\[LINK\|([^|\n]+)\|([^|\n]+)\|?([^\]]*)\]\s*$/gim, (_match, title, url, note) => {
+      const summaryParts = [String(title || "").trim(), String(note || "").trim()].filter(Boolean);
+      return `证据：${summaryParts.join(" - ")} ${String(url || "").trim()}`.trim();
+    })
+    .replace(/```chart\s*([\s\S]*?)```/gim, (_match, body) => {
+      const compact = String(body || "")
+        .split(/\r?\n/)
+        .map(line => line.trim())
+        .filter(Boolean)
+        .join("；");
+      return compact ? `数据板：${compact}` : "";
+    })
+    .replace(/```[\w-]*\s*([\s\S]*?)```/gim, (_match, body) => String(body || "").trim())
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function parseMeetingToolJson(raw) {
+  try {
+    return typeof raw === "string" ? JSON.parse(raw) : raw;
+  } catch {
+    return null;
+  }
+}
+
+function normalizeMeetingEvidenceUrl(rawUrl) {
+  const normalized = String(rawUrl || "").trim();
+  if (!normalized) return "";
+  return /^https?:\/\//i.test(normalized) || normalized.startsWith("data:image/")
+    ? normalized
+    : "";
+}
+
+function collectMeetingToolEvidence(state, event) {
+  if (!state || event?.phase !== "success") return;
+  const toolName = String(event.toolName || "").trim();
+  const parsed = parseMeetingToolJson(event.result);
+
+  if ((toolName === "browser_goto" || toolName === "browser_page_info") && parsed) {
+    state.pageUrl = normalizeMeetingEvidenceUrl(parsed.url) || state.pageUrl || "";
+    state.pageTitle = String(parsed.title || state.pageTitle || "").trim();
+    return;
+  }
+
+  if (toolName === "browser_get_text" && parsed) {
+    state.pageUrl = normalizeMeetingEvidenceUrl(parsed.url) || state.pageUrl || "";
+    state.textSnippet = String(parsed.text || "").replace(/\s+/g, " ").trim().slice(0, 220);
+    return;
+  }
+
+  if (toolName === "browser_list_images" && parsed) {
+    state.pageUrl = normalizeMeetingEvidenceUrl(parsed.pageUrl) || state.pageUrl || "";
+    state.pageTitle = String(parsed.title || state.pageTitle || "").trim();
+    state.imageCandidates = Array.isArray(parsed.images)
+      ? parsed.images
+        .map((item) => ({
+          url: normalizeMeetingEvidenceUrl(item?.url),
+          alt: String(item?.alt || "").trim(),
+          width: Number(item?.width || 0),
+          height: Number(item?.height || 0),
+        }))
+        .filter((item) => item.url)
+        .slice(0, 3)
+      : [];
+    return;
+  }
+
+  if (toolName === "browser_screenshot" && typeof event.result === "string" && event.result.trim()) {
+    state.usedScreenshot = true;
+  }
+}
+
+function appendMeetingEvidenceArtifacts(text, state) {
+  const body = String(text || "").trim();
+  if (!body) return body;
+
+  const additions = [];
+  const alreadyHasImage = /\[IMAGE\|/i.test(body);
+  const alreadyHasLink = /\[LINK\|/i.test(body);
+  const primaryImage = Array.isArray(state?.imageCandidates) ? state.imageCandidates[0] : null;
+
+  if (!alreadyHasImage && primaryImage?.url) {
+    const imageTitle = primaryImage.alt || state?.pageTitle || "网页图证";
+    const imageNoteParts = [
+      state?.usedScreenshot ? "本轮观点参考了页面截图与图像内容" : "",
+      state?.textSnippet ? state.textSnippet : "",
+    ].filter(Boolean);
+    additions.push(`[IMAGE|${imageTitle}|${primaryImage.url}|${imageNoteParts.join("；") || "可作为本轮观点的网页图证"}]`);
+  }
+
+  if (!alreadyHasLink && state?.pageUrl) {
+    const linkTitle = state?.pageTitle || "来源页面";
+    const linkNote = state?.textSnippet || (state?.usedScreenshot ? "本轮判断参考了该页面截图与正文内容" : "本轮判断参考了该页面内容");
+    additions.push(`[LINK|${linkTitle}|${state.pageUrl}|${linkNote}]`);
+  }
+
+  return additions.length > 0 ? `${body}\n\n${additions.join("\n")}` : body;
+}
+
+function normalizeAgentSkillIds(skillIds, fallback = []) {
+  if (!Array.isArray(skillIds)) {
+    return Array.isArray(fallback) ? fallback.filter(Boolean) : [];
+  }
+
+  return Array.from(
+    new Set(
+      skillIds
+        .map((skillId) => String(skillId || "").trim())
+        .filter(Boolean),
+    ),
+  );
+}
+
+function buildDefaultAgentConfig(agentId, currentConfig = {}) {
+  return {
+    id: agentId,
+    name: currentConfig?.name || AGENT_DISPLAY[agentId] || agentId,
+    emoji: currentConfig?.emoji || "",
+    personality: currentConfig?.personality || "",
+    model: currentConfig?.model || "",
+    providerId: currentConfig?.providerId || "",
+    skills: normalizeAgentSkillIds(currentConfig?.skills),
+  };
+}
+
+function normalizeAgentConfigs(nextConfigs = {}, currentConfigs = settings.agentConfigs ?? {}) {
+  const normalized = {};
+
+  for (const agentId of AGENT_IDS) {
+    const fallback = buildDefaultAgentConfig(agentId, currentConfigs?.[agentId]);
+    const incoming = nextConfigs?.[agentId];
+
+    if (!incoming || typeof incoming !== "object") {
+      normalized[agentId] = fallback;
+      continue;
+    }
+
+    normalized[agentId] = {
+      ...fallback,
+      ...incoming,
+      id: agentId,
+      name: String(incoming?.name || fallback.name),
+      emoji: String(incoming?.emoji || fallback.emoji || ""),
+      personality: String(incoming?.personality || fallback.personality || ""),
+      model: String(incoming?.model || fallback.model || ""),
+      providerId: String(incoming?.providerId || fallback.providerId || ""),
+      skills: normalizeAgentSkillIds(
+        Object.prototype.hasOwnProperty.call(incoming, "skills") ? incoming.skills : fallback.skills,
+        fallback.skills,
+      ),
+    };
+  }
+
+  return normalized;
+}
 
 function writeJson(res, status, payload) {
   res.writeHead(status, {
@@ -636,10 +950,21 @@ async function restoreRuntimeSettings() {
     settings = {
       ...settings,
       ...parsed,
+      agentConfigs: normalizeAgentConfigs(parsed.agentConfigs ?? {}, parsed.agentConfigs ?? settings.agentConfigs),
       platformConfigs: mergePlatformConfigs(parsed.platformConfigs ?? {}),
     };
   } catch (error) {
     console.error("[ws-server] restore settings failed:", error?.message || error);
+  }
+}
+
+async function syncRuntimeSkillDocuments() {
+  try {
+    const result = await syncAgentSkillDocuments({ repoRoot, settings });
+    return result;
+  } catch (error) {
+    console.error("[ws-server] sync skill documents failed:", error?.message || error);
+    return { changed: false, allSkillIds: [], documents: {} };
   }
 }
 
@@ -1586,9 +1911,30 @@ function mapPlatformToChannel(platformId) {
   return "web";
 }
 
+function deriveInboundTargetFromMessageKey(platformId, inboundMessageKey) {
+  const normalizedKey = String(inboundMessageKey || "").trim();
+  if (!normalizedKey) return "";
+
+  if (platformId === "telegram") {
+    const match = normalizedKey.match(/^telegram:([^:]+):/i);
+    return match?.[1]?.trim() || "";
+  }
+
+  return "";
+}
+
 function resolvePlatformDebugTarget(platformId, targetId) {
   const normalizedTarget = String(targetId || "").trim();
   if (normalizedTarget) return normalizedTarget;
+
+  const runtimeTarget = String(settings.platformConfigs?.[platformId]?.lastInboundTarget || "").trim();
+  if (runtimeTarget) return runtimeTarget;
+
+  const derivedRuntimeTarget = deriveInboundTargetFromMessageKey(
+    platformId,
+    settings.platformConfigs?.[platformId]?.lastInboundMessageKey,
+  );
+  if (derivedRuntimeTarget) return derivedRuntimeTarget;
 
   const fields = settings.platformConfigs?.[platformId]?.fields ?? {};
   if (platformId === "telegram") {
@@ -1598,6 +1944,22 @@ function resolvePlatformDebugTarget(platformId, targetId) {
     return String(fields.defaultOpenId || "").trim();
   }
   return "";
+}
+
+function humanizePlatformDebugFailure(platformId, message, targetId) {
+  const normalizedMessage = String(message || "").trim();
+  if (!normalizedMessage) return normalizedMessage;
+
+  if (
+    platformId === "telegram"
+    && /chat not found/i.test(normalizedMessage)
+  ) {
+    const resolvedTarget = String(targetId || "").trim();
+    const targetSuffix = resolvedTarget ? `（当前目标：${resolvedTarget}）` : "";
+    return `Telegram 找不到这个聊天对象${targetSuffix}。请确认填写的是有效的 Chat ID，而不是用户名；并且先在 Telegram 里给该机器人发送一次 /start，或把机器人加入对应群组/频道后再重试。原始错误：${normalizedMessage}`;
+  }
+
+  return normalizedMessage;
 }
 
 async function executePlatformDebugAction({ action, platformId, targetId, text }) {
@@ -1851,7 +2213,16 @@ function broadcastChannelEvent(payload) {
   });
 }
 
-function makeExecutionEvent({ type, title, detail, agentId, taskId, timestamp = Date.now() }) {
+function makeExecutionEvent({
+  type,
+  title,
+  detail,
+  agentId,
+  taskId,
+  matchedSkillIds,
+  createdSkillIds,
+  timestamp = Date.now(),
+}) {
   return {
     id: randomUUID(),
     type,
@@ -1859,6 +2230,8 @@ function makeExecutionEvent({ type, title, detail, agentId, taskId, timestamp = 
     detail,
     agentId,
     taskId,
+    matchedSkillIds: Array.isArray(matchedSkillIds) && matchedSkillIds.length > 0 ? matchedSkillIds : undefined,
+    createdSkillIds: Array.isArray(createdSkillIds) && createdSkillIds.length > 0 ? createdSkillIds : undefined,
     timestamp,
   };
 }
@@ -3084,7 +3457,7 @@ function getModelForComplexity(complexity) {
   return "claude-haiku-4-5-20251001";
 }
 
-function buildClient(agentId) {
+function buildClient(agentId, injectedSkillPrompt = "", options = {}) {
   const config = settings.agentConfigs?.[agentId];
   const provider = config?.providerId
     ? settings.providers.find((p) => p.id === config.providerId)
@@ -3093,8 +3466,13 @@ function buildClient(agentId) {
   const apiKey = provider?.apiKey || process.env.ANTHROPIC_API_KEY || "";
   const baseURL = provider?.baseUrl || process.env.ANTHROPIC_BASE_URL;
   const model = config?.model || getDefaultModel();
-  const personality = config?.personality ? `\n\n个性补充：${config.personality}` : "";
-  const systemPrompt = `${SYSTEM_PROMPTS[agentId]}${personality}`;
+  const personality = options.includePersonality !== false && config?.personality
+    ? `\n\n个性补充：${config.personality}`
+    : "";
+  const skillPrompt = options.includeSkillPrompt === false ? "" : String(injectedSkillPrompt || "").trim();
+  const systemPrompt = options.systemPromptOverride
+    ? `${String(options.systemPromptOverride).trim()}${personality}`
+    : `${SYSTEM_PROMPTS[agentId]}${personality}${skillPrompt ? `\n\n${skillPrompt}` : ""}`;
   const providerId = provider?.id || config?.providerId || "";
   const useAnthropic =
     providerId.startsWith("anthropic")
@@ -3107,6 +3485,46 @@ function buildClient(agentId) {
     clientType: useAnthropic ? "anthropic" : "openai",
     model,
     systemPrompt,
+  };
+}
+
+async function callMeetingAgent(agentId, task, complexity, maxTokensOverride, sessionId = "default", signal) {
+  const meetingToolState = {
+    pageUrl: "",
+    pageTitle: "",
+    textSnippet: "",
+    imageCandidates: [],
+    usedScreenshot: false,
+  };
+  const { client, clientType, model, systemPrompt } = buildClient(agentId, "", {
+    systemPromptOverride: buildMeetingAgentSystemPrompt(agentId),
+    includePersonality: true,
+    includeSkillPrompt: false,
+  });
+  const hasCustomModel = !!settings.agentConfigs?.[agentId]?.model;
+  const actualModel = hasCustomModel ? model : getModelForComplexity(complexity);
+  const defaultMax = complexity === "high" ? 1024 : complexity === "medium" ? 700 : 500;
+  const tools = getMeetingTools(agentId);
+
+  const result = await queryAgent({
+    agentId,
+    sessionId,
+    task,
+    systemPrompt,
+    tools,
+    maxTokens: maxTokensOverride ?? defaultMax,
+    model: actualModel,
+    client,
+    clientType,
+    onToolEvent: async (event) => {
+      collectMeetingToolEvidence(meetingToolState, event);
+    },
+    signal,
+  });
+
+  return {
+    ...result,
+    text: appendMeetingEvidenceArtifacts(result.text, meetingToolState),
   };
 }
 
@@ -3171,7 +3589,38 @@ function createAssistantStreamReporter({ executionRunId, sessionId, agentId, tas
 }
 
 async function callAgent(agentId, task, complexity, maxTokensOverride, sessionId = "default", executionMeta = {}) {
-  const { client, clientType, model, systemPrompt } = buildClient(agentId);
+  let provisionResult = {
+    matchedSkillIds: [],
+    createdSkillIds: [],
+    skillPrompt: "",
+  };
+
+  try {
+    provisionResult = await autoProvisionAgentSkills({
+      repoRoot,
+      settings,
+      agentId,
+      task,
+    });
+    if (provisionResult.createdSkillIds.length > 0) {
+      await syncAgentSkillDocuments({ repoRoot, settings });
+      await persistRuntimeSettings();
+    }
+  } catch (error) {
+    console.error("[ws-server] skill auto-provision failed:", error?.message || error);
+    try {
+      provisionResult.skillPrompt = await buildAgentSkillPrompt({
+        repoRoot,
+        settings,
+        agentId,
+        task,
+      });
+    } catch (promptError) {
+      console.error("[ws-server] build skill prompt failed:", promptError?.message || promptError);
+    }
+  }
+
+  const { client, clientType, model, systemPrompt } = buildClient(agentId, provisionResult.skillPrompt);
   // 若 Agent 已显式配置了模型则尊重该设置，否则按复杂度自动选择
   const hasCustomModel = !!settings.agentConfigs?.[agentId]?.model;
   const actualModel = hasCustomModel ? model : getModelForComplexity(complexity);
@@ -3184,6 +3633,35 @@ async function callAgent(agentId, task, complexity, maxTokensOverride, sessionId
         taskId: executionMeta.taskId,
       })
     : null;
+
+  if (
+    executionMeta.executionRunId
+    && executionMeta.taskId
+    && (provisionResult.matchedSkillIds.length > 0 || provisionResult.createdSkillIds.length > 0)
+  ) {
+    const detailParts = [];
+    if (provisionResult.matchedSkillIds.length > 0) {
+      detailParts.push(`自动命中技能：${provisionResult.matchedSkillIds.join("、")}`);
+    }
+    if (provisionResult.createdSkillIds.length > 0) {
+      detailParts.push(`创建本地技能草稿：${provisionResult.createdSkillIds.join("、")}`);
+    }
+    broadcastExecutionUpdate({
+      executionRunId: executionMeta.executionRunId,
+      sessionId,
+      currentAgentId: agentId,
+      timestamp: Date.now(),
+      event: makeExecutionEvent({
+        type: "agent",
+        title: "自动装配技能",
+        detail: detailParts.join("；"),
+        agentId,
+        taskId: executionMeta.taskId,
+        matchedSkillIds: provisionResult.matchedSkillIds,
+        createdSkillIds: provisionResult.createdSkillIds,
+      }),
+    });
+  }
 
   return await queryAgent({
     agentId,
@@ -3678,10 +4156,394 @@ async function dispatch(
   }
 }
 
-async function meeting(topic, participants = ["explorer", "writer", "performer", "greeter"]) {
-  const meetingId = randomUUID();
-  const activeParticipants = participants.length > 0 ? participants : ["explorer", "writer", "performer", "greeter"];
-  let context = `会议主题：${topic}\n\n`;
+const FILE_CAPABLE_MEETING_PLATFORM_IDS = new Set(["telegram", "feishu"]);
+
+function resolveMeetingDeliveryTarget(platformId) {
+  const platformConfig = settings.platformConfigs?.[platformId];
+  const fields = platformConfig?.fields ?? {};
+  const lastInboundTarget = String(platformConfig?.lastInboundTarget || "").trim();
+
+  if (platformId === "telegram") {
+    return String(fields.defaultChatId || lastInboundTarget).trim();
+  }
+  if (platformId === "feishu") {
+    return String(fields.defaultOpenId || lastInboundTarget).trim();
+  }
+
+  return "";
+}
+
+const MEETING_EXPORT_DRAFT_CACHE_LIMIT = 24;
+const meetingExportDraftCache = new Map();
+
+function buildMeetingExportCacheKey(meeting) {
+  return [
+    String(meeting?.topic || "").trim(),
+    Number(meeting?.finishedAt || 0),
+    String(meeting?.summary || "").trim(),
+  ].join("::");
+}
+
+function readCachedMeetingExportBrief(cacheKey) {
+  if (!cacheKey) return null;
+  const cached = meetingExportDraftCache.get(cacheKey);
+  if (!cached) return null;
+  meetingExportDraftCache.delete(cacheKey);
+  meetingExportDraftCache.set(cacheKey, cached);
+  return cached;
+}
+
+function writeCachedMeetingExportBrief(cacheKey, exportBrief) {
+  if (!cacheKey || !exportBrief) return;
+  if (meetingExportDraftCache.has(cacheKey)) {
+    meetingExportDraftCache.delete(cacheKey);
+  }
+  meetingExportDraftCache.set(cacheKey, exportBrief);
+  while (meetingExportDraftCache.size > MEETING_EXPORT_DRAFT_CACHE_LIMIT) {
+    const oldestKey = meetingExportDraftCache.keys().next().value;
+    if (!oldestKey) break;
+    meetingExportDraftCache.delete(oldestKey);
+  }
+}
+
+function normalizeMeetingExportInput(meeting) {
+  return {
+    topic: String(meeting?.topic ?? "").trim(),
+    summary: String(meeting?.summary ?? "").trim(),
+    speeches: Array.isArray(meeting?.speeches)
+      ? meeting.speeches.map((speech, index) => ({
+          id: speech?.id ?? `speech-${index + 1}`,
+          agentId: String(speech?.agentId ?? "orchestrator").trim() || "orchestrator",
+          role: String(speech?.role ?? "speak").trim() || "speak",
+          text: String(speech?.text ?? "").trim(),
+          timestamp: speech?.timestamp ?? Date.now(),
+        }))
+      : [],
+    finishedAt: meeting?.finishedAt ?? Date.now(),
+  };
+}
+
+function buildMeetingExportSpeechDigest(speeches = []) {
+  return speeches
+    .filter(speech => speech?.text)
+    .slice(0, 12)
+    .map((speech, index) => {
+      const agentLabel = AGENT_DISPLAY[speech.agentId] || speech.agentId;
+      const roleLabel = speech.role === "summary" ? "裁决" : speech.role === "rebuttal" ? "交锋" : speech.role === "open" ? "开场" : "观点";
+      return `${index + 1}. ${agentLabel}/${roleLabel}：${stripMeetingPresentationSyntax(speech.text).slice(0, 180)}`;
+    })
+    .join("\n");
+}
+
+async function callMeetingExportAgent(task, sessionId = "meeting-export", signal) {
+  const agentId = "orchestrator";
+  let provisionResult = {
+    matchedSkillIds: [],
+    createdSkillIds: [],
+    skillPrompt: "",
+  };
+
+  try {
+    provisionResult = await autoProvisionAgentSkills({
+      repoRoot,
+      settings,
+      agentId,
+      task,
+    });
+    if (provisionResult.createdSkillIds.length > 0) {
+      await syncAgentSkillDocuments({ repoRoot, settings });
+      await persistRuntimeSettings();
+    }
+  } catch (error) {
+    console.error("[ws-server] meeting export skill auto-provision failed:", error?.message || error);
+    try {
+      provisionResult.skillPrompt = await buildAgentSkillPrompt({
+        repoRoot,
+        settings,
+        agentId,
+        task,
+      });
+    } catch (promptError) {
+      console.error("[ws-server] meeting export build skill prompt failed:", promptError?.message || promptError);
+    }
+  }
+
+  const exportSystemPrompt = [
+    buildMeetingAgentSystemPrompt(agentId),
+    String(provisionResult.skillPrompt || "").trim(),
+    "【导出整理模式】你当前不是在主持辩论，而是在把已经结束的会议裁决整理成正式交付稿。",
+    "你输出的内容会分别用于 Word、Excel、PPT 三种导出，所以必须体现文档化表达、结论优先、动作清晰。",
+    "严格禁止输出会议过程、轮次、逐条发言、谁和谁争论、工具动作、程序或网站。",
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+
+  const { client, clientType, model } = buildClient(agentId, "", {
+    systemPromptOverride: exportSystemPrompt,
+    includePersonality: false,
+    includeSkillPrompt: false,
+  });
+  const hasCustomModel = !!settings.agentConfigs?.[agentId]?.model;
+  const actualModel = hasCustomModel ? model : getModelForComplexity("medium");
+
+  return await queryAgent({
+    agentId,
+    sessionId,
+    task,
+    systemPrompt: exportSystemPrompt,
+    tools: [],
+    maxTokens: 900,
+    model: actualModel,
+    client,
+    clientType,
+    signal,
+  });
+}
+
+async function prepareMeetingForExport(meeting, signal) {
+  const normalizedMeeting = normalizeMeetingExportInput(meeting);
+  if (!normalizedMeeting.topic) {
+    throw new Error("会议主题不能为空");
+  }
+  if (!normalizedMeeting.summary) {
+    throw new Error("会议结论不能为空");
+  }
+
+  if (meeting?.exportBrief) {
+    return {
+      ...normalizedMeeting,
+      exportBrief: normalizeMeetingExportBrief(meeting.exportBrief, normalizedMeeting),
+    };
+  }
+
+  const cacheKey = buildMeetingExportCacheKey(normalizedMeeting);
+  const cached = readCachedMeetingExportBrief(cacheKey);
+  if (cached) {
+    return {
+      ...normalizedMeeting,
+      exportBrief: cached,
+    };
+  }
+
+  const task = [
+    "请你作为鹦鹉螺，把这场已经结束的会议裁决整理成一个统一的导出结果稿，供 Word / Excel / PPT 三种文档复用。",
+    "只保留结果，不保留过程；不要写会议轮次、发言记录、交锋过程、谁反驳了谁。",
+    "请严格输出 JSON，不要使用 Markdown 代码块，不要添加任何解释。",
+    'JSON 结构必须是：{"reportTitle":"","executiveSummary":"","finalDecision":"","bestPlan":"","winningReasons":[""],"rejectedAlternatives":[{"option":"","reason":""}],"actionItems":[{"task":"","owner":"","deadline":"","successMetric":"","note":""}],"ownerRecommendation":"","riskAlerts":[""],"decisionNote":""}',
+    "要求：winningReasons 3-5 条；rejectedAlternatives 1-3 条；actionItems 固定 3 条并可直接执行；ownerRecommendation 要明确；若缺少具体时间，请用“立即启动/本周内/两周内”这类节奏表达。",
+    `会议议题：${normalizedMeeting.topic}`,
+    `最终会议结论：${normalizedMeeting.summary}`,
+    `会议发言摘录（仅供理解，不允许原样输出）：\n${buildMeetingExportSpeechDigest(normalizedMeeting.speeches) || "无"}`,
+  ].join("\n\n");
+
+  let exportBrief;
+  try {
+    const { text } = await callMeetingExportAgent(task, `meeting-export:${cacheKey}`, signal);
+    exportBrief = normalizeMeetingExportBrief(text, normalizedMeeting);
+  } catch (error) {
+    console.error("[ws-server] prepare meeting export failed:", error?.message || error);
+    exportBrief = normalizeMeetingExportBrief(null, normalizedMeeting);
+  }
+
+  writeCachedMeetingExportBrief(cacheKey, exportBrief);
+  return {
+    ...normalizedMeeting,
+    exportBrief,
+  };
+}
+
+function collectMeetingDeliveryPlatforms(explicitPlatformIds = []) {
+  const requestedIds = Array.isArray(explicitPlatformIds)
+    ? explicitPlatformIds.map(id => String(id || "").trim()).filter(Boolean)
+    : [];
+  const sourceIds = requestedIds.length > 0
+    ? requestedIds
+    : Object.keys(settings.platformConfigs ?? {});
+  const targets = [];
+  const skipped = [];
+
+  for (const platformId of sourceIds) {
+    if (!platformId) continue;
+    if (targets.includes(platformId) || skipped.some(item => item.platformId === platformId)) continue;
+
+    if (!FILE_CAPABLE_MEETING_PLATFORM_IDS.has(platformId)) {
+      skipped.push({ platformId, reason: "该平台暂不支持发送会议文件" });
+      continue;
+    }
+
+    const config = settings.platformConfigs?.[platformId];
+    if (!config?.enabled) {
+      skipped.push({ platformId, reason: "平台未启用" });
+      continue;
+    }
+
+    if (!resolveMeetingDeliveryTarget(platformId)) {
+      skipped.push({ platformId, reason: "未配置默认接收对象" });
+      continue;
+    }
+
+    targets.push(platformId);
+  }
+
+  return { targets, skipped };
+}
+
+async function deliverMeetingExportPackage({ format, meeting, platformIds, saveToLocal = true }) {
+  const preparedMeeting = await prepareMeetingForExport(meeting);
+  const fileResult = await exportMeetingDocument({ format, meeting: preparedMeeting });
+  const caption = buildMeetingExportCaption(preparedMeeting);
+  let localCopy = null;
+  let localSaveError = null;
+
+  if (saveToLocal) {
+    try {
+      localCopy = await saveMeetingDocumentToLocalLibrary(fileResult);
+    } catch (error) {
+      localSaveError = error instanceof Error ? error.message : String(error);
+    }
+  }
+
+  const { targets, skipped } = collectMeetingDeliveryPlatforms(platformIds);
+  const sentPlatforms = [];
+  const failedPlatforms = [];
+
+  for (const platformId of targets) {
+    if (!isPlatformRunning(platformId)) {
+      failedPlatforms.push({ platformId, error: "平台未连接，无法发送文件" });
+      continue;
+    }
+
+    try {
+      await sendFileToPlatform(platformId, null, {
+        filePath: localCopy?.filePath || fileResult.filePath,
+        fileName: fileResult.fileName,
+        caption,
+      });
+      sentPlatforms.push(platformId);
+    } catch (error) {
+      failedPlatforms.push({
+        platformId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  const ok = Boolean(localCopy?.filePath) || sentPlatforms.length > 0;
+  const messageParts = [];
+
+  if (localCopy?.filePath) {
+    messageParts.push(`已保存到本地：${localCopy.filePath}`);
+  } else if (localSaveError) {
+    messageParts.push(`本地保存失败：${localSaveError}`);
+  }
+
+  if (sentPlatforms.length > 0) {
+    messageParts.push(`已发送到：${sentPlatforms.join(" / ")}`);
+  } else if (!localCopy?.filePath) {
+    messageParts.push("没有可用的绑定通信平台用于发送会议文件");
+  }
+
+  return {
+    ok,
+    fileResult,
+    localCopy,
+    localSaveError,
+    sentPlatforms,
+    failedPlatforms,
+    skippedPlatforms: skipped,
+    message: messageParts.join("；") || "会议结论已生成",
+  };
+}
+
+function normalizeMeetingAbortReason(reason) {
+  const resolved = typeof reason === "string"
+    ? reason.trim()
+    : (reason instanceof Error ? String(reason.message || "").trim() : "");
+  return resolved || "用户已中止当前会议。";
+}
+
+function createMeetingAbortError(reason) {
+  const error = new Error(normalizeMeetingAbortReason(reason));
+  error.name = "MeetingAbortError";
+  return error;
+}
+
+function isMeetingAbortError(error) {
+  const name = error instanceof Error ? error.name : "";
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  return name === "MeetingAbortError"
+    || name === "AbortError"
+    || name === "APIUserAbortError"
+    || /aborted|aborterror|cancelled|canceled|中止|停止/i.test(message);
+}
+
+function throwIfMeetingCancelled(signal) {
+  if (signal?.aborted) {
+    throw createMeetingAbortError(signal.reason);
+  }
+}
+
+let activeMeetingRun = null;
+
+function requestMeetingCancellation(reason) {
+  if (!activeMeetingRun) return false;
+  const controller = activeMeetingRun.controller;
+  if (!controller || controller.signal.aborted) return true;
+  const normalizedReason = normalizeMeetingAbortReason(reason);
+  try {
+    controller.abort(normalizedReason);
+  } catch {
+    try {
+      controller.abort();
+    } catch {
+      // Ignore best-effort abort failures.
+    }
+  }
+  return true;
+}
+
+async function meeting(
+  topic,
+  participants = MEETING_DEBATE_PARTICIPANTS,
+  options = {},
+) {
+  const meetingId = options.meetingId ?? randomUUID();
+  const signal = options.signal;
+  const defaultParticipants = MEETING_DEBATE_PARTICIPANTS;
+  const activeParticipants = Array.from(
+    new Set(
+      (participants.length > 0 ? participants : defaultParticipants)
+        .map((agentId) => String(agentId || "").trim())
+        .filter((agentId) => AGENT_IDS.includes(agentId) && agentId !== "orchestrator"),
+    ),
+  );
+  if (activeParticipants.length === 0) {
+    activeParticipants.push(...defaultParticipants);
+  }
+  const participantStanceList = activeParticipants
+    .map((agentId) => {
+      const stance = MEETING_ROLE_STANCES[agentId];
+      const temperament = MEETING_AGENT_TEMPERAMENTS[agentId];
+      return `- ${AGENT_DISPLAY[agentId] || agentId}（${stance?.title || "参会成员"}）：${stance?.brief || "从自己的专业岗位发言。"} ${temperament?.temperament || ""}`;
+    })
+    .join("\n");
+  const meetingStyleGuide = [
+    "会议风格：像真人开会，不像提交作业；可以打断感、回怼感、补刀感，但要保持专业判断。",
+    "允许自然使用 emoji；必要时可补一行 [MEME|...] 表情包文案；真的需要证据时再补 [LINK|标题|URL|它支撑什么] 或 ```chart``` 小数据板。",
+    "可以引用公开网站、行业报告、平台页面、品牌站点或产品链接来佐证，但不能把发言写成要去打开、操作或搜索网站。",
+    "如果没有把握精确数据，就写区间、趋势或在图表里明确标“估”。不要编造看起来很真的假数字。",
+    "允许点名回怼，允许轻度讽刺和呛声，但不要恶毒辱骂、歧视或低俗脏话。",
+  ].join("\n");
+  let context = [
+    `会议主题：${topic}`,
+    "主持与裁判：鹦鹉螺（中立，不参与站队，只负责追问、归纳和裁决）",
+    "参会角色与立场：",
+    participantStanceList,
+    "会议规则：必须正面交锋、明确站队，最后只能收敛出一个最佳方案。",
+    "禁止跑题到工具、程序、安装应用、执行步骤；这里只讨论策略与取舍。",
+    meetingStyleGuide,
+    "",
+  ].join("\n");
 
   function broadcastSpeech(agentId, role, text) {
     broadcast({
@@ -3695,10 +4557,12 @@ async function meeting(topic, participants = ["explorer", "writer", "performer",
   }
 
   async function runMeetingTurn(agentId, role, currentTask, prompt, complexity = "medium", maxTokens = 170) {
+    throwIfMeetingCancelled(signal);
     idleAllExcept(agentId);
     broadcast({ type: "agent_status", agentId, status: "running", currentTask });
     try {
-      const { text, tokens } = await callAgent(agentId, prompt, complexity, maxTokens, meetingId);
+      const { text, tokens } = await callMeetingAgent(agentId, prompt, complexity, maxTokens, meetingId, signal);
+      throwIfMeetingCancelled(signal);
       const cleanText = String(text || "").trim();
       if (cleanText) {
         context += `[${AGENT_DISPLAY[agentId] || agentId}/${role}]: ${cleanText}\n\n`;
@@ -3707,6 +4571,9 @@ async function meeting(topic, participants = ["explorer", "writer", "performer",
       if (tokens > 0) broadcast({ type: "cost", agentId, tokens });
       return cleanText;
     } catch (err) {
+      if (signal?.aborted || isMeetingAbortError(err)) {
+        throw createMeetingAbortError(signal?.reason ?? err);
+      }
       console.error("[meeting] turn failed:", agentId, role, err?.message || err);
       return "";
     } finally {
@@ -3714,38 +4581,97 @@ async function meeting(topic, participants = ["explorer", "writer", "performer",
     }
   }
 
-  await runMeetingTurn("orchestrator", "open", `主持会议: ${topic}`, `你是会议主持人。请用强势、直接的语气开场：点明本次会议必须解决的核心矛盾，并要求各位不要客套、直接站队、给出可执行观点。控制在60字内。会议主题：${topic}`, "low", 120);
-
-  for (const agentId of activeParticipants) {
-    await runMeetingTurn(agentId, "speak", "第一轮立场陈述", `${context}\n现在进入第一轮立场陈述。\n请你从自己的专业视角直接表态：\n1. 你的主张是什么\n2. 为什么这么做\n3. 最大收益点是什么\n要求：有态度、别圆滑、尽量具体，80-120字。`, "medium", 160);
-  }
-
-  await runMeetingTurn("orchestrator", "rebuttal", "抛出争议点", `${context}\n你是主持人。请快速总结刚才最冲突的2个分歧点，并明确点名要求大家第二轮围绕这些分歧正面交锋。控制在70字内。`, "low", 120);
-
-  for (const agentId of activeParticipants) {
-    await runMeetingTurn(agentId, "rebuttal", "第二轮交锋反驳", `${context}\n现在进入第二轮交锋。\n请你明确挑一位其他成员的观点进行反驳或修正：\n1. 你不同意哪一点\n2. 风险在哪里\n3. 你给出的替代方案是什么\n要求：语气更锋利一点，但不要做人身攻击；80-120字。`, "medium", 150);
-  }
-
-  await runMeetingTurn("orchestrator", "rebuttal", "压缩讨论焦点", `${context}\n你是主持人。请用一句话收束争论，指出现在真正要拍板的1个核心选择题，并要求所有人用最短的话给出最终投票与底线。控制在60字内。`, "low", 110);
-
-  for (const agentId of activeParticipants) {
-    await runMeetingTurn(agentId, "rebuttal", "第三轮快速表决", `${context}\n现在进入第三轮快速表决。\n请只回答三件事：\n1. 你支持的方案\n2. 你的底线\n3. 你最担心的风险\n要求：50-80字，短句，像会议里抢话发言一样干脆。`, "low", 110);
-  }
-
-  idleAllExcept("orchestrator");
-  broadcast({ type: "agent_status", agentId: "orchestrator", status: "running", currentTask: "拍板最终方案..." });
-  let summary = "";
   try {
-    const { text, tokens } = await callAgent("orchestrator", `${context}\n你是最后拍板的主管。\n请输出更丰富但节奏快的会议结论，按下面结构给出：\n一、最终决策\n二、采纳了谁的关键观点\n三、否决了谁的观点及原因\n四、接下来3条执行动作\n要求：明确、像真正在定方案，不要温吞，不超过280字。`, "medium", 260, meetingId);
-    summary = text;
-    broadcastSpeech("orchestrator", "summary", text);
-    if (tokens > 0) broadcast({ type: "cost", agentId: "orchestrator", tokens });
-  } catch (err) {
-    summary = "会议总结生成失败，请重试。";
+    throwIfMeetingCancelled(signal);
+      await runMeetingTurn(
+        "orchestrator",
+        "open",
+        `主持会议: ${topic}`,
+        `你是会议主持人。请像高压评审会一开场那样，先把这次必须拍板的核心选择题钉死，再明确要求五位业务角色全部站队、互相拆台、拿证据说话。你自己保持中立主持。控制在80字内。会议主题：${topic}`,
+        "low",
+        120,
+      );
+
+      for (const agentId of activeParticipants) {
+      await runMeetingTurn(
+          agentId,
+          "speak",
+          "第一轮立场陈述",
+          `${context}\n现在进入第一轮立场陈述。\n请你像真人会上抢第一句话那样直接站队：说清你主推哪个方案、你最看不起哪个方向，以及你为什么觉得它会赢。不要照着“1/2/3”念稿，可以短句、反问、补刀，允许自然带一点情绪和 0-2 个 emoji。真的需要时再补 1 个 [LINK|...] 或一个 \`\`\`chart\`\`\` 小数据板，别为了格式硬凑。控制在120-240字。`,
+          "medium",
+          320,
+        );
+      }
+
+      await runMeetingTurn(
+        "orchestrator",
+        "rebuttal",
+        "抛出争议点",
+        `${context}\n你是主持人。请快速总结现在最尖锐的 2 个冲突点，并直接点名最该正面硬碰的成员。要求语气强硬，逼他们第二轮别兜圈子、别装客气、别逃去讲执行动作。控制在90字内。`,
+        "low",
+        120,
+      );
+
+    for (const agentId of activeParticipants) {
+      await runMeetingTurn(
+          agentId,
+          "rebuttal",
+          "第二轮交锋反驳",
+          `${context}\n现在进入第二轮交锋。\n你必须点名至少一位其他成员回怼，最好直接叫名字。把对方最不靠谱的一点撕开讲透，说清楚那会带来什么现实风险，再把你自己的替代判断压上去。允许轻度呛声、吐槽、阴阳怪气一点，但别恶毒脏话。真的需要时可补 1 个 [LINK|...]、\`\`\`chart\`\`\` 或 [MEME|...]，前提是它能补刀，不是为了装饰。控制在130-260字。`,
+          "medium",
+          340,
+        );
+      }
+
+      await runMeetingTurn(
+        "orchestrator",
+        "rebuttal",
+        "压测候选方案",
+        `${context}\n你是主持人。请指出现在最像样的候选方案以及它最大的漏洞，再逼所有人第三轮只回答最终站队、可接受妥协和绝不能踩的底线。强调这是表决，不是继续绕到执行澄清。控制在90字内。`,
+        "low",
+        120,
+      );
+
+    for (const agentId of activeParticipants) {
+      await runMeetingTurn(
+          agentId,
+          "rebuttal",
+          "第三轮拍板表决",
+          `${context}\n现在进入第三轮拍板表决。\n别再铺垫，直接给出你的最终站队、你愿意吞下的妥协，以及你绝不能退的底线。语言要像拍桌定案，可以带一点情绪，但别再写成长篇报告。若前两轮已经放过证据，这一轮就别再硬塞链接。控制在90-170字。`,
+          "low",
+          220,
+        );
+      }
+
+    throwIfMeetingCancelled(signal);
+    idleAllExcept("orchestrator");
+      broadcast({ type: "agent_status", agentId: "orchestrator", status: "running", currentTask: "拍板最终方案..." });
+      let summary = "";
+      try {
+      const { text, tokens } = await callMeetingAgent(
+        "orchestrator",
+        `${context}\n你是最后拍板的中立裁判。\n请基于五位业务角色刚才的辩论内容，输出一个真正“拍板”的会议结论，必须按下面结构给出：\n一、最佳方案\n二、为什么它胜出\n三、被否决的替代方案与原因\n四、接下来 3 条执行动作\n五、建议谁主责推进\n要求：必须只保留一个最佳方案，不能平均照顾；可以保留一点主持人裁决口吻，但不要写成聊天记录；不要提工具、程序或要求用户补充执行目标；措辞明确，不要温吞，不超过520字。`,
+        "medium",
+        560,
+        meetingId,
+          signal,
+        );
+      throwIfMeetingCancelled(signal);
+      summary = text;
+      broadcastSpeech("orchestrator", "summary", text);
+      if (tokens > 0) broadcast({ type: "cost", agentId: "orchestrator", tokens });
+    } catch (err) {
+      if (signal?.aborted || isMeetingAbortError(err)) {
+        throw createMeetingAbortError(signal?.reason ?? err);
+      }
+      summary = "会议总结生成失败，请重试。";
+    } finally {
+      broadcast({ type: "agent_status", agentId: "orchestrator", status: "idle" });
+    }
+    return summary;
+  } finally {
+    idleAllExcept(null);
   }
-  broadcast({ type: "agent_status", agentId: "orchestrator", status: "idle" });
-  idleAllExcept(null);
-  return summary;
 }
 
 function normalizePlatformInboundMessage(messageOrUserId, text, platformId) {
@@ -3785,6 +4711,7 @@ async function handlePlatformMessage(messageOrUserId, text, platformId) {
       lastEventAt: inboundTimestamp,
       lastInboundAt: inboundTimestamp,
       lastInboundMessageKey: inboundMessageKey,
+      lastInboundTarget: userId,
       accountLabel: summarizePlatformAccount(inboundPlatformId, settings.platformConfigs?.[inboundPlatformId]?.fields ?? {}),
     });
     return;
@@ -3802,6 +4729,7 @@ async function handlePlatformMessage(messageOrUserId, text, platformId) {
     lastEventAt: inboundTimestamp,
     lastInboundAt: inboundTimestamp,
     lastInboundMessageKey: inboundMessageKey,
+    lastInboundTarget: userId,
     accountLabel: summarizePlatformAccount(inboundPlatformId, settings.platformConfigs?.[inboundPlatformId]?.fields ?? {}),
   });
   broadcastChannelEvent({
@@ -3923,9 +4851,12 @@ const httpServer = createServer(async (req, res) => {
   }
 
   if (req.method === "GET" && url.pathname === "/api/settings") {
-    writeJson(res, 200, settings);
-    return;
-  }
+      writeJson(res, 200, {
+        ...settings,
+        agentConfigs: normalizeAgentConfigs(settings.agentConfigs, settings.agentConfigs),
+      });
+      return;
+    }
 
   if (req.method === "GET" && url.pathname === "/api/desktop-runtime") {
     writeJson(res, 200, getDesktopRuntimeSummary());
@@ -4099,22 +5030,29 @@ const httpServer = createServer(async (req, res) => {
         const fallbackAction = String(body?.action || "").trim();
         const lastAction = settings.platformConfigs?.[platformId]?.lastDebugAction;
         const effectiveAction = fallbackAction === "replay_last_debug" ? lastAction : fallbackAction;
+        const resolvedTarget =
+          resolvePlatformDebugTarget(platformId, body?.targetId)
+          || String(body?.targetId || "").trim()
+          || undefined;
+        const displayFailureMessage = humanizePlatformDebugFailure(platformId, failureMessage, resolvedTarget);
         rememberPlatformDebug(
           platformId,
           {
             action: effectiveAction || "diagnose",
             ok: false,
             status: "failed",
-            target: resolvePlatformDebugTarget(platformId, body?.targetId) || String(body?.targetId || "").trim() || undefined,
-            message: failureMessage,
+            target: resolvedTarget,
+            message: displayFailureMessage,
             at: Date.now(),
           },
           {
             status: settings.platformConfigs?.[platformId]?.status ?? "degraded",
-            errorMsg: failureMessage,
-            detail: `联调动作失败：${failureMessage}`,
+            errorMsg: displayFailureMessage,
+            detail: `联调动作失败：${displayFailureMessage}`,
           },
         );
+        writeJson(res, 500, { ok: false, error: displayFailureMessage });
+        return;
       }
       writeJson(res, 500, { ok: false, error: failureMessage });
     }
@@ -4125,12 +5063,13 @@ const httpServer = createServer(async (req, res) => {
     try {
       const body = await readJson(req);
       if (body.providers) settings.providers = body.providers;
-      if (body.agentConfigs) settings.agentConfigs = body.agentConfigs;
+      if (body.agentConfigs) settings.agentConfigs = normalizeAgentConfigs(body.agentConfigs, settings.agentConfigs);
       if (body.platformConfigs) settings.platformConfigs = mergePlatformConfigs(body.platformConfigs);
       if (body.userNickname !== undefined) settings.userNickname = body.userNickname;
       if (body.semanticMemoryConfig) settings.semanticMemoryConfig = body.semanticMemoryConfig;
       if (body.desktopProgramSettings) settings.desktopProgramSettings = body.desktopProgramSettings;
       if (body.hermesDispatchSettings) settings.hermesDispatchSettings = normalizeHermesDispatchSettings(body.hermesDispatchSettings);
+      await syncRuntimeSkillDocuments();
       await persistRuntimeSettings();
       await ensureEnabledPlatformsRunning("settings");
       writeJson(res, 200, { ok: true });
@@ -4275,7 +5214,8 @@ const httpServer = createServer(async (req, res) => {
   if (req.method === "POST" && url.pathname === "/api/meeting/export") {
     try {
       const { format, meeting } = await readJson(req);
-      const fileResult = await exportMeetingDocument({ format, meeting });
+      const preparedMeeting = await prepareMeetingForExport(meeting);
+      const fileResult = await exportMeetingDocument({ format, meeting: preparedMeeting });
       await writeFileResponse(res, fileResult);
     } catch (err) {
       writeJson(res, 400, { ok: false, error: err instanceof Error ? err.message : String(err) });
@@ -4287,14 +5227,40 @@ const httpServer = createServer(async (req, res) => {
     try {
       const { format, meeting, platformId } = await readJson(req);
       if (!platformId?.trim()) return writeJson(res, 400, { ok: false, error: "platformId 不能为空" });
-      const fileResult = await exportMeetingDocument({ format, meeting });
-      const caption = `鹦鹉螺会议结论：${meeting?.topic ?? ""}\n${String(meeting?.summary ?? "").slice(0, 1800)}`;
+      const preparedMeeting = await prepareMeetingForExport(meeting);
+      const fileResult = await exportMeetingDocument({ format, meeting: preparedMeeting });
+      const caption = buildMeetingExportCaption(preparedMeeting);
       await sendFileToPlatform(platformId, null, {
         filePath: fileResult.filePath,
         fileName: fileResult.fileName,
         caption,
       });
       writeJson(res, 200, { ok: true, message: `已发送到 ${platformId}`, fileName: fileResult.fileName });
+    } catch (err) {
+      writeJson(res, 400, { ok: false, error: err instanceof Error ? err.message : String(err) });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/meeting/deliver") {
+    try {
+      const { format, meeting, platformIds, saveToLocal } = await readJson(req);
+      const result = await deliverMeetingExportPackage({
+        format,
+        meeting,
+        platformIds,
+        saveToLocal: saveToLocal !== false,
+      });
+      writeJson(res, result.ok ? 200 : 400, {
+        ok: result.ok,
+        fileName: result.fileResult.fileName,
+        localFilePath: result.localCopy?.filePath,
+        localSaveError: result.localSaveError,
+        sentPlatforms: result.sentPlatforms,
+        failedPlatforms: result.failedPlatforms,
+        skippedPlatforms: result.skippedPlatforms,
+        message: result.message,
+      });
     } catch (err) {
       writeJson(res, 400, { ok: false, error: err instanceof Error ? err.message : String(err) });
     }
@@ -4497,14 +5463,14 @@ wss.on("connection", (ws) => {
     switch (msg.type) {
       case "settings_sync":
         if (msg.providers) settings.providers = msg.providers;
-        if (msg.agentConfigs) settings.agentConfigs = msg.agentConfigs;
+        if (msg.agentConfigs) settings.agentConfigs = normalizeAgentConfigs(msg.agentConfigs, settings.agentConfigs);
         if (msg.platformConfigs) settings.platformConfigs = mergePlatformConfigs(msg.platformConfigs);
         if (msg.userNickname !== undefined) settings.userNickname = msg.userNickname;
         if (msg.semanticMemoryConfig) settings.semanticMemoryConfig = msg.semanticMemoryConfig;
         if (msg.desktopProgramSettings) settings.desktopProgramSettings = msg.desktopProgramSettings;
         if (msg.hermesDispatchSettings) settings.hermesDispatchSettings = normalizeHermesDispatchSettings(msg.hermesDispatchSettings);
         if (msg.runtime) updateClientRuntime(ws, msg.runtime);
-        void persistRuntimeSettings();
+        void syncRuntimeSkillDocuments().then(() => persistRuntimeSettings());
         void ensureEnabledPlatformsRunning("settings_sync");
         ws.send(JSON.stringify({ type: "settings_ack" }));
         break;
@@ -4756,16 +5722,44 @@ wss.on("connection", (ws) => {
           );
         }
         break;
+      case "cancel_meeting":
+        requestMeetingCancellation(msg.reason || "用户已中止当前会议。");
+        break;
       case "new_session":
         clearAllSessions();
         ws.send(JSON.stringify({ type: "session_cleared" }));
         break;
       case "meeting":
         if (msg.topic?.trim()) {
-          meeting(msg.topic, msg.participants).then((result) => {
+          if (activeMeetingRun) {
+            break;
+          }
+
+          const meetingId = randomUUID();
+          const controller = new AbortController();
+          activeMeetingRun = {
+            meetingId,
+            controller,
+            ownerWs: ws,
+            topic: msg.topic,
+            startedAt: Date.now(),
+          };
+
+          meeting(msg.topic, msg.participants, {
+            meetingId,
+            signal: controller.signal,
+          }).then((result) => {
             ws.send(JSON.stringify({ type: "meeting_result", topic: msg.topic, result }));
           }).catch((err) => {
-            ws.send(JSON.stringify({ type: "meeting_result", topic: msg.topic, error: err.message }));
+            ws.send(JSON.stringify({
+              type: "meeting_result",
+              topic: msg.topic,
+              error: err instanceof Error ? err.message : String(err),
+            }));
+          }).finally(() => {
+            if (activeMeetingRun?.meetingId === meetingId) {
+              activeMeetingRun = null;
+            }
           });
         }
         break;
@@ -4776,12 +5770,18 @@ wss.on("connection", (ws) => {
   });
 
   ws.on("close", () => {
+    if (activeMeetingRun?.ownerWs === ws) {
+      requestMeetingCancellation("会议页面已关闭，当前会议已中止。");
+    }
     cleanupClientLaunchRequests(ws);
     removeClientRuntime(ws);
     clients.delete(ws);
   });
 
   ws.on("error", () => {
+    if (activeMeetingRun?.ownerWs === ws) {
+      requestMeetingCancellation("会议连接异常断开，当前会议已中止。");
+    }
     cleanupClientLaunchRequests(ws);
     removeClientRuntime(ws);
     clients.delete(ws);
@@ -4790,6 +5790,9 @@ wss.on("connection", (ws) => {
 
 async function startServer() {
   await restoreRuntimeSettings();
+  settings.agentConfigs = normalizeAgentConfigs(settings.agentConfigs, settings.agentConfigs);
+  await syncRuntimeSkillDocuments();
+  await persistRuntimeSettings();
   await ensureEnabledPlatformsRunning("restore");
   httpServer.listen(PORT, () => {
     console.log(`[ws-server] listening on ws://localhost:${PORT}`);

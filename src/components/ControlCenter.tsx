@@ -610,16 +610,12 @@ function WorkspacePreferences() {
         <div className="control-center__theme-list">
           {([
             {
+              id: "light",
+              label: pickLocaleText(locale, { "zh-CN": "浅色", "zh-TW": "淺色", en: "Light", ja: "ライト" }),
+            },
+            {
               id: "dark",
-              label: pickLocaleText(locale, { "zh-CN": "深海", "zh-TW": "深海", en: "Deep Sea", ja: "深海" }),
-            },
-            {
-              id: "coral",
-              label: pickLocaleText(locale, { "zh-CN": "珊瑚", "zh-TW": "珊瑚", en: "Coral", ja: "コーラル" }),
-            },
-            {
-              id: "jade",
-              label: pickLocaleText(locale, { "zh-CN": "玉石", "zh-TW": "玉石", en: "Jade", ja: "ジェイド" }),
+              label: pickLocaleText(locale, { "zh-CN": "深色", "zh-TW": "深色", en: "Dark", ja: "ダーク" }),
             },
           ] as const).map(option => (
             <button

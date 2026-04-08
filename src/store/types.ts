@@ -114,6 +114,8 @@ export interface ExecutionEvent {
   detail?: string;
   agentId?: AgentId;
   taskId?: string;
+  matchedSkillIds?: string[];
+  createdSkillIds?: string[];
 }
 
 export interface ExecutionRun {
@@ -925,6 +927,7 @@ export interface PlatformConfig {
   lastEventAt?: number;
   lastInboundAt?: number;
   lastInboundMessageKey?: string;
+  lastInboundTarget?: string;
   lastOutboundSuccessAt?: number;
   lastOutboundFailureAt?: number;
   outboundRetryCount?: number;

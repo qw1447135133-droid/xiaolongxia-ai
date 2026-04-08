@@ -1,0 +1,601 @@
+{
+  "agentId": "writer",
+  "updatedAt": "2026-04-08T12:51:15.968Z",
+  "totalSkills": 33,
+  "skills": [
+    {
+      "id": "frontend",
+      "category": "automation",
+      "sourceType": "built-in",
+      "sourceLabel": "Built-in Skill",
+      "recommended": false,
+      "tags": [
+        "ui",
+        "electron",
+        "react",
+        "frontend"
+      ],
+      "name": "前端开发",
+      "short": "页面、组件、交互与样式实现。",
+      "description": "负责界面搭建、布局调整、样式统一和交互细节补完，适合桌面工作台、聊天页和控制台类任务。",
+      "dispatch": "当任务包含页面、组件、布局、样式、前端修复或 Electron 交互时自动优先命中。",
+      "outputs": "React 组件、页面布局、样式更新和可交付前端代码。"
+    },
+    {
+      "id": "doc_word",
+      "category": "documents",
+      "sourceType": "built-in",
+      "sourceLabel": "Built-in Skill",
+      "recommended": true,
+      "tags": [
+        "word",
+        "report",
+        "proposal",
+        "sop"
+      ],
+      "name": "Word 文档",
+      "short": "方案、报告、说明与正式文档。",
+      "description": "用于输出正式说明书、SOP、方案书、复盘报告和对外交付文档。",
+      "dispatch": "当任务目标是结构化表达、正式输出或沉淀规则文档时自动命中。",
+      "outputs": "结构化文档内容、段落草稿、清单和正式文书。"
+    },
+    {
+      "id": "doc_ppt",
+      "category": "documents",
+      "sourceType": "built-in",
+      "sourceLabel": "Built-in Skill",
+      "recommended": true,
+      "tags": [
+        "ppt",
+        "presentation",
+        "deck",
+        "pitch"
+      ],
+      "name": "PPT 演示",
+      "short": "汇报、路演与对外演示材料。",
+      "description": "用于整理汇报逻辑、销售演示、产品介绍和路演类幻灯片内容。",
+      "dispatch": "当任务涉及汇报结构、讲解顺序、页面大纲或演示材料时自动启用。",
+      "outputs": "页级结构、标题层级、讲稿要点和演示文案。"
+    },
+    {
+      "id": "doc_excel",
+      "category": "documents",
+      "sourceType": "built-in",
+      "sourceLabel": "Built-in Skill",
+      "recommended": true,
+      "tags": [
+        "excel",
+        "spreadsheet",
+        "ledger",
+        "tracking"
+      ],
+      "name": "Excel 表格",
+      "short": "台账、统计、公式与表格整理。",
+      "description": "用于清单台账、结构化数据整理、执行追踪和统计口径输出。",
+      "dispatch": "当任务更偏结构化信息处理、字段设计、统计整理或数据回填时自动命中。",
+      "outputs": "字段结构、列设计、公式逻辑和表格结果。"
+    },
+    {
+      "id": "screenshot",
+      "category": "visual",
+      "sourceType": "built-in",
+      "sourceLabel": "Built-in Skill",
+      "recommended": false,
+      "tags": [
+        "screenshot",
+        "evidence",
+        "desktop",
+        "qa"
+      ],
+      "name": "截图处理",
+      "short": "界面留档、证据采集与问题说明。",
+      "description": "用于保存界面证据、定位异常、记录桌面接管结果和补充操作说明。",
+      "dispatch": "当任务需要看到当前界面、保留证据或验证桌面步骤时自动优先命中。",
+      "outputs": "截图、证据摘要、问题定位说明和步骤记录。"
+    },
+    {
+      "id": "image_edit",
+      "category": "visual",
+      "sourceType": "built-in",
+      "sourceLabel": "Built-in Skill",
+      "recommended": true,
+      "tags": [
+        "image",
+        "asset",
+        "annotation",
+        "creative"
+      ],
+      "name": "图片修改",
+      "short": "裁剪、标注、替换与素材优化。",
+      "description": "用于现有图片的裁剪、替换、注释和轻量视觉修补，适合运营素材与界面说明。",
+      "dispatch": "当任务涉及素材修整、图片替换、说明标注或轻量设计改动时自动命中。",
+      "outputs": "修订图片、标注版素材和图片修改说明。"
+    },
+    {
+      "id": "find_skills",
+      "category": "ops",
+      "sourceType": "local",
+      "sourceLabel": "Session Skill · Find Skills",
+      "recommended": false,
+      "tags": [
+        "skills",
+        "search",
+        "market",
+        "discovery"
+      ],
+      "name": "技能搜索",
+      "short": "搜索市场中可安装的技能。",
+      "description": "用于判断是否已有现成 skill 可复用，并把适合当前业务的能力引入到本地技能目录。",
+      "dispatch": "当任务涉及扩展能力、寻找现成工作流、补齐新能力时自动命中。",
+      "outputs": "候选 skill 清单、安装建议和来源记录。"
+    },
+    {
+      "id": "skill_creator",
+      "category": "ops",
+      "sourceType": "local",
+      "sourceLabel": "Session Skill · Skill Creator",
+      "recommended": true,
+      "tags": [
+        "skills",
+        "authoring",
+        "template",
+        "creation"
+      ],
+      "name": "技能创建",
+      "short": "为缺失能力创建新的本地技能。",
+      "description": "用于把产品里反复出现的新工作流沉淀成本地 skill，并统一加入技能目录。",
+      "dispatch": "当现成 skill 不够用、需要沉淀新流程或把业务经验做成固定能力时自动命中。",
+      "outputs": "新的 skill 目录、SKILL.md、元数据和目录同步结果。"
+    },
+    {
+      "id": "ontology",
+      "category": "governance",
+      "sourceType": "clawhub",
+      "sourceLabel": "ClawHub · ontology",
+      "recommended": false,
+      "tags": [
+        "knowledge graph",
+        "memory",
+        "entity",
+        "ontology"
+      ],
+      "name": "业务本体",
+      "short": "结构化业务实体与关系记忆。",
+      "description": "把客户、线索、工单、内容任务、渠道会话等实体和关系整理成可追踪、可查询的知识结构。",
+      "dispatch": "当任务涉及实体建模、跨对象关联、长期记忆或业务关系追踪时自动命中。",
+      "outputs": "结构化实体关系、记忆约束、可查询的数据骨架。"
+    },
+    {
+      "id": "api_gateway",
+      "category": "integration",
+      "sourceType": "clawhub",
+      "sourceLabel": "ClawHub · API Gateway",
+      "recommended": false,
+      "tags": [
+        "api",
+        "oauth",
+        "integration",
+        "connector"
+      ],
+      "name": "API 网关",
+      "short": "统一接入外部 API 与 SaaS。",
+      "description": "用于把消息平台、表单、CRM、邮件、文档和其他 SaaS 服务统一接入到数字员工平台。",
+      "dispatch": "当任务需要对接外部 API、配置 OAuth、连接 SaaS 或打通系统链路时自动命中。",
+      "outputs": "连接方案、接入配置、字段映射和联调记录。"
+    },
+    {
+      "id": "playwright_automation",
+      "category": "automation",
+      "sourceType": "clawhub",
+      "sourceLabel": "ClawHub · Playwright (Automation + MCP + Scraper)",
+      "recommended": false,
+      "tags": [
+        "browser",
+        "playwright",
+        "automation",
+        "scraping"
+      ],
+      "name": "浏览器自动化",
+      "short": "网页点击、表单、抓取与真实浏览器流程。",
+      "description": "用于在真实浏览器中完成点击、输入、抓取、截图和网页流程验证，适合客服、销售和内容运营场景。",
+      "dispatch": "当任务涉及网页操作、表单填写、站点抓取、流程复现或在线调研时自动命中。",
+      "outputs": "浏览器操作记录、页面数据、截图证据和流程结果。"
+    },
+    {
+      "id": "web_search_plus",
+      "category": "research",
+      "sourceType": "clawhub",
+      "sourceLabel": "ClawHub · Web Search Plus",
+      "recommended": true,
+      "tags": [
+        "search",
+        "research",
+        "web",
+        "news"
+      ],
+      "name": "网页搜索增强",
+      "short": "实时搜索、资料提取与多源调研。",
+      "description": "用于进行联网检索、跨站资料提取、竞品查找和问题求证，适合客服答复、销售调研和内容选题。",
+      "dispatch": "当任务需要最新资料、网页证据、多源对比或事实核实时自动命中。",
+      "outputs": "来源清单、调研摘要、关键信息和可引用链接。"
+    },
+    {
+      "id": "self_improving_agent",
+      "category": "governance",
+      "sourceType": "clawhub",
+      "sourceLabel": "ClawHub · self-improving-agent",
+      "recommended": false,
+      "tags": [
+        "improvement",
+        "reflection",
+        "memory",
+        "quality"
+      ],
+      "name": "自我改进",
+      "short": "记录错误、修正与长期改进。",
+      "description": "把失败案例、用户纠正、流程偏差和经验沉淀成可复用的改进记忆，让数字员工越跑越稳。",
+      "dispatch": "当任务涉及复盘、纠错、失败恢复、质量提升或经验沉淀时自动命中。",
+      "outputs": "改进记录、复盘摘要、注意事项和后续优化建议。"
+    },
+    {
+      "id": "market_research",
+      "category": "research",
+      "sourceType": "clawhub",
+      "sourceLabel": "ClawHub · Market Research",
+      "recommended": true,
+      "tags": [
+        "market",
+        "research",
+        "competitor",
+        "demand"
+      ],
+      "name": "市场调研",
+      "short": "竞品、定价、需求与市场判断。",
+      "description": "用于行业观察、竞品比较、市场规模判断、需求验证和销售切入点分析。",
+      "dispatch": "当任务需要做行业调研、用户需求验证、竞品比较或产品包装分析时自动命中。",
+      "outputs": "调研摘要、竞品表、判断依据和行动建议。"
+    },
+    {
+      "id": "channel_support_triage",
+      "category": "channels",
+      "sourceType": "local",
+      "sourceLabel": "Local Product Skill",
+      "recommended": false,
+      "tags": [
+        "support",
+        "triage",
+        "channel",
+        "reply"
+      ],
+      "name": "客服分流",
+      "short": "识别会话优先级、风险与回复路径。",
+      "description": "用于把渠道消息分成自动回复、待审批、人工接管和失败重试等路径，是客服值守闭环的核心技能。",
+      "dispatch": "当任务涉及渠道入站、客服问答、投诉识别、低置信度分流或人工接管时自动命中。",
+      "outputs": "会话分级、回复建议、接管结论和审计记录。"
+    },
+    {
+      "id": "sales_follow_up",
+      "category": "sales",
+      "sourceType": "local",
+      "sourceLabel": "Local Product Skill",
+      "recommended": true,
+      "tags": [
+        "sales",
+        "follow-up",
+        "lead",
+        "crm"
+      ],
+      "name": "销售跟进",
+      "short": "推进线索、跟进节奏与转化动作。",
+      "description": "用于根据线索阶段安排下一步动作、生成跟进话术、提醒回访并把销售推进变成可监督的节奏。",
+      "dispatch": "当任务涉及线索回访、成交推进、话术拟定、提醒补触达或转化节奏安排时自动命中。",
+      "outputs": "跟进文案、下一步动作、节奏建议和线索状态更新。"
+    },
+    {
+      "id": "content_planning",
+      "category": "content",
+      "sourceType": "local",
+      "sourceLabel": "Local Product Skill",
+      "recommended": true,
+      "tags": [
+        "content",
+        "calendar",
+        "planning",
+        "campaign"
+      ],
+      "name": "内容排期",
+      "short": "选题、节奏、渠道与发布时间安排。",
+      "description": "用于规划内容主题、发布节奏、目标渠道和协作节点，让内容任务从灵感变成可执行排期单。",
+      "dispatch": "当任务涉及内容选题、日历排期、发布节奏、渠道组合或活动内容计划时自动命中。",
+      "outputs": "排期表、选题清单、发布时间建议和协作提醒。"
+    },
+    {
+      "id": "content_publishing",
+      "category": "content",
+      "sourceType": "local",
+      "sourceLabel": "Local Product Skill",
+      "recommended": true,
+      "tags": [
+        "content",
+        "publish",
+        "review",
+        "distribution"
+      ],
+      "name": "内容发布",
+      "short": "定稿、审校、分发与发布回写。",
+      "description": "用于把内容草稿推进到定稿、审校、发布准备和结果回写，形成可监督的内容运营闭环。",
+      "dispatch": "当任务涉及内容定稿、发布准备、发布动作、结果回写或链接归档时自动命中。",
+      "outputs": "发布清单、审校结论、分发记录和外链归档。"
+    },
+    {
+      "id": "ticket_resolution",
+      "category": "service",
+      "sourceType": "local",
+      "sourceLabel": "Local Product Skill",
+      "recommended": true,
+      "tags": [
+        "ticket",
+        "service",
+        "resolution",
+        "support"
+      ],
+      "name": "工单处置",
+      "short": "诊断工单、安排动作并推动结案。",
+      "description": "用于识别工单优先级、整理处理步骤、生成回复建议并推进到解决或转派状态。",
+      "dispatch": "当任务涉及工单分析、服务恢复、问题解释、结案说明或转派判断时自动命中。",
+      "outputs": "工单摘要、处置方案、回复文案和结案说明。"
+    },
+    {
+      "id": "approval_guardrails",
+      "category": "governance",
+      "sourceType": "local",
+      "sourceLabel": "Local Product Skill",
+      "recommended": false,
+      "tags": [
+        "approval",
+        "risk",
+        "governance",
+        "guardrails"
+      ],
+      "name": "审批护栏",
+      "short": "识别高风险动作并停到人工边界。",
+      "description": "用于判断哪些动作必须审批、哪些内容可以自动继续，以及失败或低置信度时该如何停在人工边界。",
+      "dispatch": "当任务涉及外发、发布、转账、高风险桌面操作或越权动作判断时自动命中。",
+      "outputs": "审批结论、风险等级、阻断原因和下一步建议。"
+    },
+    {
+      "id": "desktop_takeover",
+      "category": "automation",
+      "sourceType": "local",
+      "sourceLabel": "Local Product Skill",
+      "recommended": false,
+      "tags": [
+        "desktop",
+        "takeover",
+        "mouse",
+        "keyboard"
+      ],
+      "name": "桌面接管",
+      "short": "截图、定位、点击与人工续跑。",
+      "description": "用于在代码接口不够时切换到桌面交互模式，通过截图识别、鼠标键盘操作和人工接管实现任务续跑。",
+      "dispatch": "当任务涉及桌面应用、鼠标键盘模拟、截图定位、验证码边界或人工接管恢复时自动命中。",
+      "outputs": "桌面动作记录、截图证据、定位结果和恢复建议。"
+    },
+    {
+      "id": "local_app_operator",
+      "category": "automation",
+      "sourceType": "local",
+      "sourceLabel": "Local Product Skill",
+      "recommended": false,
+      "tags": [
+        "desktop",
+        "app",
+        "launcher",
+        "whitelist"
+      ],
+      "name": "本机程序操作",
+      "short": "扫描、白名单、收藏与程序调用。",
+      "description": "用于管理本机程序扫描结果、白名单策略、收藏应用和桌面任务所需的程序调用入口。",
+      "dispatch": "当任务涉及本机程序搜索、白名单判断、程序路径选择或启动目标应用时自动命中。",
+      "outputs": "程序候选、白名单变更、调用目标和操作记录。"
+    },
+    {
+      "id": "knowledge_maintenance",
+      "category": "ops",
+      "sourceType": "local",
+      "sourceLabel": "Local Product Skill",
+      "recommended": true,
+      "tags": [
+        "knowledge",
+        "faq",
+        "memory",
+        "rules"
+      ],
+      "name": "知识维护",
+      "short": "FAQ、规则、记忆与上下文更新。",
+      "description": "用于维护客服 FAQ、项目规则、禁忌事项和上下文记忆，确保自动回复和执行行为持续对齐。",
+      "dispatch": "当任务涉及 FAQ 整理、知识更新、规则变更、上下文补充或记忆修订时自动命中。",
+      "outputs": "知识条目、规则摘要、回复模板和更新记录。"
+    },
+    {
+      "id": "workflow_restage",
+      "category": "automation",
+      "sourceType": "local",
+      "sourceLabel": "Local Product Skill",
+      "recommended": true,
+      "tags": [
+        "workflow",
+        "restage",
+        "resume",
+        "execution"
+      ],
+      "name": "流程续跑",
+      "short": "从失败、阻断或人工接管点继续执行。",
+      "description": "用于把失败执行、阻断节点或人工接管后的上下文重新整理成可续跑的 workflow 或聊天任务。",
+      "dispatch": "当任务涉及执行恢复、失败重试、流程续跑、回到聊天接管或 restage 时自动命中。",
+      "outputs": "恢复上下文、续跑指令、下一阶段动作和重试建议。"
+    },
+    {
+      "id": "remote_supervision",
+      "category": "governance",
+      "sourceType": "local",
+      "sourceLabel": "Local Product Skill",
+      "recommended": false,
+      "tags": [
+        "remote",
+        "supervision",
+        "ops",
+        "monitoring"
+      ],
+      "name": "远程监督",
+      "short": "值守看板、缺口判断与人工决策。",
+      "description": "用于整理远程值守面板上的待办、风险、接管和恢复入口，让人工监督能快速做出决策。",
+      "dispatch": "当任务涉及远程值守、异常提醒、人工监督、批量待办判断或值守看板整理时自动命中。",
+      "outputs": "值守摘要、优先级判断、接管建议和待办清单。"
+    },
+    {
+      "id": "quote_proposal",
+      "category": "sales",
+      "sourceType": "local",
+      "sourceLabel": "Local Product Skill",
+      "recommended": true,
+      "tags": [
+        "quote",
+        "proposal",
+        "sales",
+        "deal"
+      ],
+      "name": "报价方案",
+      "short": "生成报价逻辑、方案摘要与成交材料。",
+      "description": "用于把客户需求整理成报价说明、方案摘要、交付边界和成交型文案，支持销售推进与提案输出。",
+      "dispatch": "当任务涉及报价、方案书、服务边界、成交提案或客户定制说明时自动命中。",
+      "outputs": "报价结构、方案摘要、服务边界和提案内容。"
+    },
+    {
+      "id": "lead_enrichment",
+      "category": "sales",
+      "sourceType": "local",
+      "sourceLabel": "Local Product Skill",
+      "recommended": false,
+      "tags": [
+        "lead",
+        "research",
+        "crm",
+        "enrichment"
+      ],
+      "name": "线索补全",
+      "short": "补齐客户背景、需求线索与跟进依据。",
+      "description": "用于收集客户背景、公司信息、公开动态和需求线索，帮助销售或客服更精准地推进下一步动作。",
+      "dispatch": "当任务涉及线索背景调查、客户画像、补全跟进依据或触达前准备时自动命中。",
+      "outputs": "客户画像、补全字段、跟进依据和触达建议。"
+    },
+    {
+      "id": "customer_research",
+      "category": "research",
+      "sourceType": "local",
+      "sourceLabel": "Local Product Skill",
+      "recommended": true,
+      "tags": [
+        "customer",
+        "research",
+        "background",
+        "insight"
+      ],
+      "name": "客户调研",
+      "short": "调研客户背景、关注点与合作切入点。",
+      "description": "用于快速理解客户所在行业、业务重点、近期动态和潜在诉求，帮助客服与销售提升应对质量。",
+      "dispatch": "当任务涉及客户背景研究、访前准备、客户分析或合作切入点梳理时自动命中。",
+      "outputs": "客户摘要、关键关注点、背景资料和切入建议。"
+    },
+    {
+      "id": "meeting_briefing",
+      "category": "documents",
+      "sourceType": "local",
+      "sourceLabel": "Local Product Skill",
+      "recommended": true,
+      "tags": [
+        "meeting",
+        "brief",
+        "agenda",
+        "notes"
+      ],
+      "name": "会议准备",
+      "short": "议程、提纲、纪要框架与行动项。",
+      "description": "用于整理会议议程、重点问题、沟通提纲和纪要模板，让会议前后都更高效可追踪。",
+      "dispatch": "当任务涉及会议提纲、议程设计、纪要模板、复盘行动项或沟通准备时自动命中。",
+      "outputs": "议程、发言要点、纪要框架和行动项清单。"
+    },
+    {
+      "id": "executive_reporting",
+      "category": "documents",
+      "sourceType": "local",
+      "sourceLabel": "Local Product Skill",
+      "recommended": true,
+      "tags": [
+        "report",
+        "summary",
+        "management",
+        "dashboard"
+      ],
+      "name": "经营汇报",
+      "short": "阶段进展、问题、风险与下一步汇总。",
+      "description": "用于把客服、销售、内容、交付等运行结果整理成管理层可快速阅读的经营汇报和阶段摘要。",
+      "dispatch": "当任务涉及周报、阶段汇报、经营摘要、进展同步或管理层视角总结时自动命中。",
+      "outputs": "经营摘要、关键指标、风险事项和下一步计划。"
+    },
+    {
+      "id": "campaign_review",
+      "category": "content",
+      "sourceType": "local",
+      "sourceLabel": "Local Product Skill",
+      "recommended": true,
+      "tags": [
+        "campaign",
+        "review",
+        "content",
+        "analysis"
+      ],
+      "name": "活动复盘",
+      "short": "复盘传播、执行、反馈与改进方向。",
+      "description": "用于汇总一轮活动或内容发布后的结果、问题、反馈和下次优化方向，帮助形成稳定运营闭环。",
+      "dispatch": "当任务涉及活动复盘、内容表现分析、渠道反馈汇总或下轮优化建议时自动命中。",
+      "outputs": "复盘摘要、问题清单、亮点总结和优化动作。"
+    },
+    {
+      "id": "incident_response",
+      "category": "service",
+      "sourceType": "local",
+      "sourceLabel": "Local Product Skill",
+      "recommended": false,
+      "tags": [
+        "incident",
+        "alert",
+        "failure",
+        "response"
+      ],
+      "name": "异常响应",
+      "short": "告警判断、应对步骤与恢复沟通。",
+      "description": "用于接住运行异常、失败告警、服务中断和高风险问题，并整理应对步骤与恢复沟通口径。",
+      "dispatch": "当任务涉及异常告警、运行失败、服务中断、风险升级或恢复沟通时自动命中。",
+      "outputs": "告警摘要、应对动作、恢复话术和事件记录。"
+    },
+    {
+      "id": "crm_hygiene",
+      "category": "sales",
+      "sourceType": "local",
+      "sourceLabel": "Local Product Skill",
+      "recommended": true,
+      "tags": [
+        "crm",
+        "cleanup",
+        "sales",
+        "data"
+      ],
+      "name": "CRM 整理",
+      "short": "清理字段、同步状态与保持数据干净。",
+      "description": "用于整理客户、线索和商机字段，补齐缺失信息，统一状态口径，避免销售台账越来越乱。",
+      "dispatch": "当任务涉及 CRM 清理、字段补齐、状态对齐、重复记录整理或销售数据维护时自动命中。",
+      "outputs": "清理建议、字段更新、状态规范和数据维护记录。"
+    }
+  ]
+}

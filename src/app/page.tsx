@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactNode, type SVGProps } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ChangeEvent, type ReactNode, type SVGProps } from "react";
 import { useWebSocket, sendWs } from "@/hooks/useWebSocket";
 import { useStore } from "@/store";
 import {
@@ -18,8 +18,8 @@ import { checkAndExecuteTasks } from "@/lib/scheduled-tasks";
 import { TaskPipeline } from "@/components/TaskPipeline";
 import { ActivityPanel } from "@/components/ActivityPanel";
 import { CommandInput } from "@/components/CommandInput";
+import { ConversationComposerShell } from "@/components/ConversationComposerShell";
 import { ScheduledTasksPanel } from "@/components/ScheduledTasksPanel";
-import { MeetingRecordPanel } from "@/components/MeetingRecordPanel";
 import { AgentGrid } from "@/components/AgentGrid";
 import { WorkspaceStatusBar } from "@/components/WorkspaceStatusBar";
 import { DesktopShellBehaviors } from "@/components/DesktopShellBehaviors";
@@ -54,6 +54,7 @@ import {
 } from "@/lib/ui-locale";
 import { DEFAULT_CHAT_TITLE, sortChatSessions } from "@/lib/chat-sessions";
 import { AgentIcon, getAgentIconColor } from "@/components/AgentIcon";
+import { deliverMeetingExport, type MeetingExportFormat } from "@/lib/meeting-exports";
 
 function detectElectronRuntime() {
   if (typeof window === "undefined") return false;
@@ -86,12 +87,22 @@ function openControlCenterSection(section: ControlCenterSectionId) {
   setTab("settings");
 }
 
+const MEETING_EXPORT_FORMATS: MeetingExportFormat[] = ["docx", "xlsx", "pptx"];
+const MEETING_SCROLL_BOTTOM_THRESHOLD = 48;
+
+function getMeetingExportLabel(format: MeetingExportFormat) {
+  if (format === "xlsx") return "Excel";
+  if (format === "pptx") return "PPT";
+  return "Word";
+}
+
 export default function App() {
   useWebSocket();
   const [isClientReady, setIsClientReady] = useState(false);
   const runtimeTarget = useRuntimeTarget();
   const shouldRenderDesktopWorkspace = runtimeTarget === "electron";
   const locale = useStore(s => s.locale);
+  const theme = useStore(s => s.theme);
   const navItems = useMemo(() => getPrimaryNavItems(locale), [locale]);
   const uiText = useMemo(() => getUiText(locale), [locale]);
 
@@ -111,6 +122,12 @@ export default function App() {
       document.documentElement.lang = locale;
     }
   }, [locale]);
+
+  useEffect(() => {
+    if (typeof document !== "undefined") {
+      document.documentElement.setAttribute("data-theme", theme);
+    }
+  }, [theme]);
 
   useEffect(() => {
     const checkBusinessQueue = async () => {
@@ -606,7 +623,7 @@ function DesktopWorkspaceApp() {
         </aside>
 
         <main className="desktop-workspace-shell__main">
-          {activeTab !== "tasks" && activeTab !== "dispatch" && activeTab !== "settings" ? (
+          {activeTab !== "tasks" && activeTab !== "dispatch" && activeTab !== "settings" && activeTab !== "meeting" ? (
             <section className="desktop-workspace-shell__hero">
             <div>
               <div className="desktop-workspace-shell__hero-eyebrow">{activeNav.eyebrow}</div>
@@ -641,9 +658,11 @@ function DesktopWorkspaceApp() {
             </section>
           ) : null}
           {activeTab === "meeting" ? (
-            <section className="desktop-workspace-shell__content-panel">
-              <MeetingTab />
-            </section>
+            <div className="desktop-workspace-shell__chat-layout desktop-workspace-shell__chat-layout--meeting">
+              <section className="desktop-workspace-shell__chat-main desktop-workspace-shell__chat-main--meeting">
+                <MeetingTab />
+              </section>
+            </div>
           ) : null}
           {activeTab === "settings" ? (
             <section className="desktop-workspace-shell__content-panel">
@@ -1941,9 +1960,9 @@ function DesktopSidebarQuickSettings() {
     { id: "ja", label: "日" },
   ];
 
-  const themeOptions: Array<{ id: "dark" | "coral" | "jade"; label: string }> = [
+  const themeOptions: Array<{ id: "light" | "dark"; label: string }> = [
     {
-      id: "dark",
+      id: "light",
       label: pickLocaleText(locale, {
         "zh-CN": "浅色",
         "zh-TW": "淺色",
@@ -1952,21 +1971,12 @@ function DesktopSidebarQuickSettings() {
       }),
     },
     {
-      id: "coral",
+      id: "dark",
       label: pickLocaleText(locale, {
-        "zh-CN": "暖珊瑚",
-        "zh-TW": "暖珊瑚",
-        en: "Coral",
-        ja: "コーラル",
-      }),
-    },
-    {
-      id: "jade",
-      label: pickLocaleText(locale, {
-        "zh-CN": "翡翠",
-        "zh-TW": "翡翠",
-        en: "Jade",
-        ja: "ジェイド",
+        "zh-CN": "深色",
+        "zh-TW": "深色",
+        en: "Dark",
+        ja: "ダーク",
       }),
     },
   ];
@@ -2587,25 +2597,460 @@ function formatMeetingFileSize(size: number) {
   return `${(size / (1024 * 1024 * 1024)).toFixed(1)} GB`;
 }
 
+const MEETING_URL_PATTERN = /((?:https?:\/\/|www\.)[^\s<]+)/gi;
+const MEETING_CODE_BLOCK_PATTERN = /```([\w-]+)?\n?([\s\S]*?)```/g;
+
+function normalizeMeetingHref(rawUrl: string) {
+  const trimmed = rawUrl.trim();
+  if (!trimmed) return "";
+  return /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+}
+
+function renderMeetingInlineText(text: string, keyPrefix: string) {
+  const nodes: ReactNode[] = [];
+  let lastIndex = 0;
+  let matchIndex = 0;
+  MEETING_URL_PATTERN.lastIndex = 0;
+
+  for (const match of text.matchAll(MEETING_URL_PATTERN)) {
+    const rawUrl = match[0] ?? "";
+    const start = match.index ?? 0;
+    if (start > lastIndex) {
+      nodes.push(text.slice(lastIndex, start));
+    }
+    nodes.push(
+      <a
+        key={`${keyPrefix}-link-${matchIndex}`}
+        className="meeting-rich-content__link"
+        href={normalizeMeetingHref(rawUrl)}
+        target="_blank"
+        rel="noreferrer noopener"
+      >
+        {rawUrl}
+      </a>,
+    );
+    lastIndex = start + rawUrl.length;
+    matchIndex += 1;
+  }
+
+  if (lastIndex < text.length) {
+    nodes.push(text.slice(lastIndex));
+  }
+
+  return nodes.length > 0 ? nodes : [text];
+}
+
+function parseMeetingTagBlock(text: string) {
+  const trimmed = text.trim();
+  if (!trimmed.startsWith("[") || !trimmed.endsWith("]")) return null;
+
+  const body = trimmed.slice(1, -1);
+  const parts = body.split("|").map(part => part.trim());
+  const tag = String(parts[0] || "").toUpperCase();
+
+  if (tag === "MEME" && parts[1]) {
+    return {
+      type: "meme" as const,
+      title: parts[1],
+      note: parts.slice(2).join(" | "),
+    };
+  }
+
+  if (tag === "LINK" && parts[1] && parts[2]) {
+    return {
+      type: "link" as const,
+      title: parts[1],
+      url: parts[2],
+      note: parts.slice(3).join(" | "),
+    };
+  }
+
+  if (tag === "IMAGE" && parts[1] && parts[2]) {
+    return {
+      type: "image" as const,
+      title: parts[1],
+      url: parts[2],
+      note: parts.slice(3).join(" | "),
+    };
+  }
+
+  return null;
+}
+
+function renderMeetingTextBlock(text: string, keyPrefix: string) {
+  const tagBlock = parseMeetingTagBlock(text);
+  if (tagBlock?.type === "meme") {
+    return (
+      <div key={keyPrefix} className="meeting-rich-content__card meeting-rich-content__card--meme">
+        <div className="meeting-rich-content__eyebrow">Reaction Meme</div>
+        <div className="meeting-rich-content__meme-copy">{tagBlock.title}</div>
+        {tagBlock.note ? (
+          <div className="meeting-rich-content__note">{renderMeetingInlineText(tagBlock.note, `${keyPrefix}-note`)}</div>
+        ) : null}
+      </div>
+    );
+  }
+
+  if (tagBlock?.type === "link") {
+    const href = normalizeMeetingHref(tagBlock.url);
+    return (
+      <div key={keyPrefix} className="meeting-rich-content__card meeting-rich-content__card--evidence">
+        <div className="meeting-rich-content__eyebrow">Evidence Link</div>
+        <a
+          className="meeting-rich-content__evidence-title"
+          href={href}
+          target="_blank"
+          rel="noreferrer noopener"
+        >
+          {tagBlock.title}
+        </a>
+        <a
+          className="meeting-rich-content__evidence-url"
+          href={href}
+          target="_blank"
+          rel="noreferrer noopener"
+        >
+          {tagBlock.url}
+        </a>
+        {tagBlock.note ? (
+          <div className="meeting-rich-content__note">{renderMeetingInlineText(tagBlock.note, `${keyPrefix}-note`)}</div>
+        ) : null}
+      </div>
+    );
+  }
+
+  if (tagBlock?.type === "image") {
+    const href = normalizeMeetingHref(tagBlock.url);
+    return (
+      <div key={keyPrefix} className="meeting-rich-content__card meeting-rich-content__card--image">
+        <div className="meeting-rich-content__eyebrow">Image Evidence</div>
+        <div className="meeting-rich-content__image-wrap">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            className="meeting-rich-content__image"
+            src={href}
+            alt={tagBlock.title}
+            loading="lazy"
+            referrerPolicy="no-referrer"
+          />
+        </div>
+        <a
+          className="meeting-rich-content__evidence-title"
+          href={href}
+          target="_blank"
+          rel="noreferrer noopener"
+        >
+          {tagBlock.title}
+        </a>
+        {tagBlock.note ? (
+          <div className="meeting-rich-content__note">{renderMeetingInlineText(tagBlock.note, `${keyPrefix}-note`)}</div>
+        ) : null}
+      </div>
+    );
+  }
+
+  return (
+    <p key={keyPrefix} className="meeting-rich-content__paragraph">
+      {renderMeetingInlineText(text, keyPrefix)}
+    </p>
+  );
+}
+
+function parseMeetingTable(body: string) {
+  const lines = body
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(Boolean);
+
+  if (lines.length < 2) return null;
+
+  const rows = lines
+    .map((line) => {
+      const normalized = line.replace(/^\|/, "").replace(/\|$/, "");
+      return normalized.split("|").map(cell => cell.trim());
+    })
+    .filter(row => row.length > 1);
+
+  if (rows.length < 2) return null;
+
+  const separatorRowIndex = rows.findIndex(
+    row => row.every(cell => /^:?-{3,}:?$/.test(cell)),
+  );
+
+  if (separatorRowIndex === -1 || separatorRowIndex === 0) return null;
+
+  const header = rows[separatorRowIndex - 1];
+  const bodyRows = rows.slice(separatorRowIndex + 1).filter(row => row.length > 0);
+  if (header.length === 0 || bodyRows.length === 0) return null;
+
+  return { header, rows: bodyRows };
+}
+
+function appendMeetingParagraphs(text: string, target: ReactNode[], keyPrefix: string) {
+  text
+    .split(/\n{2,}/)
+    .map(block => block.trim())
+    .filter(Boolean)
+    .forEach((block, index) => {
+      target.push(renderMeetingTextBlock(block, `${keyPrefix}-${index}`));
+    });
+}
+
+function MeetingSpeechContent({ text }: { text: string }) {
+  const content = String(text || "").replace(/\r\n/g, "\n").trim();
+  if (!content) return null;
+
+  const blocks: ReactNode[] = [];
+  let cursor = 0;
+  let matchCount = 0;
+  MEETING_CODE_BLOCK_PATTERN.lastIndex = 0;
+
+  for (const match of content.matchAll(MEETING_CODE_BLOCK_PATTERN)) {
+    const fullMatch = match[0] ?? "";
+    const language = String(match[1] || "").trim().toLowerCase();
+    const body = String(match[2] || "").trim();
+    const start = match.index ?? 0;
+
+    if (start > cursor) {
+      appendMeetingParagraphs(content.slice(cursor, start), blocks, `text-${matchCount}`);
+    }
+
+    if (body) {
+      const isChart = language === "chart" || language === "data" || language === "evidence";
+      const table = language === "table" ? parseMeetingTable(body) : parseMeetingTable(body);
+      if (table) {
+        blocks.push(
+          <div key={`code-${matchCount}`} className="meeting-rich-content__card meeting-rich-content__card--table">
+            <div className="meeting-rich-content__eyebrow">Decision Table</div>
+            <div className="meeting-rich-content__table-wrap">
+              <table className="meeting-rich-content__table">
+                <thead>
+                  <tr>
+                    {table.header.map((cell, index) => (
+                      <th key={`header-${matchCount}-${index}`}>{cell}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {table.rows.map((row, rowIndex) => (
+                    <tr key={`row-${matchCount}-${rowIndex}`}>
+                      {row.map((cell, cellIndex) => (
+                        <td key={`cell-${matchCount}-${rowIndex}-${cellIndex}`}>{cell}</td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>,
+        );
+        cursor = start + fullMatch.length;
+        matchCount += 1;
+        continue;
+      }
+
+      blocks.push(
+        <div
+          key={`code-${matchCount}`}
+          className={`meeting-rich-content__card ${isChart ? "meeting-rich-content__card--chart" : "meeting-rich-content__card--code"}`}
+        >
+          <div className="meeting-rich-content__eyebrow">
+            {isChart ? "Data Board" : (language || "Code Block").toUpperCase()}
+          </div>
+          <pre className="meeting-rich-content__pre">{body}</pre>
+        </div>,
+      );
+    }
+
+    cursor = start + fullMatch.length;
+    matchCount += 1;
+  }
+
+  if (cursor < content.length) {
+    appendMeetingParagraphs(content.slice(cursor), blocks, `tail-${matchCount}`);
+  }
+
+  return <div className="meeting-rich-content">{blocks}</div>;
+}
+
 function MeetingTab() {
   const locale = useStore(s => s.locale);
-  const [topic, setTopic] = useState("");
+  const theme = useStore(s => s.theme);
   const [attachments, setAttachments] = useState<MeetingAttachmentItem[]>([]);
-  const { wsStatus, meetingSpeeches, meetingActive, clearMeeting, setMeetingActive, setMeetingTopic } = useStore();
+  const meetingHistory = useStore(s => s.meetingHistory);
+  const latestMeetingRecord = useStore(s => s.latestMeetingRecord);
+  const { wsStatus, meetingSpeeches, meetingActive, meetingTopic: topic, clearMeeting, setMeetingActive, setMeetingTopic } = useStore();
   const scrollRef = useRef<HTMLDivElement>(null);
+  const meetingAutoScrollRef = useRef(true);
+  const previousMeetingSpeechCountRef = useRef(0);
+  const previousMeetingHistoryIdRef = useRef<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const historyDropdownRef = useRef<HTMLDivElement | null>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [selectedHistoryId, setSelectedHistoryId] = useState<string | null>(null);
+  const [autoExportEnabled, setAutoExportEnabled] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false;
+    return window.localStorage.getItem("meeting:auto-export-enabled") === "1";
+  });
+  const [meetingExportFormat, setMeetingExportFormat] = useState<MeetingExportFormat>(() => {
+    if (typeof window === "undefined") return "docx";
+    const saved = window.localStorage.getItem("meeting:export-format");
+    return saved === "docx" || saved === "xlsx" || saved === "pptx" ? saved : "docx";
+  });
+  const [abortPending, setAbortPending] = useState(false);
+  const [exportBusy, setExportBusy] = useState(false);
+  const [exportStatus, setExportStatus] = useState<{
+    tone: "neutral" | "success" | "warning" | "error";
+    text: string;
+  } | null>(null);
+  const autoDeliveredMeetingIdRef = useRef<string | null>(latestMeetingRecord?.id ?? null);
+
+  const selectedHistoryRecord = useMemo(
+    () => meetingHistory.find(record => record.id === selectedHistoryId) ?? null,
+    [meetingHistory, selectedHistoryId],
+  );
+  const exportableMeetingRecord = selectedHistoryRecord ?? latestMeetingRecord;
+  const visibleSpeeches = selectedHistoryRecord?.speeches ?? meetingSpeeches;
+  const activeMeetingLabel = selectedHistoryRecord?.topic || topic.trim() || pickLocaleText(locale, {
+    "zh-CN": "新会议",
+    "zh-TW": "新會議",
+    en: "New meeting",
+    ja: "新しい会議",
+  });
+  const displayMeetingTopic = selectedHistoryRecord?.topic || topic.trim();
+  const meetingStarters = [
+    pickLocaleText(locale, {
+      "zh-CN": "下一版首页该怎么改",
+      "zh-TW": "下一版首頁該怎麼改",
+      en: "How should the next homepage change?",
+      ja: "次のホームページをどう変えるか",
+    }),
+    pickLocaleText(locale, {
+      "zh-CN": "客服自动回复策略怎么定",
+      "zh-TW": "客服自動回覆策略怎麼定",
+      en: "How should we set the auto-reply strategy?",
+      ja: "自動返信戦略をどう決めるか",
+    }),
+    pickLocaleText(locale, {
+      "zh-CN": "这个客户需求该谁主责推进",
+      "zh-TW": "這個客戶需求該誰主責推進",
+      en: "Who should own this customer request?",
+      ja: "この顧客要望は誰が主担当か",
+    }),
+  ];
+
+  const scrollMeetingToBottom = () => {
+    const element = scrollRef.current;
+    if (!element) return;
+    element.scrollTop = element.scrollHeight;
+  };
+
+  const syncMeetingAutoScroll = () => {
+    const element = scrollRef.current;
+    if (!element) return;
+    const distanceFromBottom = element.scrollHeight - element.scrollTop - element.clientHeight;
+    meetingAutoScrollRef.current = distanceFromBottom <= MEETING_SCROLL_BOTTOM_THRESHOLD;
+  };
+
+  const handleMeetingWheel = (event: React.WheelEvent<HTMLDivElement>) => {
+    const element = scrollRef.current;
+    if (!element) return;
+    const maxScrollTop = element.scrollHeight - element.clientHeight;
+    if (maxScrollTop <= 0) return;
+
+    const multiplier = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? element.clientHeight : 1;
+    const nextScrollTop = Math.max(0, Math.min(maxScrollTop, element.scrollTop + event.deltaY * multiplier));
+
+    if (nextScrollTop === element.scrollTop) return;
+
+    if (event.deltaY < 0) {
+      meetingAutoScrollRef.current = false;
+    }
+
+    event.preventDefault();
+    element.scrollTop = nextScrollTop;
+    syncMeetingAutoScroll();
+  };
+
+  useLayoutEffect(() => {
+    const nextHistoryId = selectedHistoryRecord?.id ?? null;
+    const historyChanged = previousMeetingHistoryIdRef.current !== nextHistoryId;
+    const speechCountChanged = previousMeetingSpeechCountRef.current !== visibleSpeeches.length;
+    const speechCountReset = visibleSpeeches.length < previousMeetingSpeechCountRef.current;
+    const shouldStickToBottom = historyChanged || speechCountReset || meetingAutoScrollRef.current;
+
+    previousMeetingHistoryIdRef.current = nextHistoryId;
+    previousMeetingSpeechCountRef.current = visibleSpeeches.length;
+
+    if (!speechCountChanged && !historyChanged) {
+      return;
+    }
+
+    if (!shouldStickToBottom) {
+      return;
+    }
+
+    scrollMeetingToBottom();
+    const frame = requestAnimationFrame(() => {
+      scrollMeetingToBottom();
+      syncMeetingAutoScroll();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [selectedHistoryRecord?.id, visibleSpeeches.length]);
 
   useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem("meeting:auto-export-enabled", autoExportEnabled ? "1" : "0");
+  }, [autoExportEnabled]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem("meeting:export-format", meetingExportFormat);
+  }, [meetingExportFormat]);
+
+  useEffect(() => {
+    if (!meetingActive && abortPending) {
+      setAbortPending(false);
+      setExportStatus({
+        tone: "warning",
+        text: pickLocaleText(locale, {
+          "zh-CN": "会议已中止，当前已停止继续讨论。",
+          "zh-TW": "會議已中止，目前已停止繼續討論。",
+          en: "The meeting was aborted and the discussion has stopped.",
+          ja: "会議を中止し、これ以上の議論を停止しました。",
+        }),
+      });
     }
-  }, [meetingSpeeches]);
+  }, [abortPending, meetingActive, locale]);
+
+  useEffect(() => {
+    if (!historyOpen) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setHistoryOpen(false);
+      }
+    };
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (historyDropdownRef.current?.contains(target)) return;
+      setHistoryOpen(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("pointerdown", onPointerDown);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("pointerdown", onPointerDown);
+    };
+  }, [historyOpen]);
 
   const startMeeting = () => {
     if (!topic.trim() || meetingActive || wsStatus !== "connected") return;
     const composedTopic = attachments.length
       ? `${topic.trim()}\n\nAttachments: ${attachments.map(item => item.file.name).join(", ")}`
       : topic.trim();
+    meetingAutoScrollRef.current = true;
+    setSelectedHistoryId(null);
     clearMeeting();
     setMeetingTopic(composedTopic);
     setMeetingActive(true);
@@ -2614,8 +3059,88 @@ function MeetingTab() {
     sendWs({ type: "meeting", topic: composedTopic });
   };
 
+  const handleAbortMeeting = () => {
+    if (!meetingActive || abortPending) return;
+    if (wsStatus !== "connected") {
+      setExportStatus({
+        tone: "error",
+        text: pickLocaleText(locale, {
+          "zh-CN": "当前连接已断开，暂时无法发送中止指令。",
+          "zh-TW": "目前連線已中斷，暫時無法送出中止指令。",
+          en: "The connection is offline, so the abort command cannot be sent right now.",
+          ja: "接続が切れているため、中止指示を送信できません。",
+        }),
+      });
+      return;
+    }
+
+    setAbortPending(true);
+    setExportStatus({
+      tone: "neutral",
+      text: pickLocaleText(locale, {
+        "zh-CN": "正在中止会议...",
+        "zh-TW": "正在中止會議...",
+        en: "Aborting the meeting...",
+        ja: "会議を中止しています...",
+      }),
+    });
+
+    const ok = sendWs({
+      type: "cancel_meeting",
+      reason: pickLocaleText(locale, {
+        "zh-CN": "用户已中止当前会议。",
+        "zh-TW": "使用者已中止目前會議。",
+        en: "The user aborted the current meeting.",
+        ja: "ユーザーが現在の会議を中止しました。",
+      }),
+    });
+
+    if (!ok) {
+      setAbortPending(false);
+      setExportStatus({
+        tone: "error",
+        text: pickLocaleText(locale, {
+          "zh-CN": "中止指令发送失败，请稍后重试。",
+          "zh-TW": "中止指令送出失敗，請稍後再試。",
+          en: "Failed to send the abort command. Please try again.",
+          ja: "中止指示の送信に失敗しました。しばらくしてから再試行してください。",
+        }),
+      });
+    }
+  };
+
+  const handleCreateMeeting = () => {
+    if (meetingActive) return;
+    meetingAutoScrollRef.current = true;
+    setSelectedHistoryId(null);
+    setHistoryOpen(false);
+    setAttachments([]);
+    clearMeeting();
+  };
+
+  const handleStarterPick = (starter: string) => {
+    if (meetingActive) return;
+    meetingAutoScrollRef.current = true;
+    setSelectedHistoryId(null);
+    setMeetingTopic(starter);
+  };
+
+  const handleSelectMeetingHistory = (recordId: string) => {
+    const record = meetingHistory.find(item => item.id === recordId);
+    if (!record || meetingActive) return;
+    meetingAutoScrollRef.current = true;
+    setSelectedHistoryId(record.id);
+    clearMeeting();
+    setMeetingTopic(record.topic);
+    setAttachments([]);
+    setHistoryOpen(false);
+  };
+
   const openFilePicker = () => {
     if (meetingActive) return;
+    if (selectedHistoryId) {
+      setSelectedHistoryId(null);
+    }
     fileInputRef.current?.click();
   };
 
@@ -2626,6 +3151,9 @@ function MeetingTab() {
   const handleFileChange = (event: ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.target.files ?? []);
     if (files.length === 0) return;
+    if (selectedHistoryId) {
+      setSelectedHistoryId(null);
+    }
     setAttachments(current => [
       ...current,
       ...files.map(file => ({
@@ -2636,6 +3164,82 @@ function MeetingTab() {
     ]);
     event.target.value = "";
   };
+
+  const buildMeetingExportPayload = (record: typeof exportableMeetingRecord) =>
+    record
+      ? {
+          topic: record.topic,
+          summary: record.summary,
+          speeches: record.speeches,
+          finishedAt: record.finishedAt,
+        }
+      : null;
+
+  async function handleMeetingConclusionExport(
+    record: typeof exportableMeetingRecord,
+    trigger: "auto" | "manual",
+  ) {
+    const meetingPayload = buildMeetingExportPayload(record);
+    if (!meetingPayload || exportBusy) return;
+
+    setExportBusy(true);
+    setExportStatus({
+      tone: "neutral",
+      text: pickLocaleText(locale, {
+        "zh-CN": `${trigger === "auto" ? "正在自动导出" : "正在导出"} ${getMeetingExportLabel(meetingExportFormat)} 结论...`,
+        "zh-TW": `${trigger === "auto" ? "正在自動匯出" : "正在匯出"} ${getMeetingExportLabel(meetingExportFormat)} 結論...`,
+        en: `${trigger === "auto" ? "Auto exporting" : "Exporting"} ${getMeetingExportLabel(meetingExportFormat)} conclusion...`,
+        ja: `${trigger === "auto" ? "自動エクスポート中" : "エクスポート中"}: ${getMeetingExportLabel(meetingExportFormat)}`,
+      }),
+    });
+
+    try {
+      const result = await deliverMeetingExport(meetingPayload, {
+        format: meetingExportFormat,
+        saveToLocal: true,
+      });
+      const sentLabel = result.sentPlatforms.join(" / ");
+      const failedLabel = result.failedPlatforms.map(item => item.platformId).join(" / ");
+      const skippedLabel = result.skippedPlatforms.map(item => `${item.platformId}(${item.reason})`).join(" / ");
+      const hasWarnings = Boolean(result.localSaveError) || result.failedPlatforms.length > 0 || result.skippedPlatforms.length > 0;
+
+      setExportStatus({
+        tone: hasWarnings ? "warning" : "success",
+        text: hasWarnings
+          ? pickLocaleText(locale, {
+              "zh-CN": `${trigger === "auto" ? "已自动生成" : "已生成"} ${result.fileName}${result.localFilePath ? `，本地：${result.localFilePath}` : ""}${sentLabel ? `，已发送：${sentLabel}` : ""}${failedLabel ? `；发送失败：${failedLabel}` : ""}${skippedLabel ? `；已跳过：${skippedLabel}` : ""}${result.localSaveError ? `；本地保存失败：${result.localSaveError}` : ""}`,
+              "zh-TW": `${trigger === "auto" ? "已自動產生" : "已產生"} ${result.fileName}${result.localFilePath ? `，本地：${result.localFilePath}` : ""}${sentLabel ? `，已發送：${sentLabel}` : ""}${failedLabel ? `；發送失敗：${failedLabel}` : ""}${skippedLabel ? `；已略過：${skippedLabel}` : ""}${result.localSaveError ? `；本地保存失敗：${result.localSaveError}` : ""}`,
+              en: `${trigger === "auto" ? "Generated automatically" : "Generated"} ${result.fileName}${result.localFilePath ? `, local: ${result.localFilePath}` : ""}${sentLabel ? `, sent: ${sentLabel}` : ""}${failedLabel ? `; failed: ${failedLabel}` : ""}${skippedLabel ? `; skipped: ${skippedLabel}` : ""}${result.localSaveError ? `; local save failed: ${result.localSaveError}` : ""}`,
+              ja: `${trigger === "auto" ? "自動生成完了" : "生成完了"}: ${result.fileName}${result.localFilePath ? `、保存先: ${result.localFilePath}` : ""}${sentLabel ? `、送信先: ${sentLabel}` : ""}${failedLabel ? `；失敗: ${failedLabel}` : ""}${skippedLabel ? `；スキップ: ${skippedLabel}` : ""}${result.localSaveError ? `；ローカル保存失敗: ${result.localSaveError}` : ""}`,
+            })
+          : pickLocaleText(locale, {
+              "zh-CN": `${trigger === "auto" ? "已自动导出" : "已导出"} ${result.fileName}${result.localFilePath ? `，本地：${result.localFilePath}` : ""}${sentLabel ? `，已发送到 ${sentLabel}` : ""}`,
+              "zh-TW": `${trigger === "auto" ? "已自動匯出" : "已匯出"} ${result.fileName}${result.localFilePath ? `，本地：${result.localFilePath}` : ""}${sentLabel ? `，已發送到 ${sentLabel}` : ""}`,
+              en: `${trigger === "auto" ? "Auto exported" : "Exported"} ${result.fileName}${result.localFilePath ? `, local: ${result.localFilePath}` : ""}${sentLabel ? `, sent to ${sentLabel}` : ""}`,
+              ja: `${trigger === "auto" ? "自動エクスポート完了" : "エクスポート完了"}: ${result.fileName}${result.localFilePath ? `、保存先: ${result.localFilePath}` : ""}${sentLabel ? `、送信先: ${sentLabel}` : ""}`,
+            }),
+      });
+    } catch (error) {
+      setExportStatus({
+        tone: "error",
+        text: pickLocaleText(locale, {
+          "zh-CN": `导出失败：${error instanceof Error ? error.message : String(error)}`,
+          "zh-TW": `匯出失敗：${error instanceof Error ? error.message : String(error)}`,
+          en: `Export failed: ${error instanceof Error ? error.message : String(error)}`,
+          ja: `エクスポート失敗: ${error instanceof Error ? error.message : String(error)}`,
+        }),
+      });
+    } finally {
+      setExportBusy(false);
+    }
+  }
+
+  useEffect(() => {
+    if (!autoExportEnabled || !latestMeetingRecord) return;
+    if (autoDeliveredMeetingIdRef.current === latestMeetingRecord.id) return;
+    autoDeliveredMeetingIdRef.current = latestMeetingRecord.id;
+    void handleMeetingConclusionExport(latestMeetingRecord, "auto");
+  }, [autoExportEnabled, latestMeetingRecord, meetingExportFormat]);
 
   const agentInfo: Record<string, { name: string; color: string }> = {
     orchestrator: { name: pickLocaleText(locale, { "zh-CN": "鹦鹉螺", "zh-TW": "鸚鵡螺", en: "Nautilus", ja: "オウムガイ" }), color: "var(--accent)" },
@@ -2654,163 +3258,479 @@ function MeetingTab() {
   };
 
   return (
-    <section className="meeting-shell ios-feature-page">
-      <div className="ios-feature-page__header">
-        <div className="ios-feature-page__eyebrow">Meeting</div>
-        <div className="ios-feature-page__title">{pickLocaleText(locale, {
-          "zh-CN": "需要多人观点时，切到会议模式集中讨论",
-          "zh-TW": "需要多人觀點時，切到會議模式集中討論",
-          en: "Switch to meeting mode when you need multiple perspectives.",
-          ja: "複数の視点が必要なときは会議モードに切り替えます。",
-        })}</div>
-      </div>
+    <div className="ios-chat-page meeting-chat-page">
+      <div className="ios-chat-page__frame">
+        <section className="ios-chat-page__surface">
+          <div className="meeting-chat-page__top">
+            <div className="ios-chat-page__header">
+              <div className="ios-chat-page__header-main">
+                <div className="ios-chat-page__eyebrow">{pickLocaleText(locale, {
+                  "zh-CN": "会议",
+                  "zh-TW": "會議",
+                  en: "Meeting",
+                  ja: "会議",
+                })}</div>
+                <div className="ios-chat-page__title">{pickLocaleText(locale, {
+                  "zh-CN": "团队会议",
+                  "zh-TW": "團隊會議",
+                  en: "Team Meeting",
+                  ja: "チーム会議",
+                })}</div>
+              </div>
+              <div className="ios-chat-page__header-side">
+                <div className="ios-chat-page__actions">
+                  <div className="ios-chat-page__history-dropdown" ref={historyDropdownRef}>
+                    <button
+                      type="button"
+                      className={`ios-chat-page__toolbar-btn ios-chat-page__history-trigger ${historyOpen ? "is-active" : ""}`}
+                      onClick={() => setHistoryOpen(open => !open)}
+                      title={pickLocaleText(locale, {
+                        "zh-CN": "会议历史",
+                        "zh-TW": "會議歷史",
+                        en: "Meeting history",
+                        ja: "会議履歴",
+                      })}
+                      aria-label={pickLocaleText(locale, {
+                        "zh-CN": "会议历史",
+                        "zh-TW": "會議歷史",
+                        en: "Meeting history",
+                        ja: "会議履歴",
+                      })}
+                      aria-haspopup="dialog"
+                      aria-expanded={historyOpen}
+                    >
+                      <HistoryIcon />
+                      <span className="ios-chat-page__history-trigger-count">{meetingHistory.length}</span>
+                    </button>
 
-      <div ref={scrollRef} className="meeting-shell__stream">
-        {meetingSpeeches.length === 0 && !meetingActive && (
-          <div className="meeting-shell__empty">{pickLocaleText(locale, {
-            "zh-CN": "发起议题后，团队发言会实时出现在这里。",
-            "zh-TW": "發起議題後，團隊發言會即時出現在這裡。",
-            en: "Team replies will appear here in real time after the topic starts.",
-            ja: "議題を開始すると、チームの発言がここにリアルタイムで表示されます。",
+                    {historyOpen ? (
+                      <div
+                        className="ios-chat-page__history-menu"
+                        role="dialog"
+                        aria-label={pickLocaleText(locale, {
+                          "zh-CN": "会议历史",
+                          "zh-TW": "會議歷史",
+                          en: "Meeting history",
+                          ja: "会議履歴",
+                        })}
+                      >
+                        <div className="ios-chat-page__history-head">
+                          <div className="ios-chat-page__history-title">{pickLocaleText(locale, {
+                            "zh-CN": "会议历史",
+                            "zh-TW": "會議歷史",
+                            en: "Meeting History",
+                            ja: "会議履歴",
+                          })}</div>
+                        </div>
+                        <div className="ios-chat-page__history-body">
+                          {meetingHistory.length === 0 ? (
+                            <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.7 }}>
+                              {pickLocaleText(locale, {
+                                "zh-CN": "还没有会议记录。",
+                                "zh-TW": "還沒有會議記錄。",
+                                en: "No meeting history yet.",
+                                ja: "まだ会議履歴はありません。",
+                              })}
+                            </div>
+                          ) : (
+                            <div className="session-panel meeting-history-panel">
+                              <div className="session-panel__list meeting-history-panel__list">
+                                {meetingHistory.map(record => {
+                                  const isSelected = selectedHistoryId === record.id;
+                                  const shortSummary = record.summary.length > 72
+                                    ? `${record.summary.slice(0, 72)}...`
+                                    : record.summary;
+
+                                  return (
+                                    <button
+                                      key={record.id}
+                                      type="button"
+                                      className={`session-panel__item meeting-history-panel__item ${isSelected ? "is-active" : ""}`}
+                                      onClick={() => handleSelectMeetingHistory(record.id)}
+                                      disabled={meetingActive}
+                                    >
+                                      <div className="session-panel__item-head">
+                                        <div className="session-panel__item-main">
+                                          <div className="session-panel__item-title">{record.topic}</div>
+                                          <div className="session-panel__item-preview">{shortSummary}</div>
+                                        </div>
+                                      </div>
+                                      <div className="session-panel__item-foot">
+                                        <div className="session-panel__item-meta">{timeAgo(record.finishedAt, locale)}</div>
+                                        <div className="session-panel__item-count">
+                                          {pickLocaleText(locale, {
+                                            "zh-CN": `${record.speeches.length} 条`,
+                                            "zh-TW": `${record.speeches.length} 則`,
+                                            en: `${record.speeches.length} msgs`,
+                                            ja: `${record.speeches.length} 件`,
+                                          })}
+                                        </div>
+                                      </div>
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
+                  <div className="ios-chat-page__meta">
+                    <span>{activeMeetingLabel}</span>
+                  </div>
+                  <div className="meeting-export-toolbar">
+                    <button
+                      type="button"
+                      className={`ios-chat-page__toolbar-btn ${autoExportEnabled ? "is-active" : ""}`}
+                      onClick={() => setAutoExportEnabled(value => !value)}
+                      disabled={meetingActive || exportBusy}
+                    >
+                      <span>{pickLocaleText(locale, {
+                        "zh-CN": `自动导出 · ${autoExportEnabled ? "开" : "关"}`,
+                        "zh-TW": `自動匯出 · ${autoExportEnabled ? "開" : "關"}`,
+                        en: `Auto export · ${autoExportEnabled ? "On" : "Off"}`,
+                        ja: `自動出力 · ${autoExportEnabled ? "オン" : "オフ"}`,
+                      })}</span>
+                    </button>
+                    <div className="meeting-export-toolbar__formats">
+                      {MEETING_EXPORT_FORMATS.map(format => (
+                        <button
+                          key={format}
+                          type="button"
+                          className={`ios-chat-page__toolbar-btn meeting-export-toolbar__format ${meetingExportFormat === format ? "is-active" : ""}`}
+                          onClick={() => setMeetingExportFormat(format)}
+                          disabled={meetingActive || exportBusy}
+                        >
+                          <span>{getMeetingExportLabel(format)}</span>
+                        </button>
+                      ))}
+                    </div>
+                    <button
+                      type="button"
+                      className="ios-chat-page__toolbar-btn is-primary"
+                      onClick={() => void handleMeetingConclusionExport(exportableMeetingRecord, "manual")}
+                      disabled={!exportableMeetingRecord || meetingActive || exportBusy}
+                    >
+                      <span>{pickLocaleText(locale, {
+                        "zh-CN": exportBusy ? "导出中..." : "导出结论",
+                        "zh-TW": exportBusy ? "匯出中..." : "匯出結論",
+                        en: exportBusy ? "Exporting..." : "Export",
+                        ja: exportBusy ? "出力中..." : "結論を出力",
+                      })}</span>
+                    </button>
+                  </div>
+                  <button
+                    type="button"
+                    className="ios-chat-page__toolbar-btn is-primary"
+                    onClick={handleCreateMeeting}
+                    disabled={meetingActive}
+                  >
+                    <NewChatIcon />
+                    <span>{pickLocaleText(locale, {
+                      "zh-CN": "新会议",
+                      "zh-TW": "新會議",
+                      en: "New Meeting",
+                      ja: "新しい会議",
+                    })}</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {exportStatus ? (
+              <div className={`meeting-export-status meeting-export-status--${exportStatus.tone}`}>
+                {exportStatus.text}
+              </div>
+            ) : null}
+          </div>
+
+      {visibleSpeeches.length === 0 && !meetingActive && !selectedHistoryRecord ? (
+        <div className="ios-chat-page__empty">
+          <div className="ios-chat-page__empty-badge">{pickLocaleText(locale, {
+            "zh-CN": "New Meeting",
+            "zh-TW": "New Meeting",
+            en: "New Meeting",
+            ja: "New Meeting",
           })}</div>
-        )}
+          <div className="ios-chat-page__empty-title">{pickLocaleText(locale, {
+            "zh-CN": "先抛出一个议题，让团队开始辩论。",
+            "zh-TW": "先拋出一個議題，讓團隊開始辯論。",
+            en: "Start with one topic and let the team debate it.",
+            ja: "議題をひとつ投げて、チームに議論させましょう。",
+          })}</div>
+          <div className="ios-chat-page__empty-copy">{pickLocaleText(locale, {
+            "zh-CN": "输入目标后，系统会依次给出观点、反驳和最终结论。",
+            "zh-TW": "輸入目標後，系統會依序給出觀點、反駁與最終結論。",
+            en: "After you enter a topic, the team will respond with viewpoints, rebuttals, and a final conclusion.",
+            ja: "議題を入力すると、チームが見解・反論・最終結論を順に返します。",
+          })}</div>
+          <div className="ios-chat-page__empty-actions">
+            {meetingStarters.map(prompt => (
+              <button
+                key={prompt}
+                type="button"
+                className="ios-chat-page__empty-prompt"
+                onClick={() => handleStarterPick(prompt)}
+              >
+                {prompt}
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : (
+      <div
+        ref={scrollRef}
+        className="ios-chat-page__stream ios-chat-page__stream--meeting"
+        onScroll={syncMeetingAutoScroll}
+        onWheel={handleMeetingWheel}
+      >
+        {displayMeetingTopic ? (
+          <div
+            className="chat-bubble chat-bubble--user"
+            style={
+              {
+                "--bubble-bg": theme === "dark" ? "rgba(19, 35, 60, 0.9)" : "rgba(226, 236, 250, 0.96)",
+                "--bubble-text": "var(--text)",
+                "--bubble-border": theme === "dark" ? "rgba(96, 165, 250, 0.34)" : "rgba(191, 219, 254, 0.9)",
+              } as React.CSSProperties
+            }
+          >
+            <div className="chat-bubble__meta">
+              <span className="chat-bubble__author">{pickLocaleText(locale, { "zh-CN": "你", "zh-TW": "你", en: "You", ja: "あなた" })}</span>
+              <span className="chat-bubble__time">
+                {selectedHistoryRecord
+                  ? timeAgo(selectedHistoryRecord.finishedAt, locale)
+                  : pickLocaleText(locale, { "zh-CN": "刚刚", "zh-TW": "剛剛", en: "Just now", ja: "たった今" })}
+              </span>
+            </div>
+            <div className="chat-bubble__body">
+              <div className="chat-bubble__content">
+                <MeetingSpeechContent text={displayMeetingTopic} />
+              </div>
+            </div>
+          </div>
+        ) : null}
 
-        {meetingSpeeches.map(speech => {
+        {visibleSpeeches.map(speech => {
           const info = agentInfo[speech.agentId] ?? { name: speech.agentId, color: "var(--accent)" };
           const isSummary = speech.role === "summary";
 
           return (
-            <div key={speech.id} className="meeting-shell__item">
-              <div
-                className="meeting-shell__avatar"
-                style={{
-                  background: `color-mix(in srgb, ${info.color} 18%, white)`,
-                  borderColor: isSummary ? info.color : "var(--border)",
-                  boxShadow: isSummary ? `0 0 16px color-mix(in srgb, ${info.color} 18%, transparent)` : "none",
-                }}
-              >
-                <AgentIcon
-                  agentId={(speech.agentId in AGENT_META ? speech.agentId : "orchestrator") as keyof typeof AGENT_META}
-                  size={20}
-                  color={speech.agentId in AGENT_META ? getAgentIconColor(speech.agentId as keyof typeof AGENT_META) : info.color}
-                />
+            <div
+              key={speech.id}
+              className={`chat-bubble chat-bubble--agent ${isSummary ? "meeting-chat-bubble--summary" : ""}`}
+              style={
+                {
+                  "--bubble-bg": isSummary
+                    ? theme === "dark"
+                      ? `color-mix(in srgb, ${info.color} 18%, rgba(9, 15, 29, 0.94))`
+                      : `color-mix(in srgb, ${info.color} 10%, rgba(255, 255, 255, 0.94))`
+                    : theme === "dark"
+                      ? "rgba(9, 15, 29, 0.94)"
+                      : "rgba(255, 255, 255, 0.94)",
+                  "--bubble-text": "var(--text)",
+                  "--bubble-border": isSummary
+                    ? theme === "dark"
+                      ? `color-mix(in srgb, ${info.color} 30%, rgba(96, 165, 250, 0.16))`
+                      : `color-mix(in srgb, ${info.color} 36%, rgba(148, 163, 184, 0.18))`
+                    : theme === "dark"
+                      ? "rgba(96, 165, 250, 0.16)"
+                      : "rgba(148, 163, 184, 0.18)",
+                } as React.CSSProperties
+              }
+            >
+              <div className="chat-bubble__meta">
+                <span className="chat-bubble__avatar">
+                  <AgentIcon
+                    agentId={(speech.agentId in AGENT_META ? speech.agentId : "orchestrator") as keyof typeof AGENT_META}
+                    size={16}
+                    color={speech.agentId in AGENT_META ? getAgentIconColor(speech.agentId as keyof typeof AGENT_META) : info.color}
+                  />
+                </span>
+                <span className="chat-bubble__author" style={{ color: info.color }}>{info.name}</span>
+                <span className="meeting-chat-bubble__role">{roleLabel[speech.role] ?? speech.role}</span>
+                <span className="chat-bubble__time">{timeAgo(speech.timestamp, locale)}</span>
               </div>
-
-              <div className="meeting-shell__bubble-wrap">
-                <div className="meeting-shell__meta">
-                  <span style={{ color: info.color, fontWeight: 700 }}>{info.name}</span>
-                  <span className="meeting-shell__role" style={{ color: info.color }}>
-                    {roleLabel[speech.role] ?? speech.role}
-                  </span>
-                </div>
-                <div
-                  className="meeting-shell__bubble"
-                  style={{
-                    background: isSummary
-                      ? `color-mix(in srgb, ${info.color} 10%, rgba(255,255,255,0.88))`
-                      : "rgba(255,255,255,0.86)",
-                    borderColor: isSummary
-                      ? `color-mix(in srgb, ${info.color} 46%, transparent)`
-                      : "var(--border)",
-                  }}
-                >
-                  {speech.text}
+              <div className="chat-bubble__body">
+                <div className="chat-bubble__content">
+                  <MeetingSpeechContent text={speech.text} />
                 </div>
               </div>
             </div>
           );
         })}
 
-        {meetingActive && <div className="meeting-shell__loading">{pickLocaleText(locale, {
-          "zh-CN": "团队正在讨论中...",
-          "zh-TW": "團隊正在討論中...",
-          en: "The team is discussing...",
-          ja: "チームが議論中です...",
-        })}</div>}
-      </div>
-
-      {attachments.length > 0 ? (
-        <div className="attachment-list meeting-shell__attachments">
-          {attachments.map(({ id, file, kind }) => (
-            <div key={id} className="attachment-chip">
-              <span className="attachment-chip__type">{getMeetingAttachmentBadge(kind)}</span>
-              <span className="attachment-chip__name">{file.name}</span>
-              <span className="attachment-chip__size">{formatMeetingFileSize(file.size)}</span>
-              <button
-                type="button"
-                className="attachment-chip__remove"
-                onClick={() => removeAttachment(id)}
-                disabled={meetingActive}
-              >
-                ×
-              </button>
+        {meetingActive ? (
+          <div
+            className="chat-bubble chat-bubble--agent meeting-chat-bubble--loading"
+            style={
+              {
+                "--bubble-bg": theme === "dark" ? "rgba(9, 15, 29, 0.94)" : "rgba(255, 255, 255, 0.94)",
+                "--bubble-text": "var(--text)",
+                "--bubble-border": theme === "dark" ? "rgba(96, 165, 250, 0.16)" : "rgba(148, 163, 184, 0.18)",
+              } as React.CSSProperties
+            }
+          >
+            <div className="chat-bubble__meta">
+              <span className="chat-bubble__avatar">
+                <AgentIcon agentId="orchestrator" size={16} />
+              </span>
+              <span className="chat-bubble__author">{pickLocaleText(locale, {
+                "zh-CN": "会议中",
+                "zh-TW": "會議中",
+                en: "Meeting",
+                ja: "会議中",
+              })}</span>
             </div>
-          ))}
-        </div>
-      ) : null}
+            <div className="chat-bubble__body">
+              <div className="chat-bubble__thinking">
+                <span className="chat-bubble__thinking-dots" aria-hidden="true">
+                  <span />
+                  <span />
+                  <span />
+                </span>
+                <span>{pickLocaleText(locale, {
+                  "zh-CN": "团队正在讨论中...",
+                  "zh-TW": "團隊正在討論中...",
+                  en: "The team is discussing...",
+                  ja: "チームが議論中です...",
+                })}</span>
+              </div>
+            </div>
+          </div>
+        ) : null}
+      </div>
+      )}
 
-      <div className="meeting-shell__composer command-input__row">
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept={MEETING_ACCEPTED_FILE_TYPES}
-          multiple
-          onChange={handleFileChange}
-          style={{ display: "none" }}
-        />
-        <button
-          type="button"
-          className="command-input__upload command-input__send2"
-          onClick={openFilePicker}
-          disabled={meetingActive}
-          title={pickLocaleText(locale, {
-            "zh-CN": "添加附件",
-            "zh-TW": "新增附件",
-            en: "Add attachment",
-            ja: "添付を追加",
-          })}
-        >
-          +
-        </button>
-        <input
-          className="input meeting-shell__topic-input"
-          placeholder={pickLocaleText(locale, {
-            "zh-CN": "输入会议议题，例如：下一版产品首页该怎么改？",
-            "zh-TW": "輸入會議議題，例如：下一版產品首頁該怎麼改？",
-            en: "Enter a meeting topic, e.g. how should the next product homepage change?",
-            ja: "会議テーマを入力してください。例: 次の製品ホームページをどう改善するか？",
-          })}
-          value={topic}
-          onChange={event => setTopic(event.target.value)}
-          onKeyDown={event => event.key === "Enter" && startMeeting()}
-          disabled={meetingActive}
-        />
-        <button
-          type="button"
-          className={`meeting-shell__start-btn ${!meetingActive && topic.trim() && wsStatus === "connected" ? "is-ready" : ""}`}
-          onClick={startMeeting}
-          disabled={meetingActive || !topic.trim() || wsStatus !== "connected"}
-        >
-          {meetingActive
-            ? pickLocaleText(locale, { "zh-CN": "讨论中...", "zh-TW": "討論中...", en: "Discussing...", ja: "議論中..." })
-            : pickLocaleText(locale, { "zh-CN": "开始会议", "zh-TW": "開始會議", en: "Start Meeting", ja: "会議を開始" })}
-        </button>
-      </div>
-      <div className="meeting-shell__composer-hint">
-        {attachments.length > 0
-          ? pickLocaleText(locale, {
-              "zh-CN": `已准备 ${attachments.length} 个附件，发起会议后会连同文件名一起带入讨论上下文。`,
-              "zh-TW": `已準備 ${attachments.length} 個附件，發起會議後會連同檔名一起帶入討論上下文。`,
-              en: `${attachments.length} attachment(s) ready. The file names will be injected into the meeting context when you start.`,
-              ja: `${attachments.length} 件の添付を準備済みです。会議開始時にファイル名も議論コンテキストへ渡されます。`,
-            })
-          : pickLocaleText(locale, {
-              "zh-CN": "可像对话区一样添加附件，把文档、图片或素材文件一起带进会议讨论。",
-              "zh-TW": "可像對話區一樣新增附件，把文件、圖片或素材一起帶進會議討論。",
-              en: "Add attachments like chat to bring docs, images, or asset files into the meeting context.",
-              ja: "チャットと同じように添付を追加して、文書・画像・素材を会議コンテキストに含められます。",
+          <div className="ios-chat-page__composer">
+      <ConversationComposerShell
+        accept={MEETING_ACCEPTED_FILE_TYPES}
+        fileInputRef={fileInputRef}
+        onFileChange={handleFileChange}
+        onOpenFilePicker={openFilePicker}
+        uploadTitle={pickLocaleText(locale, {
+          "zh-CN": "添加附件",
+          "zh-TW": "新增附件",
+          en: "Add attachment",
+          ja: "添付を追加",
+        })}
+        disabled={meetingActive}
+        uploadActive={attachments.length > 0}
+        rowClassName="meeting-shell__composer"
+        attachments={attachments.length > 0 ? (
+          <div className="meeting-chat-page__attachments">
+            {attachments.map(({ id, file, kind }) => (
+              <div
+                key={id}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  padding: "6px 10px",
+                  borderRadius: "var(--radius-sm)",
+                  border: "1px solid var(--border)",
+                  background: theme === "dark" ? "rgba(11, 19, 34, 0.92)" : "rgba(247,249,253,0.96)",
+                  fontSize: 11,
+                }}
+              >
+                <span style={{ color: "var(--text-muted)" }}>{getMeetingAttachmentBadge(kind)}</span>
+                <span style={{ color: "var(--text)" }}>{file.name}</span>
+                <span style={{ color: "var(--text-muted)" }}>{formatMeetingFileSize(file.size)}</span>
+                <button
+                  type="button"
+                  className="btn-ghost"
+                  onClick={() => removeAttachment(id)}
+                  disabled={meetingActive}
+                  style={{ padding: "2px 6px", fontSize: 11 }}
+                >
+                  移除
+                </button>
+              </div>
+            ))}
+          </div>
+        ) : null}
+        field={(
+          <textarea
+            className="input command-input__field meeting-shell__topic-input"
+            placeholder={pickLocaleText(locale, {
+              "zh-CN": "输入会议议题，例如：下一版产品首页该怎么改？",
+              "zh-TW": "輸入會議議題，例如：下一版產品首頁該怎麼改？",
+              en: "Enter a meeting topic, e.g. how should the next product homepage change?",
+              ja: "会議テーマを入力してください。例: 次の製品ホームページをどう改善するか？",
             })}
+            value={topic}
+            rows={2}
+            onChange={event => {
+              if (selectedHistoryId) {
+                setSelectedHistoryId(null);
+              }
+              setMeetingTopic(event.target.value);
+            }}
+            onKeyDown={event => {
+              if (event.key === "Enter" && !event.shiftKey) {
+                event.preventDefault();
+                startMeeting();
+              }
+            }}
+            disabled={meetingActive}
+          />
+        )}
+              action={(
+                <button
+            type="button"
+            className={`command-input__send2 meeting-shell__start-btn ${
+              meetingActive
+                ? `command-input__stop ${abortPending ? "is-pending" : "is-ready"}`
+                : `command-input__send ${topic.trim() && wsStatus === "connected" ? "is-ready" : ""}`
+            }`}
+            onClick={meetingActive ? handleAbortMeeting : startMeeting}
+            disabled={
+              meetingActive
+                ? abortPending || wsStatus !== "connected"
+                : !topic.trim() || wsStatus !== "connected"
+            }
+            aria-label={
+              meetingActive
+                ? pickLocaleText(locale, {
+                    "zh-CN": abortPending ? "正在中止会议" : "中止当前会议",
+                    "zh-TW": abortPending ? "正在中止會議" : "中止目前會議",
+                    en: abortPending ? "Aborting meeting" : "Abort current meeting",
+                    ja: abortPending ? "会議を中止中" : "現在の会議を中止",
+                  })
+                : pickLocaleText(locale, { "zh-CN": "开始会议", "zh-TW": "開始會議", en: "Start meeting", ja: "会議を開始" })
+            }
+            title={
+              meetingActive
+                ? pickLocaleText(locale, {
+                    "zh-CN": abortPending ? "正在中止会议" : "中止当前会议",
+                    "zh-TW": abortPending ? "正在中止會議" : "中止目前會議",
+                    en: abortPending ? "Aborting meeting" : "Abort current meeting",
+                    ja: abortPending ? "会議を中止中" : "現在の会議を中止",
+                  })
+                : pickLocaleText(locale, { "zh-CN": "开始会议", "zh-TW": "開始會議", en: "Start meeting", ja: "会議を開始" })
+            }
+          >
+            {meetingActive ? (
+              abortPending ? (
+                <span className="spinner" style={{ width: 16, height: 16, borderWidth: 2 }} />
+              ) : (
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                  <rect x="6.5" y="6.5" width="11" height="11" rx="2.5" />
+                </svg>
+              )
+            ) : (
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" />
+              </svg>
+            )}
+                </button>
+              )}
+              hint={null}
+            />
+          </div>
+        </section>
       </div>
-    </section>
+    </div>
   );
 }

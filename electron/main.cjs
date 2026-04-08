@@ -13,6 +13,7 @@ const fs = require('fs');
 const http = require('http');
 const net = require('net');
 const readline = require('readline');
+const { pathToFileURL } = require('url');
 
 const startupLog = path.join(process.env.APPDATA || process.cwd(), 'xiaolongxia-web-startup.log');
 function log(...args) {
@@ -36,10 +37,14 @@ const isDev = () => process.env.NODE_ENV === 'development' || !app.isPackaged;
 const WS_PORT = Number(process.env.WS_PORT || 3001);
 
 let mainWindow = null;
+let splashWindow = null;
 let wsServerProcess = null;
 let isQuitting = false;
 let wsHealthMonitor = null;
 let wsRecoveryPromise = null;
+let splashPlaybackFinished = true;
+let mainWindowCanShow = false;
+let mainWindowDevToolsOpened = false;
 const allowedWorkspaceRoots = new Set();
 const previewWindows = new Map();
 let installedApplicationsCache = {
@@ -1558,6 +1563,177 @@ function waitForWsServer(timeout = 15000) {
 }
 
 const WINDOW_LOAD_TIMEOUT_MS = 15000;
+const STARTUP_SPLASH_VIDEO_NAMES = ['startup-splash.webm', 'startup-splash.mp4'];
+const STARTUP_SPLASH_HTML_NAME = 'splash.html';
+const STARTUP_SPLASH_DONE_MARKER = '__STARTUP_SPLASH_DONE__';
+const STARTUP_SPLASH_ERROR_MARKER = '__STARTUP_SPLASH_ERROR__';
+
+function getStartupSplashVideoPath() {
+  for (const videoName of STARTUP_SPLASH_VIDEO_NAMES) {
+    const relativePath = path.join('public', 'splash', videoName);
+    const candidates = isDev()
+      ? [path.join(app.getAppPath(), relativePath)]
+      : [
+          path.join(process.resourcesPath, 'splash', videoName),
+          path.join(process.resourcesPath, 'app.asar.unpacked', relativePath),
+          path.join(app.getAppPath(), relativePath),
+        ];
+
+    const match = candidates.find(candidate => safeExists(candidate));
+    if (match) {
+      return match;
+    }
+  }
+
+  return null;
+}
+
+function getStartupSplashHtmlPath() {
+  return path.join(__dirname, STARTUP_SPLASH_HTML_NAME);
+}
+
+function closeSplashWindow() {
+  if (!splashWindow || splashWindow.isDestroyed()) {
+    splashWindow = null;
+    return;
+  }
+
+  const windowToClose = splashWindow;
+  splashWindow = null;
+  windowToClose.close();
+}
+
+function revealMainWindow(reason = 'unknown') {
+  if (isQuitting || !mainWindow || mainWindow.isDestroyed() || !mainWindowCanShow) {
+    return;
+  }
+
+  if (splashWindow && !splashWindow.isDestroyed() && !splashPlaybackFinished) {
+    log('[splash] waiting to reveal main window:', reason);
+    return;
+  }
+
+  if (splashWindow && !splashWindow.isDestroyed()) {
+    closeSplashWindow();
+  }
+
+  if (mainWindow.isMinimized()) {
+    mainWindow.restore();
+  }
+
+  if (!mainWindow.isVisible()) {
+    mainWindow.show();
+  }
+
+  if (isDev() && !mainWindowDevToolsOpened) {
+    mainWindowDevToolsOpened = true;
+    mainWindow.webContents.openDevTools({ mode: 'detach' });
+  }
+}
+
+function createSplashWindow() {
+  if (splashWindow && !splashWindow.isDestroyed()) {
+    splashWindow.focus();
+    return;
+  }
+
+  const videoPath = getStartupSplashVideoPath();
+  if (!videoPath) {
+    splashPlaybackFinished = true;
+    log('[splash] startup video missing, skipping splash window');
+    return;
+  }
+
+  const splashHtmlPath = getStartupSplashHtmlPath();
+  if (!safeExists(splashHtmlPath)) {
+    splashPlaybackFinished = true;
+    log('[splash] splash html missing, skipping splash window:', splashHtmlPath);
+    return;
+  }
+
+  splashPlaybackFinished = false;
+  const videoUrl = pathToFileURL(videoPath).toString();
+  const splashPageUrl = `${pathToFileURL(splashHtmlPath).toString()}?video=${encodeURIComponent(videoUrl)}`;
+  log('[splash] using startup video:', videoPath);
+  const splash = new BrowserWindow({
+    width: 560,
+    height: 315,
+    show: false,
+    frame: false,
+    resizable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    skipTaskbar: true,
+    center: true,
+    alwaysOnTop: true,
+    autoHideMenuBar: true,
+    backgroundColor: '#040814',
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: true,
+      backgroundThrottling: false,
+    },
+  });
+
+  splashWindow = splash;
+  splash.removeMenu();
+
+  const finishSplashPlayback = (reason) => {
+    if (splashPlaybackFinished) return;
+    splashPlaybackFinished = true;
+    log('[splash] playback finished:', reason);
+    revealMainWindow(reason);
+  };
+
+  splash.once('ready-to-show', () => {
+    log('[splash] ready-to-show');
+    if (!splash.isDestroyed()) {
+      splash.show();
+    }
+  });
+
+  splash.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL) => {
+    log('[splash] did-fail-load', { errorCode, errorDescription, validatedURL });
+  });
+
+  splash.webContents.on('console-message', (_event, _level, message) => {
+    if (typeof message !== 'string') {
+      return;
+    }
+
+    if (message === STARTUP_SPLASH_DONE_MARKER || message.startsWith(`${STARTUP_SPLASH_DONE_MARKER}:`)) {
+      const reason = message.slice(STARTUP_SPLASH_DONE_MARKER.length + 1) || 'video-ended';
+      finishSplashPlayback(reason);
+      return;
+    }
+
+    if (message.startsWith(STARTUP_SPLASH_ERROR_MARKER)) {
+      log('[splash] renderer reported error:', message);
+      const reason = message.slice(STARTUP_SPLASH_ERROR_MARKER.length + 1) || 'video-error';
+      finishSplashPlayback(reason);
+    }
+  });
+
+  splash.on('closed', () => {
+    if (splashWindow === splash) {
+      splashWindow = null;
+    }
+    finishSplashPlayback('window-closed');
+  });
+
+  splash.loadURL(splashPageUrl).catch((error) => {
+    log('[splash] failed to load splash window:', error);
+    if (splashWindow === splash) {
+      splashWindow = null;
+    }
+    try {
+      splash.destroy();
+    } catch {}
+    finishSplashPlayback('load-failed');
+  });
+}
 
 function buildDesktopFallbackHtml({ title, detail, target }) {
   return `<!doctype html>
@@ -1640,9 +1816,8 @@ function loadDesktopFallback({ title, detail, target }) {
   mainWindow.loadURL(fallbackUrl).catch(error => {
     log('[main] failed to load desktop fallback:', error);
   });
-  if (!mainWindow.isVisible()) {
-    mainWindow.show();
-  }
+  mainWindowCanShow = true;
+  revealMainWindow('desktop-fallback');
 }
 
 // ── 创建主窗口 ──
@@ -1650,10 +1825,17 @@ function createMainWindow() {
   // 防止重复创建
   if (mainWindow && !mainWindow.isDestroyed()) {
     log('[main] Window already exists, focusing...');
-    mainWindow.focus();
+    revealMainWindow('reuse-window');
+    if (mainWindow.isVisible()) {
+      mainWindow.focus();
+    } else if (splashWindow && !splashWindow.isDestroyed()) {
+      splashWindow.focus();
+    }
     return;
   }
 
+  mainWindowCanShow = false;
+  mainWindowDevToolsOpened = false;
   mainWindow = new BrowserWindow({
     width: 1400,
     height: 900,
@@ -1724,11 +1906,9 @@ function createMainWindow() {
   mainWindow.once('ready-to-show', () => {
     log('[main] ready-to-show');
     windowReady = true;
+    mainWindowCanShow = true;
     clearTimeout(loadGuard);
-    if (!mainWindow.isDestroyed()) {
-      mainWindow.show();
-      if (isDev()) mainWindow.webContents.openDevTools({ mode: 'detach' });
-    }
+    revealMainWindow('ready-to-show');
   });
 
   mainWindow.on('close', () => {
@@ -1739,6 +1919,8 @@ function createMainWindow() {
   mainWindow.on('closed', () => {
     log('[main] window closed');
     clearTimeout(loadGuard);
+    mainWindowCanShow = false;
+    mainWindowDevToolsOpened = false;
     mainWindow = null;
   });
 
@@ -1775,6 +1957,7 @@ function relaunchDesktopApp() {
 // ── 应用启动 ──
 app.whenReady().then(async () => {
   log('[main] app.whenReady');
+  createSplashWindow();
   // ── IPC：前端获取 WS 端口与 Desk 工作区 ──
   ipcMain.handle('get-ws-port', () => WS_PORT);
   ipcMain.handle('select-workspace-folder', async () => {
@@ -1840,8 +2023,12 @@ app.whenReady().then(async () => {
     log('[main] Second instance detected, focusing main window');
     if (mainWindow && !mainWindow.isDestroyed()) {
       if (mainWindow.isMinimized()) mainWindow.restore();
-      mainWindow.show();
-      mainWindow.focus();
+      revealMainWindow('second-instance');
+      if (mainWindow.isVisible()) {
+        mainWindow.focus();
+      } else if (splashWindow && !splashWindow.isDestroyed()) {
+        splashWindow.focus();
+      }
       return;
     }
 
@@ -1858,7 +2045,12 @@ app.whenReady().then(async () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       createMainWindow();
     } else if (mainWindow) {
-      mainWindow.show();
+      revealMainWindow('activate');
+      if (mainWindow.isVisible()) {
+        mainWindow.focus();
+      } else if (splashWindow && !splashWindow.isDestroyed()) {
+        splashWindow.focus();
+      }
     }
   });
 });
@@ -1867,6 +2059,7 @@ app.whenReady().then(async () => {
 app.on('before-quit', () => {
   log('[main] before-quit');
   isQuitting = true;
+  closeSplashWindow();
   shutdownDesktopInputController();
   if (wsHealthMonitor) {
     clearInterval(wsHealthMonitor);

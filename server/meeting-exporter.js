@@ -3,9 +3,24 @@ import path from "path";
 import { promises as fs } from "fs";
 import ExcelJS from "exceljs";
 import PptxGenJS from "pptxgenjs";
-import { Document, HeadingLevel, Packer, Paragraph, TextRun } from "docx";
+import {
+  AlignmentType,
+  BorderStyle,
+  Document,
+  HeadingLevel,
+  Packer,
+  Paragraph,
+  Table,
+  TableCell,
+  TableRow,
+  TextRun,
+  WidthType,
+} from "docx";
+import { normalizeMeetingExportBrief } from "./meeting-export-brief.js";
 
 const EXPORT_DIR = path.join(os.tmpdir(), "xiaolongxia-ai", "meeting-exports");
+const LOCAL_EXPORT_ROOT = path.join(os.homedir(), "Desktop", "STARCRAW", "meeting-exports");
+const DOC_FONT = "Microsoft YaHei";
 
 const MIME_TYPES = {
   docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -13,24 +28,26 @@ const MIME_TYPES = {
   pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
 };
 
-const AGENT_LABELS = {
-  orchestrator: "鹦鹉螺",
-  explorer: "探海鲸鱼",
-  writer: "星海章鱼",
-  designer: "珊瑚水母",
-  performer: "逐浪海豚",
-  greeter: "招潮蟹",
-};
-
-const ROLE_LABELS = {
-  open: "开场",
-  speak: "观点",
-  rebuttal: "补充/辩论",
-  summary: "最终结论",
+const PALETTE = {
+  ink: "0F172A",
+  slate: "334155",
+  muted: "64748B",
+  border: "CBD5E1",
+  panel: "F8FAFC",
+  sand: "E7E8D1",
+  accent: "B85042",
+  accentSoft: "F4D6CC",
+  accentDark: "8C3D32",
+  teal: "0F766E",
+  tealSoft: "E6FFFA",
+  green: "2F855A",
+  greenSoft: "E8F5EC",
+  white: "FFFFFF",
+  roseSoft: "FDF2F2",
 };
 
 function sanitizeFileName(input) {
-  return input
+  return String(input ?? "")
     .replace(/[<>:"/\\|?*\u0000-\u001F]/g, "-")
     .replace(/\s+/g, "-")
     .replace(/-+/g, "-")
@@ -38,27 +55,12 @@ function sanitizeFileName(input) {
     .slice(0, 48) || "meeting";
 }
 
-function toDisplayTime(timestamp) {
-  return new Date(timestamp ?? Date.now()).toLocaleString("zh-CN", { hour12: false });
+function cleanText(input) {
+  return String(input ?? "").replace(/\r/g, "").trim();
 }
 
-function extractSummaryItems(summary) {
-  const normalized = String(summary ?? "")
-    .replace(/\r/g, "")
-    .split("\n")
-    .map(line => line.trim())
-    .filter(Boolean)
-    .map(line => line.replace(/^[\d一二三四五六七八九十]+[.、)\s-]*/, "").trim())
-    .filter(Boolean);
-
-  if (normalized.length > 0) return normalized;
-
-  const fallback = String(summary ?? "")
-    .split(/[。；;]+/)
-    .map(line => line.trim())
-    .filter(Boolean);
-
-  return fallback.length > 0 ? fallback : ["暂无可导出的会议结论"];
+function toDisplayTime(timestamp) {
+  return new Date(timestamp ?? Date.now()).toLocaleString("zh-CN", { hour12: false });
 }
 
 function normalizeSpeeches(speeches) {
@@ -67,72 +69,391 @@ function normalizeSpeeches(speeches) {
         id: speech.id ?? `speech-${index + 1}`,
         agentId: speech.agentId ?? "orchestrator",
         role: speech.role ?? "speak",
-        text: String(speech.text ?? "").trim(),
+        text: cleanText(speech.text),
         timestamp: speech.timestamp ?? Date.now(),
       }))
     : [];
+}
+
+function toArgb(hex) {
+  return `FF${String(hex || "").replace(/^#/, "").toUpperCase()}`;
+}
+
+function createText(text, options = {}) {
+  return new TextRun({
+    text: String(text ?? ""),
+    font: DOC_FONT,
+    ...options,
+  });
+}
+
+function createSpacer(after = 140) {
+  return new Paragraph({
+    spacing: { after },
+  });
+}
+
+function createSectionHeading(title) {
+  return new Paragraph({
+    heading: HeadingLevel.HEADING_1,
+    spacing: { before: 220, after: 120 },
+    children: [
+      createText(title, {
+        bold: true,
+        color: PALETTE.ink,
+      }),
+    ],
+  });
+}
+
+function createBodyParagraph(text, options = {}) {
+  return new Paragraph({
+    spacing: { after: options.after ?? 120, line: 320 },
+    alignment: options.alignment,
+    children: [
+      createText(text, {
+        color: options.color ?? PALETTE.slate,
+        size: options.size,
+        bold: options.bold,
+        italics: options.italics,
+      }),
+    ],
+  });
+}
+
+function createBulletParagraph(text, color = PALETTE.slate) {
+  return new Paragraph({
+    bullet: { level: 0 },
+    spacing: { after: 80, line: 300 },
+    children: [
+      createText(text, {
+        color,
+      }),
+    ],
+  });
+}
+
+function createInfoTable(meeting, brief) {
+  return new Table({
+    width: { size: 100, type: WidthType.PERCENTAGE },
+    rows: [
+      ["会议议题", meeting.topic],
+      ["导出时间", toDisplayTime(meeting.finishedAt)],
+      ["建议主责", brief.ownerRecommendation],
+    ].map(([label, value]) =>
+      new TableRow({
+        children: [
+          new TableCell({
+            width: { size: 28, type: WidthType.PERCENTAGE },
+            shading: { fill: PALETTE.sand },
+            borders: {
+              top: { style: BorderStyle.SINGLE, color: PALETTE.border },
+              bottom: { style: BorderStyle.SINGLE, color: PALETTE.border },
+              left: { style: BorderStyle.SINGLE, color: PALETTE.border },
+              right: { style: BorderStyle.SINGLE, color: PALETTE.border },
+            },
+            children: [
+              new Paragraph({
+                spacing: { after: 0 },
+                children: [createText(label, { bold: true, color: PALETTE.ink })],
+              }),
+            ],
+          }),
+          new TableCell({
+            width: { size: 72, type: WidthType.PERCENTAGE },
+            shading: { fill: PALETTE.panel },
+            borders: {
+              top: { style: BorderStyle.SINGLE, color: PALETTE.border },
+              bottom: { style: BorderStyle.SINGLE, color: PALETTE.border },
+              left: { style: BorderStyle.SINGLE, color: PALETTE.border },
+              right: { style: BorderStyle.SINGLE, color: PALETTE.border },
+            },
+            children: [
+              new Paragraph({
+                spacing: { after: 0 },
+                children: [createText(value, { color: PALETTE.slate })],
+              }),
+            ],
+          }),
+        ],
+      }),
+    ),
+  });
+}
+
+function createHighlightPanel(title, body, fill = PALETTE.accentSoft, bodyColor = PALETTE.accentDark) {
+  return new Table({
+    width: { size: 100, type: WidthType.PERCENTAGE },
+    rows: [
+      new TableRow({
+        children: [
+          new TableCell({
+            shading: { fill },
+            borders: {
+              top: { style: BorderStyle.SINGLE, color: PALETTE.border },
+              bottom: { style: BorderStyle.SINGLE, color: PALETTE.border },
+              left: { style: BorderStyle.SINGLE, color: PALETTE.border },
+              right: { style: BorderStyle.SINGLE, color: PALETTE.border },
+            },
+            children: [
+              new Paragraph({
+                spacing: { after: 100 },
+                children: [createText(title, { bold: true, color: PALETTE.ink })],
+              }),
+              createBodyParagraph(body, { after: 0, color: bodyColor }),
+            ],
+          }),
+        ],
+      }),
+    ],
+  });
+}
+
+function createBorderedCell(children, fill) {
+  return new TableCell({
+    shading: { fill },
+    borders: {
+      top: { style: BorderStyle.SINGLE, color: PALETTE.border },
+      bottom: { style: BorderStyle.SINGLE, color: PALETTE.border },
+      left: { style: BorderStyle.SINGLE, color: PALETTE.border },
+      right: { style: BorderStyle.SINGLE, color: PALETTE.border },
+    },
+    children: Array.isArray(children) ? children : [children],
+  });
+}
+
+function createActionTable(items) {
+  const rows = [
+    new TableRow({
+      children: ["执行动作", "主责", "时间节奏", "成功标志"].map(title =>
+        createBorderedCell(
+          new Paragraph({
+            spacing: { after: 0 },
+            alignment: AlignmentType.CENTER,
+            children: [createText(title, { bold: true, color: PALETTE.white })],
+          }),
+          PALETTE.ink,
+        ),
+      ),
+    }),
+    ...items.map((item, index) => {
+      const fill = index % 2 === 0 ? PALETTE.panel : PALETTE.white;
+      return new TableRow({
+        children: [
+          createBorderedCell(createBodyParagraph(item.task, { after: 0 }), fill),
+          createBorderedCell(createBodyParagraph(item.owner, { after: 0, color: PALETTE.teal, bold: true }), fill),
+          createBorderedCell(createBodyParagraph(item.deadline, { after: 0 }), fill),
+          createBorderedCell(createBodyParagraph(item.successMetric, { after: 0 }), fill),
+        ],
+      });
+    }),
+  ];
+
+  return new Table({
+    width: { size: 100, type: WidthType.PERCENTAGE },
+    rows,
+  });
+}
+
+function createRejectedTable(items) {
+  return new Table({
+    width: { size: 100, type: WidthType.PERCENTAGE },
+    rows: [
+      new TableRow({
+        children: ["备选方向", "未被采纳原因"].map(title =>
+          new TableCell({
+            shading: { fill: PALETTE.sand },
+            borders: {
+              top: { style: BorderStyle.SINGLE, color: PALETTE.border },
+              bottom: { style: BorderStyle.SINGLE, color: PALETTE.border },
+              left: { style: BorderStyle.SINGLE, color: PALETTE.border },
+              right: { style: BorderStyle.SINGLE, color: PALETTE.border },
+            },
+            children: [
+              new Paragraph({
+                spacing: { after: 0 },
+                children: [createText(title, { bold: true, color: PALETTE.ink })],
+              }),
+            ],
+          }),
+        ),
+      }),
+      ...items.map((item, index) =>
+        new TableRow({
+          children: [
+            new TableCell({
+              shading: { fill: index % 2 === 0 ? PALETTE.white : PALETTE.panel },
+              borders: {
+                top: { style: BorderStyle.SINGLE, color: PALETTE.border },
+                bottom: { style: BorderStyle.SINGLE, color: PALETTE.border },
+                left: { style: BorderStyle.SINGLE, color: PALETTE.border },
+                right: { style: BorderStyle.SINGLE, color: PALETTE.border },
+              },
+              children: [createBodyParagraph(item.option, { after: 0, bold: true })],
+            }),
+            new TableCell({
+              shading: { fill: index % 2 === 0 ? PALETTE.white : PALETTE.panel },
+              borders: {
+                top: { style: BorderStyle.SINGLE, color: PALETTE.border },
+                bottom: { style: BorderStyle.SINGLE, color: PALETTE.border },
+                left: { style: BorderStyle.SINGLE, color: PALETTE.border },
+                right: { style: BorderStyle.SINGLE, color: PALETTE.border },
+              },
+              children: [createBodyParagraph(item.reason, { after: 0 })],
+            }),
+          ],
+        }),
+      ),
+    ],
+  });
+}
+
+function setWorksheetBase(worksheet) {
+  worksheet.properties.defaultRowHeight = 22;
+  worksheet.views = [{ state: "frozen", ySplit: 1 }];
+}
+
+function styleCell(cell, options = {}) {
+  cell.font = {
+    name: DOC_FONT,
+    size: options.size ?? 10.5,
+    bold: Boolean(options.bold),
+    color: { argb: toArgb(options.color ?? PALETTE.ink) },
+  };
+  cell.alignment = {
+    vertical: options.vertical ?? "middle",
+    horizontal: options.horizontal,
+    wrapText: options.wrapText !== false,
+  };
+  if (options.fill) {
+    cell.fill = {
+      type: "pattern",
+      pattern: "solid",
+      fgColor: { argb: toArgb(options.fill) },
+    };
+  }
+  if (options.border !== false) {
+    cell.border = {
+      top: { style: "thin", color: { argb: toArgb(PALETTE.border) } },
+      bottom: { style: "thin", color: { argb: toArgb(PALETTE.border) } },
+      left: { style: "thin", color: { argb: toArgb(PALETTE.border) } },
+      right: { style: "thin", color: { argb: toArgb(PALETTE.border) } },
+    };
+  }
+}
+
+function addWorksheetTitle(worksheet, title, subtitle) {
+  worksheet.mergeCells("A1:F1");
+  worksheet.getCell("A1").value = title;
+  styleCell(worksheet.getCell("A1"), {
+    fill: PALETTE.ink,
+    color: PALETTE.white,
+    bold: true,
+    size: 16,
+    horizontal: "left",
+  });
+
+  worksheet.mergeCells("A2:F2");
+  worksheet.getCell("A2").value = subtitle;
+  styleCell(worksheet.getCell("A2"), {
+    fill: PALETTE.panel,
+    color: PALETTE.muted,
+    size: 10,
+    horizontal: "left",
+  });
+}
+
+function addKeyValueRow(worksheet, rowNumber, label, value, fill = PALETTE.white) {
+  worksheet.mergeCells(`B${rowNumber}:F${rowNumber}`);
+  worksheet.getCell(`A${rowNumber}`).value = label;
+  worksheet.getCell(`B${rowNumber}`).value = value;
+  styleCell(worksheet.getCell(`A${rowNumber}`), {
+    fill: PALETTE.sand,
+    bold: true,
+  });
+  styleCell(worksheet.getCell(`B${rowNumber}`), {
+    fill,
+    horizontal: "left",
+  });
 }
 
 async function ensureExportDir() {
   await fs.mkdir(EXPORT_DIR, { recursive: true });
 }
 
+function resolveMeetingLocalExportDir(outputDir) {
+  const normalized = String(outputDir || "desktop").trim().toLowerCase();
+
+  if (normalized === "downloads" || normalized === "download") {
+    return path.join(os.homedir(), "Downloads", "STARCRAW", "meeting-exports");
+  }
+  if (normalized === "documents" || normalized === "document") {
+    return path.join(os.homedir(), "Documents", "STARCRAW", "meeting-exports");
+  }
+  if (normalized === "temp" || normalized === "tmp") {
+    return EXPORT_DIR;
+  }
+
+  return LOCAL_EXPORT_ROOT;
+}
+
 async function writeDocx(filePath, meeting) {
-  const summaryItems = extractSummaryItems(meeting.summary);
+  const brief = meeting.exportBrief;
   const doc = new Document({
-    creator: "xiaolongxia-ai",
-    title: `${meeting.topic} - 会议结论`,
-    description: "STARCRAW 会议导出",
+    creator: "STARCRAW",
+    title: brief.reportTitle,
+    description: "鹦鹉螺会议结果稿",
     sections: [
       {
         properties: {
           page: {
             margin: {
-              top: 1440,
-              right: 1440,
-              bottom: 1440,
-              left: 1440,
+              top: 1280,
+              right: 1280,
+              bottom: 1280,
+              left: 1280,
             },
           },
         },
         children: [
           new Paragraph({
-            heading: HeadingLevel.TITLE,
-            children: [new TextRun(`${meeting.topic} - 会议纪要`)],
-          }),
-          new Paragraph({
-            children: [new TextRun(`导出时间：${toDisplayTime(meeting.finishedAt)}`)],
-          }),
-          new Paragraph({
-            heading: HeadingLevel.HEADING_1,
-            children: [new TextRun("会议结论")],
-          }),
-          ...summaryItems.map(
-            (item, index) =>
-              new Paragraph({
-                children: [new TextRun(`${index + 1}. ${item}`)],
+            alignment: AlignmentType.CENTER,
+            spacing: { after: 120 },
+            children: [
+              createText(brief.reportTitle, {
+                bold: true,
+                color: PALETTE.ink,
+                size: 34,
               }),
-          ),
-          new Paragraph({
-            heading: HeadingLevel.HEADING_1,
-            children: [new TextRun("会议记录")],
+            ],
           }),
-          ...meeting.speeches.flatMap((speech, index) => [
-            new Paragraph({
-              heading: HeadingLevel.HEADING_2,
-              children: [
-                new TextRun(
-                  `${index + 1}. ${AGENT_LABELS[speech.agentId] ?? speech.agentId} / ${ROLE_LABELS[speech.role] ?? speech.role}`,
-                ),
-              ],
-            }),
-            new Paragraph({
-              children: [new TextRun(`时间：${toDisplayTime(speech.timestamp)}`)],
-            }),
-            new Paragraph({
-              children: [new TextRun(speech.text || "（无内容）")],
-            }),
-          ]),
+          new Paragraph({
+            alignment: AlignmentType.CENTER,
+            spacing: { after: 240 },
+            children: [
+              createText("鹦鹉螺结果稿 · 仅保留最终结论", {
+                color: PALETTE.accent,
+                size: 22,
+              }),
+            ],
+          }),
+          createInfoTable(meeting, brief),
+          createSpacer(180),
+          createHighlightPanel("执行摘要", brief.executiveSummary),
+          createSectionHeading("最终拍板"),
+          createBodyParagraph(brief.finalDecision),
+          createSectionHeading("最佳方案说明"),
+          createBodyParagraph(brief.bestPlan),
+          createSectionHeading("胜出原因"),
+          ...brief.winningReasons.map(item => createBulletParagraph(item)),
+          createSectionHeading("执行动作"),
+          createActionTable(brief.actionItems),
+          createSectionHeading("备选方案与未采纳原因"),
+          createRejectedTable(brief.rejectedAlternatives),
+          createSectionHeading("风险提醒"),
+          ...brief.riskAlerts.map(item => createBulletParagraph(item, PALETTE.accentDark)),
+          createSpacer(180),
+          createHighlightPanel("备注", brief.decisionNote, PALETTE.tealSoft, PALETTE.teal),
         ],
       },
     ],
@@ -143,222 +464,458 @@ async function writeDocx(filePath, meeting) {
 }
 
 async function writeXlsx(filePath, meeting) {
+  const brief = meeting.exportBrief;
   const workbook = new ExcelJS.Workbook();
-  workbook.creator = "xiaolongxia-ai";
+  workbook.creator = "STARCRAW";
   workbook.created = new Date();
   workbook.modified = new Date();
+  workbook.title = brief.reportTitle;
+  workbook.subject = "鹦鹉螺会议结果稿";
 
-  const summarySheet = workbook.addWorksheet("会议结论");
-  summarySheet.columns = [
+  const overviewSheet = workbook.addWorksheet("决策总览");
+  overviewSheet.columns = [
     { header: "字段", key: "field", width: 18 },
-    { header: "内容", key: "value", width: 72 },
+    { header: "内容", key: "value1", width: 22 },
+    { header: "内容2", key: "value2", width: 22 },
+    { header: "内容3", key: "value3", width: 22 },
+    { header: "内容4", key: "value4", width: 22 },
+    { header: "内容5", key: "value5", width: 22 },
   ];
-  summarySheet.getRow(1).font = { name: "Arial", bold: true };
-  summarySheet.addRows([
-    { field: "会议主题", value: meeting.topic },
-    { field: "导出时间", value: toDisplayTime(meeting.finishedAt) },
-    { field: "发言条数", value: meeting.speeches.length },
-  ]);
-  summarySheet.addRow({});
-  summarySheet.addRow({ field: "结论拆解", value: "执行项" });
-  summarySheet.getRow(summarySheet.rowCount).font = { name: "Arial", bold: true };
-  extractSummaryItems(meeting.summary).forEach((item, index) => {
-    summarySheet.addRow({ field: `结论 ${index + 1}`, value: item });
-  });
-  summarySheet.eachRow(row => {
-    row.font = { ...(row.font ?? {}), name: "Arial" };
-    row.alignment = { vertical: "top", wrapText: true };
-  });
+  setWorksheetBase(overviewSheet);
+  addWorksheetTitle(overviewSheet, brief.reportTitle, "鹦鹉螺整理的结果型导出内容，仅保留最终结论。");
+  addKeyValueRow(overviewSheet, 4, "会议议题", meeting.topic, PALETTE.panel);
+  addKeyValueRow(overviewSheet, 5, "导出时间", toDisplayTime(meeting.finishedAt), PALETTE.panel);
+  addKeyValueRow(overviewSheet, 6, "建议主责", brief.ownerRecommendation, PALETTE.greenSoft);
+  addKeyValueRow(overviewSheet, 8, "执行摘要", brief.executiveSummary, PALETTE.accentSoft);
+  addKeyValueRow(overviewSheet, 10, "最终拍板", brief.finalDecision, PALETTE.white);
+  addKeyValueRow(overviewSheet, 12, "最佳方案说明", brief.bestPlan, PALETTE.white);
 
-  const speechSheet = workbook.addWorksheet("会议记录");
-  speechSheet.columns = [
-    { header: "序号", key: "index", width: 8 },
-    { header: "Agent", key: "agent", width: 16 },
-    { header: "角色", key: "role", width: 12 },
-    { header: "时间", key: "time", width: 22 },
-    { header: "发言内容", key: "text", width: 72 },
-  ];
-  speechSheet.getRow(1).font = { name: "Arial", bold: true };
-  meeting.speeches.forEach((speech, index) => {
-    speechSheet.addRow({
-      index: index + 1,
-      agent: AGENT_LABELS[speech.agentId] ?? speech.agentId,
-      role: ROLE_LABELS[speech.role] ?? speech.role,
-      time: toDisplayTime(speech.timestamp),
-      text: speech.text,
+  overviewSheet.mergeCells("A14:F14");
+  overviewSheet.getCell("A14").value = "胜出原因";
+  styleCell(overviewSheet.getCell("A14"), {
+    fill: PALETTE.ink,
+    color: PALETTE.white,
+    bold: true,
+    size: 11,
+    horizontal: "left",
+  });
+  brief.winningReasons.forEach((reason, index) => {
+    overviewSheet.mergeCells(`B${15 + index}:F${15 + index}`);
+    overviewSheet.getCell(`A${15 + index}`).value = `原因 ${index + 1}`;
+    overviewSheet.getCell(`B${15 + index}`).value = reason;
+    styleCell(overviewSheet.getCell(`A${15 + index}`), { fill: PALETTE.sand, bold: true });
+    styleCell(overviewSheet.getCell(`B${15 + index}`), {
+      fill: index % 2 === 0 ? PALETTE.panel : PALETTE.white,
+      horizontal: "left",
     });
   });
-  speechSheet.eachRow(row => {
-    row.font = { ...(row.font ?? {}), name: "Arial" };
-    row.alignment = { vertical: "top", wrapText: true };
+
+  overviewSheet.mergeCells(`A${16 + brief.winningReasons.length}:F${16 + brief.winningReasons.length}`);
+  overviewSheet.getCell(`A${16 + brief.winningReasons.length}`).value = brief.decisionNote;
+  styleCell(overviewSheet.getCell(`A${16 + brief.winningReasons.length}`), {
+    fill: PALETTE.tealSoft,
+    color: PALETTE.teal,
+    size: 10,
+    horizontal: "left",
+  });
+
+  const actionSheet = workbook.addWorksheet("执行清单");
+  actionSheet.columns = [
+    { header: "序号", key: "index", width: 10 },
+    { header: "执行动作", key: "task", width: 38 },
+    { header: "主责", key: "owner", width: 18 },
+    { header: "时间节奏", key: "deadline", width: 16 },
+    { header: "成功标志", key: "successMetric", width: 28 },
+    { header: "备注", key: "note", width: 20 },
+  ];
+  setWorksheetBase(actionSheet);
+  addWorksheetTitle(actionSheet, "执行清单", "优先展示拍板后的动作、主责与判断标准。");
+  const actionHeaderRow = 4;
+  actionSheet.getRow(actionHeaderRow).values = ["序号", "执行动作", "主责", "时间节奏", "成功标志", "备注"];
+  actionSheet.getRow(actionHeaderRow).eachCell((cell) => {
+    styleCell(cell, {
+      fill: PALETTE.ink,
+      color: PALETTE.white,
+      bold: true,
+      horizontal: "center",
+    });
+  });
+  brief.actionItems.forEach((item, index) => {
+    const rowNumber = actionHeaderRow + 1 + index;
+    actionSheet.getRow(rowNumber).values = [
+      index + 1,
+      item.task,
+      item.owner,
+      item.deadline,
+      item.successMetric,
+      item.note || "",
+    ];
+    actionSheet.getRow(rowNumber).eachCell((cell, colNumber) => {
+      styleCell(cell, {
+        fill: index % 2 === 0 ? PALETTE.panel : PALETTE.white,
+        color: colNumber === 3 ? PALETTE.teal : PALETTE.ink,
+        bold: colNumber === 3,
+        horizontal: colNumber === 1 ? "center" : "left",
+      });
+    });
+  });
+
+  const riskSheet = workbook.addWorksheet("风险与备选");
+  riskSheet.columns = [
+    { header: "分类", key: "type", width: 14 },
+    { header: "名称", key: "name", width: 28 },
+    { header: "说明", key: "detail", width: 56 },
+  ];
+  setWorksheetBase(riskSheet);
+  addWorksheetTitle(riskSheet, "风险与备选", "保留结果层面的取舍说明，不写讨论过程。");
+  riskSheet.getRow(4).values = ["分类", "名称", "说明"];
+  riskSheet.getRow(4).eachCell((cell) => {
+    styleCell(cell, {
+      fill: PALETTE.ink,
+      color: PALETTE.white,
+      bold: true,
+      horizontal: "center",
+    });
+  });
+
+  let riskRow = 5;
+  brief.rejectedAlternatives.forEach((item, index) => {
+    riskSheet.getRow(riskRow).values = ["备选方向", item.option, item.reason];
+    riskSheet.getRow(riskRow).eachCell((cell) => {
+      styleCell(cell, {
+        fill: index % 2 === 0 ? PALETTE.roseSoft : PALETTE.white,
+        horizontal: "left",
+      });
+    });
+    riskRow += 1;
+  });
+
+  brief.riskAlerts.forEach((item, index) => {
+    riskSheet.getRow(riskRow).values = ["风险提醒", `提醒 ${index + 1}`, item];
+    riskSheet.getRow(riskRow).eachCell((cell, colNumber) => {
+      styleCell(cell, {
+        fill: index % 2 === 0 ? PALETTE.tealSoft : PALETTE.white,
+        color: colNumber === 1 ? PALETTE.teal : PALETTE.ink,
+        bold: colNumber === 1,
+        horizontal: "left",
+      });
+    });
+    riskRow += 1;
   });
 
   await workbook.xlsx.writeFile(filePath);
 }
 
-function addSummarySlide(pptx, meeting) {
-  const slide = pptx.addSlide();
-  slide.background = { color: "F6F1E8" };
-  slide.addText("会议结论", {
+function addSlideTitle(slide, badge, title, subtitle, accent = PALETTE.accent) {
+  slide.addShape("roundRect", {
     x: 0.6,
-    y: 0.4,
-    w: 5.0,
-    h: 0.5,
-    fontFace: "Arial",
+    y: 0.52,
+    w: 2.1,
+    h: 0.36,
+    rectRadius: 0.08,
+    fill: { color: accent, transparency: 6 },
+    line: { color: accent },
+  });
+  slide.addText(badge, {
+    x: 0.88,
+    y: 0.6,
+    w: 1.5,
+    h: 0.15,
+    fontFace: DOC_FONT,
+    fontSize: 10,
+    bold: true,
+    color: PALETTE.white,
+  });
+  slide.addText(title, {
+    x: 0.7,
+    y: 1.1,
+    w: 8.8,
+    h: 0.58,
+    fontFace: DOC_FONT,
     fontSize: 24,
     bold: true,
-    color: "243447",
+    color: PALETTE.ink,
+    margin: 0,
   });
-  slide.addText(`议题：${meeting.topic}`, {
-    x: 0.6,
-    y: 0.95,
-    w: 10.8,
-    h: 0.35,
-    fontFace: "Arial",
-    fontSize: 11,
-    color: "52606D",
-  });
-
-  const items = extractSummaryItems(meeting.summary).slice(0, 6);
-  items.forEach((item, index) => {
-    const top = 1.55 + index * 0.72;
-    slide.addShape(pptx.ShapeType.roundRect, {
-      x: 0.75,
-      y: top,
-      w: 0.42,
-      h: 0.42,
-      fill: { color: "B85042" },
-      line: { color: "B85042" },
-      radius: 0.08,
-    });
-    slide.addText(String(index + 1), {
-      x: 0.84,
-      y: top + 0.06,
-      w: 0.24,
-      h: 0.18,
-      fontFace: "Arial",
-      fontSize: 10,
-      bold: true,
-      align: "center",
-      color: "FFFFFF",
-    });
-    slide.addText(item, {
-      x: 1.35,
-      y: top - 0.02,
-      w: 10.5,
-      h: 0.52,
-      fontFace: "Arial",
-      fontSize: 15,
-      color: "243447",
-      breakLine: false,
+  if (subtitle) {
+    slide.addText(subtitle, {
+      x: 0.7,
+      y: 1.72,
+      w: 11.2,
+      h: 0.48,
+      fontFace: DOC_FONT,
+      fontSize: 11,
+      color: PALETTE.muted,
       margin: 0,
-      valign: "mid",
     });
+  }
+}
+
+function addCard(slide, { x, y, w, h, fill = PALETTE.white, title, body, accent = PALETTE.accent, bodySize = 14 }) {
+  slide.addShape("roundRect", {
+    x,
+    y,
+    w,
+    h,
+    rectRadius: 0.08,
+    fill: { color: fill },
+    line: { color: PALETTE.border, pt: 1 },
+    shadow: { type: "outer", color: PALETTE.border, blur: 1, angle: 45, distance: 1, opacity: 0.12 },
+  });
+  slide.addText(title, {
+    x: x + 0.22,
+    y: y + 0.18,
+    w: w - 0.44,
+    h: 0.22,
+    fontFace: DOC_FONT,
+    fontSize: 10.5,
+    bold: true,
+    color: accent,
+    margin: 0,
+  });
+  slide.addText(body, {
+    x: x + 0.22,
+    y: y + 0.5,
+    w: w - 0.44,
+    h: h - 0.65,
+    fontFace: DOC_FONT,
+    fontSize: bodySize,
+    color: PALETTE.ink,
+    margin: 0,
+    valign: "top",
   });
 }
 
-function addSpeechSlides(pptx, meeting) {
-  const chunks = [];
-  for (let i = 0; i < meeting.speeches.length; i += 4) {
-    chunks.push(meeting.speeches.slice(i, i + 4));
-  }
-
-  chunks.slice(0, 2).forEach((chunk, slideIndex) => {
-    const slide = pptx.addSlide();
-    slide.background = { color: slideIndex % 2 === 0 ? "FFFDF8" : "EEF3F7" };
-    slide.addText(slideIndex === 0 ? "关键发言" : "补充发言", {
-      x: 0.6,
-      y: 0.4,
-      w: 5.0,
-      h: 0.5,
-      fontFace: "Arial",
-      fontSize: 22,
-      bold: true,
-      color: "243447",
-    });
-
-    chunk.forEach((speech, index) => {
-      const top = 1.25 + index * 1.45;
-      slide.addShape(pptx.ShapeType.roundRect, {
-        x: 0.65,
-        y: top,
-        w: 12.0,
-        h: 1.1,
-        fill: { color: "FFFFFF", transparency: 0 },
-        line: { color: "D9E2EC", width: 1 },
-        radius: 0.08,
-      });
-      slide.addText(`${AGENT_LABELS[speech.agentId] ?? speech.agentId} · ${ROLE_LABELS[speech.role] ?? speech.role}`, {
-        x: 0.9,
-        y: top + 0.1,
-        w: 4.5,
-        h: 0.2,
-        fontFace: "Arial",
-        fontSize: 11,
-        bold: true,
-        color: "B85042",
-      });
-      slide.addText((speech.text || "（无内容）").slice(0, 130), {
-        x: 0.9,
-        y: top + 0.35,
-        w: 11.2,
-        h: 0.55,
-        fontFace: "Arial",
-        fontSize: 13,
-        color: "243447",
-        margin: 0,
-        valign: "top",
-      });
-    });
-  });
+function addBulletList(slide, bullets, x, y, w, h, color = PALETTE.ink, fontSize = 14) {
+  slide.addText(
+    bullets.map(item => ({
+      text: item,
+      options: { bullet: { indent: 18 } },
+    })),
+    {
+      x,
+      y,
+      w,
+      h,
+      fontFace: DOC_FONT,
+      fontSize,
+      color,
+      breakLine: true,
+      margin: 0.02,
+      paraSpaceAfterPt: 10,
+      valign: "top",
+    },
+  );
 }
 
 async function writePptx(filePath, meeting) {
+  const brief = meeting.exportBrief;
   const pptx = new PptxGenJS();
   pptx.layout = "LAYOUT_WIDE";
-  pptx.author = "xiaolongxia-ai";
-  pptx.company = "xiaolongxia-ai";
-  pptx.subject = "会议结论导出";
-  pptx.title = `${meeting.topic} - 会议结论`;
+  pptx.author = "STARCRAW";
+  pptx.company = "STARCRAW";
+  pptx.subject = "鹦鹉螺会议结果稿";
+  pptx.title = brief.reportTitle;
   pptx.theme = {
-    headFontFace: "Arial",
-    bodyFontFace: "Arial",
+    headFontFace: DOC_FONT,
+    bodyFontFace: DOC_FONT,
     lang: "zh-CN",
   };
 
   const cover = pptx.addSlide();
-  cover.background = { color: "243447" };
-  cover.addText("主管 Agent 会议纪要", {
-    x: 0.75,
-    y: 1.0,
-    w: 6.5,
-    h: 0.7,
-    fontFace: "Arial",
+  cover.background = { color: PALETTE.ink };
+  cover.addShape("rect", {
+    x: 0,
+    y: 0,
+    w: 13.333,
+    h: 7.5,
+    fill: { color: PALETTE.ink },
+    line: { color: PALETTE.ink },
+  });
+  cover.addShape("roundRect", {
+    x: 0.72,
+    y: 0.72,
+    w: 2.45,
+    h: 0.38,
+    rectRadius: 0.08,
+    fill: { color: PALETTE.accent, transparency: 4 },
+    line: { color: PALETTE.accent },
+  });
+  cover.addText("鹦鹉螺结果稿", {
+    x: 1.02,
+    y: 0.8,
+    w: 1.8,
+    h: 0.16,
+    fontFace: DOC_FONT,
+    fontSize: 11,
+    bold: true,
+    color: PALETTE.white,
+  });
+  cover.addText(brief.reportTitle, {
+    x: 0.78,
+    y: 1.52,
+    w: 8.8,
+    h: 1.1,
+    fontFace: DOC_FONT,
     fontSize: 28,
     bold: true,
-    color: "FFFFFF",
+    color: PALETTE.white,
+    margin: 0,
   });
-  cover.addText(meeting.topic, {
-    x: 0.75,
-    y: 1.95,
-    w: 8.6,
-    h: 0.7,
-    fontFace: "Arial",
-    fontSize: 20,
-    color: "F4D6CC",
+  cover.addText(brief.executiveSummary, {
+    x: 0.82,
+    y: 3.08,
+    w: 8.2,
+    h: 0.95,
+    fontFace: DOC_FONT,
+    fontSize: 14,
+    color: PALETTE.accentSoft,
+    margin: 0,
+  });
+  cover.addText(`会议议题：${meeting.topic}`, {
+    x: 0.82,
+    y: 5.72,
+    w: 5.8,
+    h: 0.24,
+    fontFace: DOC_FONT,
+    fontSize: 11,
+    color: "D6DEE8",
   });
   cover.addText(`导出时间：${toDisplayTime(meeting.finishedAt)}`, {
-    x: 0.75,
-    y: 4.9,
-    w: 4.2,
-    h: 0.25,
-    fontFace: "Arial",
+    x: 0.82,
+    y: 6.05,
+    w: 5.8,
+    h: 0.24,
+    fontFace: DOC_FONT,
     fontSize: 11,
-    color: "D9E2EC",
+    color: "D6DEE8",
   });
 
-  addSummarySlide(pptx, meeting);
-  addSpeechSlides(pptx, meeting);
+  const summarySlide = pptx.addSlide();
+  summarySlide.background = { color: PALETTE.panel };
+  addSlideTitle(summarySlide, "决策摘要", "本次会议拍板结果", "只保留结果层信息，不展示辩论过程。");
+  addCard(summarySlide, {
+    x: 0.72,
+    y: 2.34,
+    w: 6.2,
+    h: 2.05,
+    fill: PALETTE.accentSoft,
+    title: "最终拍板",
+    body: brief.finalDecision,
+    accent: PALETTE.accentDark,
+    bodySize: 16,
+  });
+  addCard(summarySlide, {
+    x: 7.18,
+    y: 2.34,
+    w: 2.35,
+    h: 2.05,
+    fill: PALETTE.greenSoft,
+    title: "建议主责",
+    body: brief.ownerRecommendation,
+    accent: PALETTE.green,
+    bodySize: 15,
+  });
+  addCard(summarySlide, {
+    x: 9.82,
+    y: 2.34,
+    w: 2.72,
+    h: 2.05,
+    fill: PALETTE.white,
+    title: "导出时间",
+    body: toDisplayTime(meeting.finishedAt),
+    accent: PALETTE.teal,
+    bodySize: 14,
+  });
+  addCard(summarySlide, {
+    x: 0.72,
+    y: 4.68,
+    w: 11.82,
+    h: 1.65,
+    fill: PALETTE.white,
+    title: "执行摘要",
+    body: brief.executiveSummary,
+    accent: PALETTE.teal,
+    bodySize: 15,
+  });
+
+  const planSlide = pptx.addSlide();
+  planSlide.background = { color: "FFFDF8" };
+  addSlideTitle(planSlide, "最佳方案", "为什么这一方案胜出", "保留单一最佳方向，并说明胜出逻辑。", PALETTE.teal);
+  addCard(planSlide, {
+    x: 0.72,
+    y: 2.18,
+    w: 5.5,
+    h: 3.86,
+    fill: PALETTE.white,
+    title: "最佳方案说明",
+    body: brief.bestPlan,
+    accent: PALETTE.teal,
+    bodySize: 15,
+  });
+  addCard(planSlide, {
+    x: 6.52,
+    y: 2.18,
+    w: 6.02,
+    h: 3.86,
+    fill: PALETTE.panel,
+    title: "胜出原因",
+    body: "",
+    accent: PALETTE.accent,
+  });
+  addBulletList(planSlide, brief.winningReasons, 6.8, 2.72, 5.45, 3.0);
+
+  const actionSlide = pptx.addSlide();
+  actionSlide.background = { color: PALETTE.panel };
+  addSlideTitle(actionSlide, "执行动作", "拍板后立即推进的 3 件事", "每项动作都对应主责、节奏与结果标准。", PALETTE.accent);
+  brief.actionItems.slice(0, 3).forEach((item, index) => {
+    addCard(actionSlide, {
+      x: 0.72 + index * 4.12,
+      y: 2.18,
+      w: 3.78,
+      h: 3.96,
+      fill: index === 0 ? PALETTE.accentSoft : index === 1 ? PALETTE.tealSoft : PALETTE.white,
+      title: `动作 ${index + 1}`,
+      body: `${item.task}\n\n主责：${item.owner}\n节奏：${item.deadline}\n成功标志：${item.successMetric}`,
+      accent: index === 1 ? PALETTE.teal : PALETTE.accentDark,
+      bodySize: 14,
+    });
+  });
+
+  const riskSlide = pptx.addSlide();
+  riskSlide.background = { color: "FFFDF8" };
+  addSlideTitle(riskSlide, "风险与备选", "决策边界与未采纳方向", brief.decisionNote, PALETTE.teal);
+  addCard(riskSlide, {
+    x: 0.72,
+    y: 2.18,
+    w: 5.7,
+    h: 3.9,
+    fill: PALETTE.white,
+    title: "风险提醒",
+    body: "",
+    accent: PALETTE.accent,
+  });
+  addBulletList(riskSlide, brief.riskAlerts, 1.0, 2.72, 5.1, 2.95, PALETTE.ink, 14);
+  addCard(riskSlide, {
+    x: 6.72,
+    y: 2.18,
+    w: 5.82,
+    h: 3.9,
+    fill: PALETTE.panel,
+    title: "未采纳方向",
+    body: "",
+    accent: PALETTE.teal,
+  });
+  addBulletList(
+    riskSlide,
+    brief.rejectedAlternatives.map(item => `${item.option}：${item.reason}`),
+    7.0,
+    2.72,
+    5.25,
+    2.95,
+    PALETTE.ink,
+    13,
+  );
 
   await pptx.writeFile({ fileName: filePath });
 }
@@ -369,8 +926,8 @@ export async function exportMeetingDocument({ format, meeting }) {
   }
 
   const normalizedMeeting = {
-    topic: String(meeting?.topic ?? "").trim(),
-    summary: String(meeting?.summary ?? "").trim(),
+    topic: cleanText(meeting?.topic),
+    summary: cleanText(meeting?.summary),
     speeches: normalizeSpeeches(meeting?.speeches),
     finishedAt: meeting?.finishedAt ?? Date.now(),
   };
@@ -381,6 +938,8 @@ export async function exportMeetingDocument({ format, meeting }) {
   if (!normalizedMeeting.summary) {
     throw new Error("会议结论不能为空");
   }
+
+  normalizedMeeting.exportBrief = normalizeMeetingExportBrief(meeting?.exportBrief, normalizedMeeting);
 
   await ensureExportDir();
 
@@ -400,5 +959,23 @@ export async function exportMeetingDocument({ format, meeting }) {
     filePath,
     fileName,
     mimeType: MIME_TYPES[format],
+  };
+}
+
+export async function saveMeetingDocumentToLocalLibrary(fileResult, options = {}) {
+  if (!fileResult?.filePath || !fileResult?.fileName) {
+    throw new Error("会议导出文件不存在，无法保存到本地目录");
+  }
+
+  const targetDir = resolveMeetingLocalExportDir(options.outputDir);
+  await fs.mkdir(targetDir, { recursive: true });
+
+  const targetPath = path.join(targetDir, fileResult.fileName);
+  await fs.copyFile(fileResult.filePath, targetPath);
+
+  return {
+    directory: targetDir,
+    filePath: targetPath,
+    fileName: fileResult.fileName,
   };
 }

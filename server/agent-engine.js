@@ -12,8 +12,23 @@
 // 常量
 // ---------------------------------------------------------------------------
 
+function readPositiveIntEnv(name, fallback) {
+  const raw = process.env[name];
+  const parsed = Number.parseInt(String(raw ?? ""), 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
 /** 单次查询最大轮次（防止无限循环），对应 Python MAX_TURNS */
-const MAX_TURNS = 10;
+const MAX_TURNS = readPositiveIntEnv("AGENT_MAX_TURNS", 30);
+
+/** 接近轮次上限时，主动要求模型停止继续调工具并直接总结 */
+const SOFT_MAX_TURNS = Math.min(
+  readPositiveIntEnv("AGENT_SOFT_MAX_TURNS", Math.max(18, MAX_TURNS - 6)),
+  Math.max(1, MAX_TURNS - 1),
+);
+
+/** 连续重复同一组工具调用多少次后，要求模型停止重复并切换策略 */
+const REPEATED_TOOL_BATCH_LIMIT = readPositiveIntEnv("AGENT_REPEAT_TOOL_BATCH_LIMIT", 3);
 
 /** 会话历史最大消息数（超过后截断保留最近条目） */
 const SESSION_MAX_MESSAGES = 30;
@@ -83,6 +98,28 @@ function extractToolResultTextContent(content) {
     .filter(Boolean)
     .join("\n\n")
     .trim();
+}
+
+function stableSerialize(value) {
+  if (value === null || value === undefined) return String(value);
+  if (typeof value === "string") return JSON.stringify(value);
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableSerialize(item)).join(",")}]`;
+  }
+  if (typeof value === "object") {
+    return `{${Object.keys(value)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${stableSerialize(value[key])}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function getToolBatchSignature(toolUseBlocks) {
+  return toolUseBlocks
+    .map((block) => `${block?.name || ""}:${stableSerialize(block?.input ?? {})}`)
+    .join("||");
 }
 
 function extractToolResultImageParts(content) {
@@ -400,7 +437,10 @@ export async function queryAgent({
   let outputTokensTotal = 0;
   let turnCount = 0;
   let forcedSummary = false;
+  let forcedNearLimitSummary = false;
   let forcedDesktopToolRetry = false;
+  let lastToolBatchSignature = "";
+  let repeatedToolBatchCount = 0;
   const emitTextDelta = (delta) => {
     if (!delta || typeof onTextDelta !== "function") return;
     try {
@@ -427,6 +467,14 @@ export async function queryAgent({
         text: "(达到最大轮次限制，任务终止)",
         tokens: inputTokensTotal + outputTokensTotal,
       };
+    }
+    if (!forcedNearLimitSummary && turnCount >= SOFT_MAX_TURNS) {
+      forcedNearLimitSummary = true;
+      appendToSession(agentId, sessionId, {
+        role: "user",
+        content:
+          "你已接近最大轮次限制。除非缺少决定性信息，否则不要继续调用工具。请基于当前已获得的信息直接给出最终答案，并明确列出仍需人工确认的不确定项。",
+      });
     }
     turnCount++;
 
@@ -716,6 +764,31 @@ export async function queryAgent({
         }
         return { text: "(任务完成，无额外输出)", tokens: inputTokensTotal + outputTokensTotal };
       }
+      const toolBatchSignature = getToolBatchSignature(toolUseBlocks);
+      if (toolBatchSignature && toolBatchSignature === lastToolBatchSignature) {
+        repeatedToolBatchCount += 1;
+      } else {
+        lastToolBatchSignature = toolBatchSignature;
+        repeatedToolBatchCount = 1;
+      }
+
+      if (repeatedToolBatchCount >= REPEATED_TOOL_BATCH_LIMIT) {
+        emitReasoningEvent({
+          status: "running",
+          summary: "检测到重复工具调用",
+          detail: "同一组工具与参数已连续重复，已要求模型停止原样重试并改用新策略或直接总结。",
+        });
+        repeatedToolBatchCount = 0;
+        lastToolBatchSignature = "";
+        appendToSession(agentId, sessionId, {
+          role: "user",
+          content:
+            `系统提示：你刚刚连续重复了同一组工具调用 ${REPEATED_TOOL_BATCH_LIMIT} 次。不要再原样重复同一组工具和参数。`
+            + " 如果当前信息已经足够，请直接总结结果；如果仍需继续，请改用不同的工具、不同的参数、不同的页面策略，或明确向用户说明还缺少什么信息。",
+        });
+        continue;
+      }
+
       const toolResults = await executeTools(toolUseBlocks, tools, {
         agentId,
         sessionId,

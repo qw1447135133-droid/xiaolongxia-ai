@@ -15,6 +15,7 @@ import { syncRuntimeSettings } from "@/lib/runtime-settings-sync";
 import { pickLocaleText } from "@/lib/ui-locale";
 import { useStore } from "@/store";
 import {
+  AGENT_SKILLS,
   AGENT_META,
   TEAM_OPERATING_TEMPLATES,
   getAgentModelRoutingProfile,
@@ -29,6 +30,7 @@ import {
 import type {
   AgentConfig,
   AgentId,
+  AgentSkill,
   DesktopProgramEntry,
   ModelPresetTier,
   ModelProvider,
@@ -427,10 +429,29 @@ function AgentConfigCard({
   onQuickModelPreset: (providerId: string, model: string) => Promise<void>;
   onApplyRolePreset: (providerId?: string) => Promise<void>;
 }) {
+  const locale = useStore(s => s.locale);
   const meta = AGENT_META[agentId];
   const [draft, setDraft] = useState<AgentConfig>(config);
   const configuredProviders = useMemo(() => getConfiguredProviders(providers), [providers]);
   const defaultConfiguredProviderId = configuredProviders[0]?.id || "";
+  const selectedSkills = useMemo(
+    () =>
+      draft.skills
+        .map(skillId => AGENT_SKILLS.find(skill => skill.id === skillId))
+        .filter(Boolean) as AgentSkill[],
+    [draft.skills],
+  );
+  const visibleSkills = useMemo(() => {
+    return [...AGENT_SKILLS].sort((left, right) => {
+      const leftSelected = draft.skills.includes(left.id) ? 1 : 0;
+      const rightSelected = draft.skills.includes(right.id) ? 1 : 0;
+      if (leftSelected !== rightSelected) return rightSelected - leftSelected;
+      const leftRecommended = left.recommendedAgents.includes(agentId) ? 1 : 0;
+      const rightRecommended = right.recommendedAgents.includes(agentId) ? 1 : 0;
+      if (leftRecommended !== rightRecommended) return rightRecommended - leftRecommended;
+      return (left.order ?? 9999) - (right.order ?? 9999) || left.id.localeCompare(right.id);
+    });
+  }, [agentId, draft.skills]);
 
   useEffect(() => {
     setDraft(config);
@@ -499,7 +520,19 @@ function AgentConfigCard({
                 fontWeight: 600,
               }}
             >
-              技能自动分配
+              {selectedSkills.length > 0
+                ? pickLocaleText(locale, {
+                    "zh-CN": `技能档案 ${selectedSkills.length} 项`,
+                    "zh-TW": `技能檔案 ${selectedSkills.length} 項`,
+                    en: `${selectedSkills.length} skills in registry`,
+                    ja: `技能台帳 ${selectedSkills.length} 件`,
+                  })
+                : pickLocaleText(locale, {
+                    "zh-CN": "技能档案同步中",
+                    "zh-TW": "技能檔案同步中",
+                    en: "Skill registry syncing",
+                    ja: "技能台帳を同期中",
+                  })}
             </span>
           </div>
 
@@ -520,6 +553,35 @@ function AgentConfigCard({
             >
               角色推荐: {routingProfile.focusLabel} · {roleRecommendedTier === "reasoning" ? "强推理" : roleRecommendedTier === "balanced" ? "平衡" : "省成本"}
             </span>
+            {selectedSkills.slice(0, 2).map(skill => (
+              <span
+                key={skill.id}
+                style={{
+                  padding: "2px 7px",
+                  borderRadius: 999,
+                  border: "1px solid rgba(255,255,255,0.08)",
+                  background: "rgba(255,255,255,0.04)",
+                  fontSize: 10,
+                  color: "var(--text-muted)",
+                }}
+              >
+                {skill.locales[locale]?.name ?? skill.locales["zh-CN"].name}
+              </span>
+            ))}
+            {selectedSkills.length > 2 ? (
+              <span
+                style={{
+                  padding: "2px 7px",
+                  borderRadius: 999,
+                  border: "1px solid rgba(255,255,255,0.08)",
+                  background: "rgba(255,255,255,0.04)",
+                  fontSize: 10,
+                  color: "var(--text-muted)",
+                }}
+              >
+                +{selectedSkills.length - 2}
+              </span>
+            ) : null}
           </div>
 
           <div style={{ fontSize: 10, color: "var(--text-muted)", marginTop: 6, lineHeight: 1.45 }}>
@@ -721,6 +783,68 @@ function AgentConfigCard({
               value={draft.personality}
               onChange={e => setDraft(prev => ({ ...prev, personality: e.target.value }))}
             />
+          </div>
+
+          <div>
+            <label style={labelStyle}>
+              {pickLocaleText(locale, {
+                "zh-CN": "技能档案",
+                "zh-TW": "技能檔案",
+                en: "Skill Registry",
+                ja: "技能台帳",
+              })}
+            </label>
+            <div style={{ display: "grid", gap: 8 }}>
+              <div style={{ fontSize: 11, color: "var(--text-muted)", lineHeight: 1.6 }}>
+                {pickLocaleText(locale, {
+                  "zh-CN": "系统会在每次任务开始前自动扫描全量技能库，只把本次命中的 skills 注入运行时。这里显示的是该 agent 的完整技能档案，不再手动分配。",
+                  "zh-TW": "系統會在每次任務開始前自動掃描全量技能庫，只把本次命中的 skills 注入執行時。這裡顯示的是該 agent 的完整技能檔案，不再手動分配。",
+                  en: "The system scans the full skill catalog before every task and injects only the matched skills into runtime. This panel shows the complete registry for the agent and is no longer manually assigned.",
+                  ja: "システムは毎回のタスク開始前に全 skill カタログを走査し、今回命中した skills だけを実行時へ注入します。ここは agent の完全な技能台帳で、手動割り当ては行いません。",
+                })}
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                {visibleSkills.map(skill => {
+                  const recommended = skill.recommendedAgents.includes(agentId);
+                  const copy = skill.locales[locale] ?? skill.locales["zh-CN"];
+                  return (
+                    <div
+                      key={skill.id}
+                      style={{
+                        display: "grid",
+                        gap: 4,
+                        minWidth: 142,
+                        maxWidth: 220,
+                        justifyItems: "start",
+                        textAlign: "left",
+                        padding: "8px 10px",
+                        borderRadius: 12,
+                        border: `1px solid ${recommended ? "rgba(var(--accent-rgb), 0.24)" : "var(--border)"}`,
+                        background: recommended ? "rgba(var(--accent-rgb), 0.06)" : "rgba(255,255,255,0.03)",
+                        color: "var(--text)",
+                      }}
+                    >
+                      <span style={{ fontSize: 12, fontWeight: 700, lineHeight: 1.35 }}>
+                        {copy.name}
+                      </span>
+                      <span style={{ fontSize: 10, color: "var(--text-muted)", lineHeight: 1.45 }}>
+                        {copy.short}
+                      </span>
+                      <span style={{ fontSize: 10, color: recommended ? "var(--accent)" : "var(--text-muted)" }}>
+                        {recommended
+                          ? pickLocaleText(locale, {
+                              "zh-CN": "角色推荐",
+                              "zh-TW": "角色推薦",
+                              en: "Recommended",
+                              ja: "推奨",
+                            })
+                          : skill.category}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
           </div>
 
           <div style={{ display: "flex", justifyContent: "flex-end" }}>

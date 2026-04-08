@@ -46,6 +46,10 @@
       {
         "from": "server/",
         "to": "server/"
+      },
+      {
+        "from": "public/splash/",
+        "to": "splash/"
       }
     ],
     "win": {

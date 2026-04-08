@@ -11,6 +11,7 @@ import { join } from "node:path";
 import { getBrowser, getPage } from "./browser-manager.js";
 import { actDesktopCdpApp, openDesktopCdpApp, snapshotDesktopCdpApp } from "./cdp-app-manager.js";
 import { requestDesktopInputControl, requestDesktopInstalledApplications, requestDesktopLaunch, requestDesktopScreenshot } from "./desktop-bridge.js";
+import { exportExcelDocument, exportPresentationDocument, exportWordDocument } from "./document-exporter.js";
 
 // ---------------------------------------------------------------------------
 // ToolBase - 对应 Python ToolBase 基类
@@ -259,6 +260,96 @@ function isBrowserLaunchTarget(target, args = []) {
   return normalizedArgs.some((value) => browserPatterns.some((pattern) => pattern.test(value)));
 }
 
+function isWordProcessorLaunchTarget(target, args = []) {
+  const normalizedTarget = String(target || "").trim().toLowerCase();
+  const normalizedArgs = Array.isArray(args)
+    ? args.map((value) => String(value || "").trim().toLowerCase()).filter(Boolean)
+    : [];
+
+  const wordPatterns = [
+    /\b(?:winword|winword\.exe)\b/i,
+    /\b(?:microsoft word)\b/i,
+    /(?:^|[^a-z])word(?:[^a-z]|$)/i,
+    /(?:文档|文書|文字處理|文字处理)/i,
+  ];
+
+  if (wordPatterns.some((pattern) => pattern.test(normalizedTarget))) {
+    return true;
+  }
+
+  return normalizedArgs.some((value) => wordPatterns.some((pattern) => pattern.test(value)));
+}
+
+function isExplicitWordAppRequest(text) {
+  const normalized = String(text || "").trim().toLowerCase();
+  if (!normalized) return false;
+
+  return [
+    /(?:打开|啟動|启动|开启|開啟|唤起).{0,12}(?:word|microsoft word|winword|微软 word|微軟 word)/i,
+    /\b(?:open|launch|start)\b.{0,18}\b(?:word|microsoft word|winword)\b/i,
+  ].some((pattern) => pattern.test(normalized));
+}
+
+function isSpreadsheetAppLaunchTarget(target, args = []) {
+  const normalizedTarget = String(target || "").trim().toLowerCase();
+  const normalizedArgs = Array.isArray(args)
+    ? args.map((value) => String(value || "").trim().toLowerCase()).filter(Boolean)
+    : [];
+
+  const patterns = [
+    /\b(?:excel|excel\.exe)\b/i,
+    /\b(?:microsoft excel)\b/i,
+    /\b(?:xlsx|xlsm|xls|csv|tsv)\b/i,
+    /(?:表格|試算表|试算表|電子表格|电子表格)/i,
+  ];
+
+  if (patterns.some((pattern) => pattern.test(normalizedTarget))) {
+    return true;
+  }
+
+  return normalizedArgs.some((value) => patterns.some((pattern) => pattern.test(value)));
+}
+
+function isExplicitSpreadsheetAppRequest(text) {
+  const normalized = String(text || "").trim().toLowerCase();
+  if (!normalized) return false;
+
+  return [
+    /(?:打开|啟動|启动|开启|開啟|唤起).{0,12}(?:excel|microsoft excel)/i,
+    /\b(?:open|launch|start)\b.{0,18}\b(?:excel|microsoft excel)\b/i,
+  ].some((pattern) => pattern.test(normalized));
+}
+
+function isPresentationAppLaunchTarget(target, args = []) {
+  const normalizedTarget = String(target || "").trim().toLowerCase();
+  const normalizedArgs = Array.isArray(args)
+    ? args.map((value) => String(value || "").trim().toLowerCase()).filter(Boolean)
+    : [];
+
+  const patterns = [
+    /\b(?:powerpoint|powerpnt|powerpoint\.exe|powerpnt\.exe)\b/i,
+    /\b(?:microsoft powerpoint)\b/i,
+    /\b(?:pptx|ppt)\b/i,
+    /(?:演示|簡報|简报|投影片|幻灯片|幻燈片|presentation|slides)/i,
+  ];
+
+  if (patterns.some((pattern) => pattern.test(normalizedTarget))) {
+    return true;
+  }
+
+  return normalizedArgs.some((value) => patterns.some((pattern) => pattern.test(value)));
+}
+
+function isExplicitPresentationAppRequest(text) {
+  const normalized = String(text || "").trim().toLowerCase();
+  if (!normalized) return false;
+
+  return [
+    /(?:打开|啟動|启动|开启|開啟|唤起).{0,14}(?:powerpoint|ppt|microsoft powerpoint)/i,
+    /\b(?:open|launch|start)\b.{0,18}\b(?:powerpoint|ppt|microsoft powerpoint)\b/i,
+  ].some((pattern) => pattern.test(normalized));
+}
+
 // ---------------------------------------------------------------------------
 // 浏览器工具 - 仅 orchestrator 可用
 // ---------------------------------------------------------------------------
@@ -337,6 +428,84 @@ class BrowserScreenshotTool extends ToolBase {
         { type: "image", source: { type: "base64", media_type: "image/png", data } },
       ],
     };
+  }
+}
+
+class BrowserListImagesTool extends ToolBase {
+  name = "browser_list_images";
+  searchHint = "提取当前网页可直接引用的图片资源列表，适合为新闻截图、财报配图、图表图片、页面证据图寻找可展示的公开图片 URL";
+  maxResultSizeChars = 8000;
+
+  inputSchema() {
+    return {
+      type: "object",
+      properties: {
+        limit: { type: "number", description: "最多返回多少张图片，默认 8" },
+        minWidth: { type: "number", description: "最小宽度过滤，默认 160" },
+      },
+      required: [],
+    };
+  }
+
+  async call({ limit = 8, minWidth = 160 } = {}) {
+    const page = await getPage();
+    const safeLimit = Math.min(Math.max(Number(limit) || 8, 1), 12);
+    const safeMinWidth = Math.max(Number(minWidth) || 160, 0);
+
+    const payload = await page.evaluate(({ safeLimit: innerLimit, safeMinWidth: innerMinWidth }) => {
+      const seen = new Set();
+      const candidates = [];
+
+      const pushCandidate = (candidate) => {
+        if (!candidate?.url || seen.has(candidate.url)) return;
+        seen.add(candidate.url);
+        candidates.push(candidate);
+      };
+
+      const normalizeUrl = (value) => {
+        if (!value || typeof value !== "string") return "";
+        try {
+          return new URL(value, window.location.href).href;
+        } catch {
+          return "";
+        }
+      };
+
+      const metaImage = document.querySelector('meta[property="og:image"], meta[name="og:image"], meta[name="twitter:image"], meta[property="twitter:image"]');
+      if (metaImage instanceof HTMLMetaElement) {
+        const url = normalizeUrl(metaImage.content);
+        if (url && !url.startsWith("data:")) {
+          pushCandidate({
+            url,
+            alt: "meta image",
+            width: 0,
+            height: 0,
+            source: "meta",
+          });
+        }
+      }
+
+      Array.from(document.images)
+        .map((img) => ({
+          url: normalizeUrl(img.currentSrc || img.src),
+          alt: (img.alt || img.getAttribute("aria-label") || img.getAttribute("title") || "").trim(),
+          width: Number(img.naturalWidth || img.width || 0),
+          height: Number(img.naturalHeight || img.height || 0),
+          source: "img",
+        }))
+        .filter((item) => item.url && !item.url.startsWith("data:") && item.width >= innerMinWidth)
+        .sort((a, b) => (b.width * b.height) - (a.width * a.height))
+        .slice(0, innerLimit)
+        .forEach(pushCandidate);
+
+      return {
+        pageUrl: window.location.href,
+        title: document.title,
+        images: candidates.slice(0, innerLimit),
+      };
+    }, { safeLimit, safeMinWidth });
+
+    return { data: JSON.stringify(payload) };
   }
 }
 
@@ -482,11 +651,48 @@ class DesktopLaunchNativeApplicationTool extends ToolBase {
   }
 
   async checkPermissions({ target, args = [] } = {}, context = {}) {
+    const userInstruction = String(context.userInstruction || "").trim();
+
+    if (isWordProcessorLaunchTarget(target, args)) {
+      if (isExplicitWordAppRequest(userInstruction)) {
+        return { behavior: "allow" };
+      }
+
+      if (isResearchDeliveryIntent(userInstruction)) {
+        return { behavior: "deny", reason: "这是生成本地 Word 文档的任务，应直接使用 document_write_docx 导出文件，而不是启动 Word 程序。" };
+      }
+
+      return { behavior: "deny", reason: "当前并非明确的“打开 Word 程序”指令。若目标是交付文档，请优先使用 document_write_docx。" };
+    }
+
+    if (isSpreadsheetAppLaunchTarget(target, args)) {
+      if (isExplicitSpreadsheetAppRequest(userInstruction)) {
+        return { behavior: "allow" };
+      }
+
+      if (isResearchDeliveryIntent(userInstruction)) {
+        return { behavior: "deny", reason: "这是生成本地 Excel 文件的任务，应直接使用 document_write_xlsx 导出文件，而不是启动 Excel 程序。" };
+      }
+
+      return { behavior: "deny", reason: "当前并非明确的“打开 Excel 程序”指令。若目标是交付表格，请优先使用 document_write_xlsx。" };
+    }
+
+    if (isPresentationAppLaunchTarget(target, args)) {
+      if (isExplicitPresentationAppRequest(userInstruction)) {
+        return { behavior: "allow" };
+      }
+
+      if (isResearchDeliveryIntent(userInstruction)) {
+        return { behavior: "deny", reason: "这是生成本地 PPT 文件的任务，应直接使用 document_write_pptx 导出文件，而不是启动 PowerPoint 程序。" };
+      }
+
+      return { behavior: "deny", reason: "当前并非明确的“打开 PowerPoint 程序”指令。若目标是交付简报，请优先使用 document_write_pptx。" };
+    }
+
     if (!isBrowserLaunchTarget(target, args)) {
       return { behavior: "allow" };
     }
 
-    const userInstruction = String(context.userInstruction || "").trim();
     if (!userInstruction) {
       return { behavior: "deny", reason: "缺少用户明确的浏览器打开指令，不能通过通用程序启动工具拉起外部浏览器。" };
     }
@@ -512,6 +718,161 @@ class DesktopLaunchNativeApplicationTool extends ToolBase {
       preferredWs: context.desktopClientWs,
     });
 
+    return {
+      data: JSON.stringify({
+        success: true,
+        ...result,
+      }),
+    };
+  }
+}
+
+class DocumentWriteDocxTool extends ToolBase {
+  name = "document_write_docx";
+  searchHint = "直接生成 Word 文档（.docx）并保存到桌面、文档、下载或临时目录。适用于报告、总结、纪要、方案、文案初稿等本地交付任务。除非用户明确要求打开 Microsoft Word 程序，否则写 Word 文档时应优先使用这个工具，而不是启动桌面版 Word。";
+
+  inputSchema() {
+    return {
+      type: "object",
+      properties: {
+        title: { type: "string", description: "文档标题。" },
+        summary: { type: "string", description: "可选的摘要内容。" },
+        content: { type: "string", description: "正文内容，支持普通段落、Markdown 风格标题（# / ## / ###）和无序列表（- 项目）。" },
+        sections: {
+          type: "array",
+          description: "可选的结构化章节列表。若已提供 content，可不填。",
+          items: {
+            type: "object",
+            properties: {
+              heading: { type: "string", description: "章节标题。" },
+              body: { type: "string", description: "章节正文。" },
+            },
+            required: ["heading", "body"],
+          },
+        },
+        fileName: { type: "string", description: "可选。导出的文件名，不含扩展名也可以。" },
+        outputDir: {
+          type: "string",
+          enum: ["desktop", "documents", "downloads", "temp"],
+          description: "导出目录，默认 desktop。",
+        },
+      },
+      required: ["title"],
+    };
+  }
+
+  async call(args = {}) {
+    const result = await exportWordDocument(args);
+    return {
+      data: JSON.stringify({
+        success: true,
+        ...result,
+      }),
+    };
+  }
+}
+
+class DocumentWriteXlsxTool extends ToolBase {
+  name = "document_write_xlsx";
+  searchHint = "直接生成 Excel 文件（.xlsx）并保存到桌面、文档、下载或临时目录。适用于表格、清单、数据汇总、对比表、计划排期、客户名单等本地交付任务。除非用户明确要求打开 Microsoft Excel 程序，否则生成表格时应优先使用这个工具。";
+
+  inputSchema() {
+    return {
+      type: "object",
+      properties: {
+        title: { type: "string", description: "Excel 文件标题。" },
+        summary: { type: "string", description: "可选的文件摘要或工作表顶部说明。" },
+        sheets: {
+          type: "array",
+          description: "工作表列表。",
+          items: {
+            type: "object",
+            properties: {
+              name: { type: "string", description: "工作表名称。" },
+              notes: { type: "string", description: "工作表顶部说明，可选。" },
+              columns: {
+                type: "array",
+                items: { type: "string" },
+                description: "表格列名，可选。",
+              },
+              rows: {
+                type: "array",
+                description: "表格数据，推荐对象数组。",
+                items: {
+                  anyOf: [
+                    { type: "object" },
+                    { type: "array", items: { type: ["string", "number", "boolean", "null"] } },
+                  ],
+                },
+              },
+            },
+            required: ["name"],
+          },
+        },
+        fileName: { type: "string", description: "可选。导出的文件名。" },
+        outputDir: {
+          type: "string",
+          enum: ["desktop", "documents", "downloads", "temp"],
+          description: "导出目录，默认 desktop。",
+        },
+      },
+      required: ["title", "sheets"],
+    };
+  }
+
+  async call(args = {}) {
+    const result = await exportExcelDocument(args);
+    return {
+      data: JSON.stringify({
+        success: true,
+        ...result,
+      }),
+    };
+  }
+}
+
+class DocumentWritePptxTool extends ToolBase {
+  name = "document_write_pptx";
+  searchHint = "直接生成 PPT 文件（.pptx）并保存到桌面、文档、下载或临时目录。适用于汇报、方案、提案、复盘、演示稿、讲稿等本地交付任务。除非用户明确要求打开 Microsoft PowerPoint 程序，否则生成简报时应优先使用这个工具。";
+
+  inputSchema() {
+    return {
+      type: "object",
+      properties: {
+        title: { type: "string", description: "PPT 主标题。" },
+        subtitle: { type: "string", description: "可选副标题。" },
+        slides: {
+          type: "array",
+          description: "幻灯片列表。",
+          items: {
+            type: "object",
+            properties: {
+              title: { type: "string", description: "单页标题。" },
+              body: { type: "string", description: "单页正文概述，可选。" },
+              bullets: {
+                type: "array",
+                items: { type: "string" },
+                description: "要点列表，可选。",
+              },
+              note: { type: "string", description: "页脚提示或备注，可选。" },
+              accent: { type: "string", description: "可选强调色，例如 0F766E。" },
+            },
+            required: ["title"],
+          },
+        },
+        fileName: { type: "string", description: "可选。导出的文件名。" },
+        outputDir: {
+          type: "string",
+          enum: ["desktop", "documents", "downloads", "temp"],
+          description: "导出目录，默认 desktop。",
+        },
+      },
+      required: ["title", "slides"],
+    };
+  }
+
+  async call(args = {}) {
+    const result = await exportPresentationDocument(args);
     return {
       data: JSON.stringify({
         success: true,
@@ -1106,7 +1467,11 @@ class DesktopCdpActTool extends ToolBase {
 // ---------------------------------------------------------------------------
 
 /** 内置工具列表（通用，所有 Agent 可用） */
-const BUILT_IN_TOOLS = [];
+const BUILT_IN_TOOLS = [
+  new DocumentWriteDocxTool(),
+  new DocumentWriteXlsxTool(),
+  new DocumentWritePptxTool(),
+];
 
 /** 浏览器工具列表（仅 orchestrator 可用） */
 const BROWSER_TOOLS = [
@@ -1114,9 +1479,19 @@ const BROWSER_TOOLS = [
   new BrowserPageInfoTool(),
   new BrowserGetTextTool(),
   new BrowserScreenshotTool(),
+  new BrowserListImagesTool(),
   new BrowserActTool(),
   new BrowserActSingleTool(),
   new BrowserActMultiTool(),
+];
+
+const MEETING_BROWSER_TOOLS = [
+  new BrowserGotoTool(),
+  new BrowserPageInfoTool(),
+  new BrowserGetTextTool(),
+  new BrowserScreenshotTool(),
+  new BrowserListImagesTool(),
+  new BrowserActTool(),
 ];
 
 const DESKTOP_TOOLS = [
@@ -1150,4 +1525,8 @@ export function getAgentTools(agentId) {
     ...base,
     ...DESKTOP_TOOLS.filter((t) => t.isEnabled()),
   ];
+}
+
+export function getMeetingTools() {
+  return MEETING_BROWSER_TOOLS.filter((tool) => tool.isEnabled());
 }

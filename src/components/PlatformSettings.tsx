@@ -10,6 +10,12 @@ import { sendWs } from "@/hooks/useWebSocket";
 
 type PlatformDebugAction = "send_test_message";
 
+function deriveTelegramTargetFromInboundKey(inboundMessageKey: string | undefined) {
+  const normalized = String(inboundMessageKey || "").trim();
+  const match = normalized.match(/^telegram:([^:]+):/i);
+  return match?.[1]?.trim() || "";
+}
+
 export function PlatformSettings() {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
@@ -26,12 +32,24 @@ export function PlatformSettings() {
 function PlatformCard({ def }: { def: PlatformDef }) {
   const { platformConfigs, updatePlatformConfig, updatePlatformField, reconcilePlatformConfig } = useStore();
   const config = platformConfigs[def.id] ?? { enabled: false, fields: {}, status: "idle" };
+  const inboundDebugTarget =
+    String(config.lastInboundTarget || "").trim()
+    || (def.id === "telegram" ? deriveTelegramTargetFromInboundKey(config.lastInboundMessageKey) : "");
   const defaultDebugTarget =
     def.id === "telegram"
       ? (config.fields.defaultChatId ?? "").trim()
       : def.id === "feishu"
         ? (config.fields.defaultOpenId ?? "").trim()
         : "";
+  const persistedDebugTarget = String(config.lastDebugTarget || "").trim();
+  const preferredDebugTarget =
+    def.id === "telegram"
+      ? (inboundDebugTarget || defaultDebugTarget || persistedDebugTarget)
+      : (defaultDebugTarget || inboundDebugTarget || persistedDebugTarget);
+  const canApplyInboundTelegramTarget =
+    def.id === "telegram"
+    && Boolean(inboundDebugTarget)
+    && inboundDebugTarget !== defaultDebugTarget;
   const [expanded, setExpanded] = useState(false);
   const [saving, setSaving] = useState(false);
   const [debugBusyAction, setDebugBusyAction] = useState<PlatformDebugAction | null>(null);
@@ -92,7 +110,7 @@ function PlatformCard({ def }: { def: PlatformDef }) {
     setDebugBusyAction(action);
     setDebugFeedback(null);
     try {
-      const targetId = String(config.lastDebugTarget || defaultDebugTarget || "").trim() || undefined;
+      const targetId = preferredDebugTarget || undefined;
       const url = await resolveBackendUrl("/api/platform-debug");
       const response = await fetch(url, {
         method: "POST",
@@ -138,7 +156,7 @@ function PlatformCard({ def }: { def: PlatformDef }) {
         ? "#888"
         : "#ef4444";
   const diagnosis = getPlatformDiagnosis(def, config.status, allRequiredFilled);
-  const communicationTarget = String(config.lastDebugTarget || defaultDebugTarget || "").trim();
+  const communicationTarget = preferredDebugTarget;
 
   return (
     <div className="card" style={{ padding: 0, overflow: "hidden" }}>
@@ -214,29 +232,61 @@ function PlatformCard({ def }: { def: PlatformDef }) {
           )}
 
           {/* 字段输入 */}
-          {def.fields.map(field => (
-            field.toggleable
-              ? <ToggleableField key={field.key} field={field} value={config.fields[field.key] ?? ""} onChange={v => updatePlatformField(def.id, field.key, v)} />
-              : <div key={field.key}>
-                  <label style={{ fontSize: 11, color: "var(--text-muted)", display: "block", marginBottom: 4 }}>
-                    {field.label}
-                    {field.required && <span style={{ color: "var(--danger)", marginLeft: 2 }}>*</span>}
-                    {field.hint && (
-                      <span style={{ marginLeft: 6, color: "var(--text-muted)", fontWeight: 400 }}>
-                        — {field.hint}
-                      </span>
-                    )}
-                  </label>
-                  <input
-                    className="input"
-                    type={field.secret ? "password" : "text"}
-                    placeholder={field.placeholder}
-                    value={config.fields[field.key] ?? ""}
-                    onChange={e => updatePlatformField(def.id, field.key, e.target.value)}
-                    style={{ fontSize: 12, width: "100%" }}
-                  />
-                </div>
-          ))}
+          {def.fields.map(field => {
+            if (field.toggleable) {
+              return (
+                <ToggleableField
+                  key={field.key}
+                  field={field}
+                  value={config.fields[field.key] ?? ""}
+                  onChange={v => updatePlatformField(def.id, field.key, v)}
+                />
+              );
+            }
+
+            const isTelegramChatIdField = def.id === "telegram" && field.key === "defaultChatId";
+
+            return (
+              <div key={field.key}>
+                <label style={{ fontSize: 11, color: "var(--text-muted)", display: "block", marginBottom: 4 }}>
+                  {field.label}
+                  {field.required && <span style={{ color: "var(--danger)", marginLeft: 2 }}>*</span>}
+                  {field.hint && (
+                    <span style={{ marginLeft: 6, color: "var(--text-muted)", fontWeight: 400 }}>
+                      — {field.hint}
+                    </span>
+                  )}
+                </label>
+                <input
+                  className="input"
+                  type={field.secret ? "password" : "text"}
+                  placeholder={field.placeholder}
+                  value={config.fields[field.key] ?? ""}
+                  onChange={e => updatePlatformField(def.id, field.key, e.target.value)}
+                  style={{ fontSize: 12, width: "100%" }}
+                />
+                {isTelegramChatIdField ? (
+                  <div style={{ marginTop: 6, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8 }}>
+                    <span style={{ fontSize: 11, color: "var(--text-muted)", lineHeight: 1.6 }}>
+                      {inboundDebugTarget
+                        ? `最近一次真实会话 Chat ID：${inboundDebugTarget}`
+                        : "先在 Telegram 里给机器人发一条消息，程序就会自动记录真实 Chat ID。"}
+                    </span>
+                    {canApplyInboundTelegramTarget ? (
+                      <button
+                        type="button"
+                        className="btn-ghost"
+                        onClick={() => updatePlatformField(def.id, field.key, inboundDebugTarget)}
+                        style={{ fontSize: 11, padding: "4px 10px", minWidth: 112 }}
+                      >
+                        使用最近会话 ID
+                      </button>
+                    ) : null}
+                  </div>
+                ) : null}
+              </div>
+            );
+          })}
 
           <label
             style={{
@@ -364,8 +414,22 @@ function PlatformCard({ def }: { def: PlatformDef }) {
             <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text)" }}>测试通信</div>
             <div style={{ fontSize: 11, color: "var(--text-muted)", lineHeight: 1.6 }}>
               向当前平台发送一条测试消息，用于确认账号、凭证和默认目标是否连通。
-              {communicationTarget ? ` 当前目标 ${communicationTarget}。` : " 未设置默认目标时会尝试使用平台内置默认收件方。"}
+              {communicationTarget
+                ? ` 当前目标 ${communicationTarget}${
+                    def.id === "telegram" && inboundDebugTarget
+                      ? "（已优先使用最近一次真实会话）"
+                      : defaultDebugTarget && persistedDebugTarget && defaultDebugTarget !== persistedDebugTarget
+                        ? "（已优先使用当前配置）"
+                        : ""
+                  }。`
+                : " 未设置默认目标时会尝试使用平台内置默认收件方。"}
             </div>
+
+            {def.id === "telegram" ? (
+              <div style={{ fontSize: 11, color: "var(--text-muted)", lineHeight: 1.6 }}>
+                Telegram 私聊外发需要真实数字 Chat ID；`@username` 或机器人用户名不能直接作为私聊目标。
+              </div>
+            ) : null}
 
             {debugFeedback ? (
               <div style={{

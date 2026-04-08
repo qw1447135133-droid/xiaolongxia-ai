@@ -34,7 +34,7 @@ import type {
   TeamOperatingTemplateId,
   UiLocale,
 } from "./types";
-import { AGENT_META, PLATFORM_DEFINITIONS } from "./types";
+import { AGENT_META, AGENT_SKILLS, PLATFORM_DEFINITIONS } from "./types";
 import {
   type ChatSession,
   DEFAULT_CHAT_TITLE,
@@ -89,6 +89,26 @@ import type {
   SemanticMemoryConfig,
 } from "@/types/semantic-memory";
 import type { WorkflowContextSnapshot, WorkflowRun, WorkflowTemplate } from "@/types/workflows";
+
+type UiTheme = "light" | "dark";
+
+function sanitizeUiTheme(value: unknown, fallback: UiTheme = "light"): UiTheme {
+  const raw = typeof value === "string" ? value.trim().toLowerCase() : "";
+  if (raw === "light" || raw === "dark") return raw;
+  return fallback;
+}
+
+function migrateLegacyUiTheme(value: unknown): UiTheme {
+  const raw = typeof value === "string" ? value.trim().toLowerCase() : "";
+  if (raw === "coral" || raw === "jade") return "dark";
+  if (raw === "dark") return "light";
+  return sanitizeUiTheme(raw, "light");
+}
+
+function applyUiTheme(theme: UiTheme) {
+  if (typeof document === "undefined") return;
+  document.documentElement.setAttribute("data-theme", theme);
+}
 
 interface AgentSlice {
   agents: Record<AgentId, AgentState>;
@@ -167,6 +187,7 @@ export interface MeetingSpeech {
 }
 
 export interface MeetingRecord {
+  id: string;
   topic: string;
   summary: string;
   speeches: MeetingSpeech[];
@@ -178,6 +199,7 @@ interface MeetingSlice {
   meetingActive: boolean;
   meetingTopic: string;
   latestMeetingRecord: MeetingRecord | null;
+  meetingHistory: MeetingRecord[];
   addMeetingSpeech: (s: MeetingSpeech) => void;
   clearMeeting: () => void;
   setMeetingActive: (v: boolean) => void;
@@ -220,7 +242,7 @@ interface SettingsSlice {
 }
 
 interface UISlice {
-  theme: "dark" | "coral" | "jade";
+  theme: UiTheme;
   locale: UiLocale;
   leftOpen: boolean;
   rightOpen: boolean;
@@ -578,6 +600,7 @@ function initAgents(): Record<AgentId, AgentState> {
 }
 
 function initAgentConfigs(): Record<AgentId, AgentConfig> {
+  const allSkillIds = AGENT_SKILLS.map(skill => skill.id);
   const result = {} as Record<AgentId, AgentConfig>;
   for (const [id, meta] of Object.entries(AGENT_META) as [AgentId, typeof AGENT_META[AgentId]][]) {
     result[id] = {
@@ -587,7 +610,7 @@ function initAgentConfigs(): Record<AgentId, AgentConfig> {
       personality: meta.defaultPersonality,
       model: "",
       providerId: "",
-      skills: [],
+      skills: allSkillIds,
     };
   }
   return result;
@@ -625,22 +648,26 @@ function normalizeAgentConfigs(
   currentConfigs: Record<AgentId, AgentConfig>,
   persistedConfigs?: Partial<Record<AgentId, Partial<AgentConfig>>>
 ): Record<AgentId, AgentConfig> {
+  const allSkillIds = AGENT_SKILLS.map(skill => skill.id);
   return Object.fromEntries(
     (Object.keys(AGENT_META) as AgentId[]).map(id => {
       const fallback = currentConfigs[id];
       const persisted = persistedConfigs?.[id];
       return [
         id,
-        {
-          ...fallback,
-          ...persisted,
-          name: shouldMigrateLegacyAgentName(id, persisted?.name) ? fallback.name : (persisted?.name ?? fallback.name),
-          emoji: shouldMigrateLegacyAgentEmoji(id, persisted?.emoji) ? fallback.emoji : (persisted?.emoji ?? fallback.emoji),
-          skills: Array.isArray(persisted?.skills) ? persisted.skills : fallback.skills,
-        },
-      ];
-    })
-  ) as Record<AgentId, AgentConfig>;
+          {
+            ...fallback,
+            ...persisted,
+            name: shouldMigrateLegacyAgentName(id, persisted?.name) ? fallback.name : (persisted?.name ?? fallback.name),
+            emoji: shouldMigrateLegacyAgentEmoji(id, persisted?.emoji) ? fallback.emoji : (persisted?.emoji ?? fallback.emoji),
+            skills: Array.from(new Set([
+              ...allSkillIds,
+              ...(Array.isArray(persisted?.skills) ? persisted.skills : fallback.skills),
+            ])),
+          },
+        ];
+      })
+    ) as Record<AgentId, AgentConfig>;
 }
 
 function syncAgentsWithConfigs(
@@ -2065,7 +2092,7 @@ export const useStore = create<Store>()(
           },
         })),
 
-      theme: "dark",
+      theme: "light",
       locale: "zh-CN",
       leftOpen: true,
       rightOpen: true,
@@ -2074,10 +2101,9 @@ export const useStore = create<Store>()(
       focusedBusinessContentTaskId: null,
       focusedWorkflowRunId: null,
       setTheme: (theme) => {
-        if (typeof document !== "undefined") {
-          document.documentElement.setAttribute("data-theme", theme === "dark" ? "" : theme);
-        }
-        set({ theme });
+        const nextTheme = sanitizeUiTheme(theme, "light");
+        applyUiTheme(nextTheme);
+        set({ theme: nextTheme });
       },
       setLocale: (locale) => {
         if (typeof document !== "undefined") {
@@ -3903,23 +3929,35 @@ export const useStore = create<Store>()(
       meetingActive: false,
       meetingTopic: "",
       latestMeetingRecord: null,
+      meetingHistory: [],
       addMeetingSpeech: (speech) => set(st => ({ meetingSpeeches: [...st.meetingSpeeches, speech] })),
-      clearMeeting: () => set({ meetingSpeeches: [], meetingActive: false }),
+      clearMeeting: () => set({ meetingSpeeches: [], meetingActive: false, meetingTopic: "" }),
       setMeetingActive: (meetingActive) => set({ meetingActive }),
       setMeetingTopic: (meetingTopic) => set({ meetingTopic }),
       finalizeMeeting: ({ topic, summary, finishedAt }) =>
-        set(st => ({
-          meetingActive: false,
-          latestMeetingRecord: {
+        set(st => {
+          const resolvedFinishedAt = finishedAt ?? Date.now();
+          const record = {
+            id: `meeting-${resolvedFinishedAt}`,
             topic,
             summary,
             speeches: st.meetingSpeeches,
-            finishedAt: finishedAt ?? Date.now(),
-          },
-        })),
+            finishedAt: resolvedFinishedAt,
+          };
+          return {
+            meetingActive: false,
+            meetingTopic: "",
+            latestMeetingRecord: record,
+            meetingHistory: [
+              record,
+              ...st.meetingHistory.filter(item => item.id !== record.id),
+            ].slice(0, 24),
+          };
+        }),
     }),
     {
       name: "xiaolongxia-settings",
+      version: 2,
       partialize: (s) => ({
         providers: s.providers,
         agentConfigs: s.agentConfigs,
@@ -3949,6 +3987,7 @@ export const useStore = create<Store>()(
         activeExecutionRunId: s.activeExecutionRunId,
         workflowRuns: s.workflowRuns,
         latestMeetingRecord: s.latestMeetingRecord,
+        meetingHistory: s.meetingHistory,
         workspacePinnedPreviews: s.workspacePinnedPreviews,
         workspaceSavedBundles: s.workspaceSavedBundles,
         workspaceProjectMemories: s.workspaceProjectMemories,
@@ -3965,6 +4004,15 @@ export const useStore = create<Store>()(
         businessChannelSessions: s.businessChannelSessions,
         semanticKnowledgeDocs: s.semanticKnowledgeDocs,
       }),
+      migrate: (persisted, version) => {
+        const persistedStore = (persisted ?? {}) as Partial<Store>;
+        return {
+          ...persistedStore,
+          theme: version < 2
+            ? migrateLegacyUiTheme(persistedStore.theme)
+            : sanitizeUiTheme(persistedStore.theme, "light"),
+        } as Store;
+      },
       merge: (persisted, current) => {
         const persistedStore = (persisted ?? {}) as Partial<Store>;
         const merged = { ...current, ...persistedStore } as Store;
@@ -3997,6 +4045,7 @@ export const useStore = create<Store>()(
 
         return ensureChatHydration({
           ...merged,
+          theme: sanitizeUiTheme(persistedStore.theme, current.theme),
           agentConfigs,
           agents,
           assistantFeedbackProfile,

@@ -1,12 +1,5 @@
 {
-  "providers": [
-    {
-      "id": "volcengine-coding-344z0p7e",
-      "name": "火山方舟 Coding Plan",
-      "apiKey": "8997b6ae-3bcd-4043-bbd5-41eb38e0aa04",
-      "baseUrl": "https://ark.cn-beijing.volces.com/api/coding/v3"
-    }
-  ],
+  "providers": [],
   "agentConfigs": {
     "orchestrator": {
       "id": "orchestrator",
@@ -17,7 +10,38 @@
       "providerId": "volcengine-coding-344z0p7e",
       "skills": [
         "frontend",
-        "doc_excel"
+        "doc_word",
+        "doc_ppt",
+        "doc_excel",
+        "screenshot",
+        "image_edit",
+        "find_skills",
+        "skill_creator",
+        "ontology",
+        "api_gateway",
+        "playwright_automation",
+        "web_search_plus",
+        "self_improving_agent",
+        "market_research",
+        "channel_support_triage",
+        "sales_follow_up",
+        "content_planning",
+        "content_publishing",
+        "ticket_resolution",
+        "approval_guardrails",
+        "desktop_takeover",
+        "local_app_operator",
+        "knowledge_maintenance",
+        "workflow_restage",
+        "remote_supervision",
+        "quote_proposal",
+        "lead_enrichment",
+        "customer_research",
+        "meeting_briefing",
+        "executive_reporting",
+        "campaign_review",
+        "incident_response",
+        "crm_hygiene"
       ]
     },
     "explorer": {
@@ -28,8 +52,39 @@
       "model": "doubao-seed-2.0-lite",
       "providerId": "volcengine-coding-344z0p7e",
       "skills": [
+        "frontend",
+        "doc_word",
+        "doc_ppt",
         "doc_excel",
-        "screenshot"
+        "screenshot",
+        "image_edit",
+        "find_skills",
+        "skill_creator",
+        "ontology",
+        "api_gateway",
+        "playwright_automation",
+        "web_search_plus",
+        "self_improving_agent",
+        "market_research",
+        "channel_support_triage",
+        "sales_follow_up",
+        "content_planning",
+        "content_publishing",
+        "ticket_resolution",
+        "approval_guardrails",
+        "desktop_takeover",
+        "local_app_operator",
+        "knowledge_maintenance",
+        "workflow_restage",
+        "remote_supervision",
+        "quote_proposal",
+        "lead_enrichment",
+        "customer_research",
+        "meeting_briefing",
+        "executive_reporting",
+        "campaign_review",
+        "incident_response",
+        "crm_hygiene"
       ]
     },
     "writer": {
@@ -40,8 +95,39 @@
       "model": "doubao-seed-2.0-code",
       "providerId": "volcengine-coding-344z0p7e",
       "skills": [
+        "frontend",
+        "doc_word",
         "doc_ppt",
-        "doc_word"
+        "doc_excel",
+        "screenshot",
+        "image_edit",
+        "find_skills",
+        "skill_creator",
+        "ontology",
+        "api_gateway",
+        "playwright_automation",
+        "web_search_plus",
+        "self_improving_agent",
+        "market_research",
+        "channel_support_triage",
+        "sales_follow_up",
+        "content_planning",
+        "content_publishing",
+        "ticket_resolution",
+        "approval_guardrails",
+        "desktop_takeover",
+        "local_app_operator",
+        "knowledge_maintenance",
+        "workflow_restage",
+        "remote_supervision",
+        "quote_proposal",
+        "lead_enrichment",
+        "customer_research",
+        "meeting_briefing",
+        "executive_reporting",
+        "campaign_review",
+        "incident_response",
+        "crm_hygiene"
       ]
     },
     "designer": {
@@ -53,8 +139,38 @@
       "providerId": "volcengine-coding-344z0p7e",
       "skills": [
         "frontend",
+        "doc_word",
+        "doc_ppt",
+        "doc_excel",
+        "screenshot",
         "image_edit",
-        "screenshot"
+        "find_skills",
+        "skill_creator",
+        "ontology",
+        "api_gateway",
+        "playwright_automation",
+        "web_search_plus",
+        "self_improving_agent",
+        "market_research",
+        "channel_support_triage",
+        "sales_follow_up",
+        "content_planning",
+        "content_publishing",
+        "ticket_resolution",
+        "approval_guardrails",
+        "desktop_takeover",
+        "local_app_operator",
+        "knowledge_maintenance",
+        "workflow_restage",
+        "remote_supervision",
+        "quote_proposal",
+        "lead_enrichment",
+        "customer_research",
+        "meeting_briefing",
+        "executive_reporting",
+        "campaign_review",
+        "incident_response",
+        "crm_hygiene"
       ]
     },
     "performer": {
@@ -65,7 +181,39 @@
       "model": "doubao-seed-2.0-lite",
       "providerId": "volcengine-coding-344z0p7e",
       "skills": [
-        "doc_ppt"
+        "frontend",
+        "doc_word",
+        "doc_ppt",
+        "doc_excel",
+        "screenshot",
+        "image_edit",
+        "find_skills",
+        "skill_creator",
+        "ontology",
+        "api_gateway",
+        "playwright_automation",
+        "web_search_plus",
+        "self_improving_agent",
+        "market_research",
+        "channel_support_triage",
+        "sales_follow_up",
+        "content_planning",
+        "content_publishing",
+        "ticket_resolution",
+        "approval_guardrails",
+        "desktop_takeover",
+        "local_app_operator",
+        "knowledge_maintenance",
+        "workflow_restage",
+        "remote_supervision",
+        "quote_proposal",
+        "lead_enrichment",
+        "customer_research",
+        "meeting_briefing",
+        "executive_reporting",
+        "campaign_review",
+        "incident_response",
+        "crm_hygiene"
       ]
     },
     "greeter": {
@@ -76,118 +224,176 @@
       "model": "doubao-seed-2.0-code",
       "providerId": "volcengine-coding-344z0p7e",
       "skills": [
-        "doc_word"
+        "frontend",
+        "doc_word",
+        "doc_ppt",
+        "doc_excel",
+        "screenshot",
+        "image_edit",
+        "find_skills",
+        "skill_creator",
+        "ontology",
+        "api_gateway",
+        "playwright_automation",
+        "web_search_plus",
+        "self_improving_agent",
+        "market_research",
+        "channel_support_triage",
+        "sales_follow_up",
+        "content_planning",
+        "content_publishing",
+        "ticket_resolution",
+        "approval_guardrails",
+        "desktop_takeover",
+        "local_app_operator",
+        "knowledge_maintenance",
+        "workflow_restage",
+        "remote_supervision",
+        "quote_proposal",
+        "lead_enrichment",
+        "customer_research",
+        "meeting_briefing",
+        "executive_reporting",
+        "campaign_review",
+        "incident_response",
+        "crm_hygiene"
       ]
     }
   },
   "platformConfigs": {
     "telegram": {
       "enabled": false,
-      "fields": {
-        "proxy": ""
-      },
+      "fields": {},
       "status": "connected",
       "detail": "连接器已自动恢复，可直接接收和发送消息。",
       "healthScore": 100,
-      "lastDebugAction": "simulate_inbound",
+      "lastDebugAction": "send_test_message",
       "lastDebugOk": true,
-      "lastDebugStatus": "completed",
-      "lastDebugMessage": "已注入 qa-final-002 的模拟入站消息",
-      "lastDebugTarget": "qa-final-002",
-      "lastDebugAt": 1775390680076,
+      "lastDebugStatus": "sent",
+      "lastDebugMessage": "已向 6470391105 发送测试消息",
+      "lastDebugTarget": "6470391105",
+      "lastDebugAt": 1775592866508,
       "debugHistory": [
         {
-          "action": "simulate_inbound",
-          "ok": true,
-          "status": "completed",
-          "target": "qa-chat-001",
-          "message": "已注入 qa-chat-001 的模拟入站消息",
-          "at": 1775390220075
-        },
-        {
-          "action": "simulate_inbound",
-          "ok": true,
-          "status": "completed",
-          "target": "qa-chat-002",
-          "message": "已注入 qa-chat-002 的模拟入站消息",
-          "at": 1775390220256
-        },
-        {
-          "action": "simulate_inbound",
-          "ok": true,
-          "status": "completed",
-          "target": "qa-handle-001",
-          "message": "已注入 qa-handle-001 的模拟入站消息",
-          "at": 1775390257390
-        },
-        {
-          "action": "simulate_inbound",
-          "ok": true,
-          "status": "completed",
-          "target": "qa-handle-002",
-          "message": "已注入 qa-handle-002 的模拟入站消息",
-          "at": 1775390637817
-        },
-        {
-          "action": "diagnose",
-          "ok": true,
-          "status": "completed",
-          "message": "存在阻断项，建议先补齐配置后再联调。",
-          "at": 1775390679952
-        },
-        {
-          "action": "simulate_inbound",
-          "ok": true,
-          "status": "completed",
-          "target": "qa-final-001",
-          "message": "已注入 qa-final-001 的模拟入站消息",
-          "at": 1775390679955
-        },
-        {
-          "action": "simulate_inbound",
-          "ok": true,
-          "status": "completed",
-          "target": "qa-final-001",
-          "message": "已注入 qa-final-001 的模拟入站消息",
-          "at": 1775390680014
-        },
-        {
-          "action": "simulate_inbound",
-          "ok": true,
-          "status": "completed",
+          "action": "send_test_message",
+          "ok": false,
+          "status": "failed",
           "target": "qa-final-002",
-          "message": "已注入 qa-final-002 的模拟入站消息",
-          "at": 1775390680076
+          "message": "ETELEGRAM: 400 Bad Request: chat not found",
+          "at": 1775590042373
+        },
+        {
+          "action": "send_test_message",
+          "ok": false,
+          "status": "failed",
+          "target": "qa-final-002",
+          "message": "ETELEGRAM: 400 Bad Request: chat not found",
+          "at": 1775590129730
+        },
+        {
+          "action": "send_test_message",
+          "ok": false,
+          "status": "failed",
+          "target": "@test0571bot",
+          "message": "ETELEGRAM: 400 Bad Request: chat not found",
+          "at": 1775591047447
+        },
+        {
+          "action": "send_test_message",
+          "ok": false,
+          "status": "failed",
+          "target": "test0571bot",
+          "message": "ETELEGRAM: 400 Bad Request: chat not found",
+          "at": 1775591054666
+        },
+        {
+          "action": "send_test_message",
+          "ok": false,
+          "status": "failed",
+          "target": "test0571bot",
+          "message": "ETELEGRAM: 400 Bad Request: chat not found",
+          "at": 1775591060971
+        },
+        {
+          "action": "send_test_message",
+          "ok": false,
+          "status": "failed",
+          "target": "@test0571bot",
+          "message": "ETELEGRAM: 400 Bad Request: chat not found",
+          "at": 1775591197316
+        },
+        {
+          "action": "send_test_message",
+          "ok": false,
+          "status": "failed",
+          "target": "@test0571bot",
+          "message": "ETELEGRAM: 400 Bad Request: chat not found",
+          "at": 1775591816647
+        },
+        {
+          "action": "send_test_message",
+          "ok": true,
+          "status": "sent",
+          "target": "6470391105",
+          "message": "已向 6470391105 发送测试消息",
+          "at": 1775592866508
         }
       ],
-      "lastCheckedAt": 1775458705344,
-      "pendingEvents": 1,
-      "lastEventAt": 1775390681335,
-      "lastInboundAt": 1775390680076,
-      "lastInboundMessageKey": "debug:telegram:qa-final-002:1775390680076",
-      "accountLabel": "Telegram Bot",
-      "errorMsg": "平台 telegram 未连接",
-      "lastOutboundFailureAt": 1775390681335,
-      "outboundRetryCount": 1,
-      "outboundCooldownUntil": 1775390711335,
+      "lastCheckedAt": 1775652667770,
+      "pendingEvents": 0,
+      "lastEventAt": 1775592866508,
+      "lastInboundAt": 1775591843184,
+      "lastInboundMessageKey": "telegram:6470391105:24",
+      "accountLabel": "chat:6470391105",
+      "lastOutboundFailureAt": 1775591816646,
+      "outboundRetryCount": 0,
       "recentFailedMessages": [
         {
-          "target": "qa-chat-002",
-          "message": "您好，规格说明我这边马上发您。",
-          "reason": "平台 telegram 未连接",
-          "at": 1775390221519,
+          "target": "qa-final-002",
+          "message": "这是一条平台联调测试消息。",
+          "reason": "ETELEGRAM: 400 Bad Request: chat not found",
+          "at": 1775590129729,
           "retryCount": 1
         },
         {
-          "target": "qa-final-002",
-          "message": "您好，参数信息我整理后发您。",
-          "reason": "平台 telegram 未连接",
-          "at": 1775390681335,
+          "target": "@test0571bot",
+          "message": "这是一条平台联调测试消息。",
+          "reason": "ETELEGRAM: 400 Bad Request: chat not found",
+          "at": 1775591047446,
+          "retryCount": 1
+        },
+        {
+          "target": "test0571bot",
+          "message": "这是一条平台联调测试消息。",
+          "reason": "ETELEGRAM: 400 Bad Request: chat not found",
+          "at": 1775591054665,
+          "retryCount": 1
+        },
+        {
+          "target": "test0571bot",
+          "message": "这是一条平台联调测试消息。",
+          "reason": "ETELEGRAM: 400 Bad Request: chat not found",
+          "at": 1775591060970,
+          "retryCount": 1
+        },
+        {
+          "target": "@test0571bot",
+          "message": "这是一条平台联调测试消息。",
+          "reason": "ETELEGRAM: 400 Bad Request: chat not found",
+          "at": 1775591197316,
+          "retryCount": 1
+        },
+        {
+          "target": "@test0571bot",
+          "message": "这是一条平台联调测试消息。",
+          "reason": "ETELEGRAM: 400 Bad Request: chat not found",
+          "at": 1775591816646,
           "retryCount": 1
         }
       ],
-      "lastSyncedAt": 1775458705344,
-      "requireOutboundApproval": false
+      "lastSyncedAt": 1775652667770,
+      "requireOutboundApproval": false,
+      "lastOutboundSuccessAt": 1775592866508
     },
     "line": {
       "enabled": false,
@@ -234,22 +440,16 @@
     "enabled": true,
     "whitelistMode": false,
     "favorites": [],
-    "whitelist": [
-      {
-        "id": "desktop-entry-1775495743254-nn3um",
-        "label": "Telegram.lnk",
-        "target": "C:\\Users\\14471\\Desktop\\Telegram.lnk",
-        "args": [],
-        "source": "manual",
-        "createdAt": 1775495743254,
-        "updatedAt": 1775495743254
-      }
-    ],
+    "whitelist": [],
     "inputControl": {
-      "enabled": true,
-      "autoOpenPanelOnAction": true,
+      "enabled": false,
+      "autoOpenPanelOnAction": false,
       "requireManualTakeoverForVerification": true
     }
+  },
+  "skillProvisioning": {
+    "enabled": true,
+    "autoCreateLocalSkills": true
   },
   "hermesDispatchSettings": {
     "activePlannerProfileId": "default",

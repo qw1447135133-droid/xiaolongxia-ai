@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>STARCRAW</title>
+    <style>
+      :root {
+        color-scheme: dark;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        overflow: hidden;
+        background:
+          radial-gradient(circle at top, rgba(41, 121, 255, 0.22), transparent 45%),
+          radial-gradient(circle at bottom right, rgba(0, 229, 255, 0.12), transparent 36%),
+          #040814;
+        font-family: "SF Pro Display", "PingFang SC", "Microsoft YaHei UI", sans-serif;
+      }
+      .shell {
+        position: relative;
+        width: 100vw;
+        height: 100vh;
+        border-radius: 24px;
+        overflow: hidden;
+        background: rgba(4, 8, 20, 0.94);
+        box-shadow:
+          inset 0 0 0 1px rgba(148, 163, 184, 0.14),
+          0 22px 48px rgba(0, 0, 0, 0.42);
+      }
+      video {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        display: block;
+        filter: saturate(1.08) contrast(1.02);
+      }
+      .overlay {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+        padding: 18px 20px;
+        background:
+          linear-gradient(180deg, rgba(2, 6, 23, 0.55), transparent 26%, transparent 74%, rgba(2, 6, 23, 0.72));
+        pointer-events: none;
+      }
+      .eyebrow {
+        font-size: 11px;
+        letter-spacing: 0.28em;
+        text-transform: uppercase;
+        color: rgba(226, 232, 240, 0.78);
+      }
+      .footer {
+        display: flex;
+        align-items: flex-end;
+        justify-content: flex-end;
+        gap: 0;
+      }
+      .status {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        min-width: 188px;
+        padding: 8px 0 0;
+        border-top: 1px solid rgba(226, 232, 240, 0.18);
+      }
+      .status-dot {
+        width: 7px;
+        height: 7px;
+        border-radius: 999px;
+        background: rgba(248, 250, 252, 0.9);
+        box-shadow:
+          0 0 0 4px rgba(148, 163, 184, 0.08),
+          0 0 18px rgba(191, 219, 254, 0.28);
+        flex: 0 0 auto;
+        margin-top: 1px;
+      }
+      .status-body {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 2px;
+        min-width: 0;
+      }
+      .status-label {
+        font-size: 9px;
+        letter-spacing: 0.22em;
+        text-transform: uppercase;
+        color: rgba(226, 232, 240, 0.42);
+      }
+      .status-copy {
+        font-size: 12px;
+        letter-spacing: 0.05em;
+        color: rgba(248, 250, 252, 0.9);
+      }
+    </style>
+  </head>
+  <body>
+    <main class="shell">
+      <video id="startup-video" autoplay muted playsinline></video>
+      <section class="overlay">
+        <div class="eyebrow">Startup Sequence</div>
+        <div class="footer">
+          <div class="status">
+            <span class="status-dot" aria-hidden="true"></span>
+            <div class="status-body">
+              <span class="status-label">System Link</span>
+              <span class="status-copy">主控中枢接入中</span>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+    <script>
+      const doneMarker = '__STARTUP_SPLASH_DONE__';
+      const errorPrefix = '__STARTUP_SPLASH_ERROR__';
+      const finish = (marker) => console.log(marker);
+      const params = new URLSearchParams(window.location.search);
+      const videoUrl = params.get('video');
+      const video = document.getElementById('startup-video');
+
+      if (!videoUrl) {
+        finish(`${errorPrefix}:missing-video-url`);
+      } else {
+        video.src = videoUrl;
+        video.addEventListener('ended', () => finish(doneMarker), { once: true });
+        video.addEventListener('error', () => {
+          const code = video.error ? video.error.code : 'unknown';
+          finish(`${errorPrefix}:media-error-${code}`);
+        }, { once: true });
+        video.play().catch((error) => {
+          finish(`${errorPrefix}:play-rejected:${error && error.message ? error.message : 'unknown'}`);
+        });
+      }
+
+      setTimeout(() => finish(doneMarker), 12000);
+    </script>
+  </body>
+</html>

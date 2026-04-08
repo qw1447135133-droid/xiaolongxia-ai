@@ -47,6 +47,7 @@ type WsMessage =
       lastEventAt?: number;
       lastInboundAt?: number;
       lastInboundMessageKey?: string;
+      lastInboundTarget?: string;
       lastOutboundSuccessAt?: number;
       lastOutboundFailureAt?: number;
       outboundRetryCount?: number;
@@ -892,6 +893,7 @@ function handleMessage(msg: WsMessage) {
         lastEventAt: msg.lastEventAt,
         lastInboundAt: msg.lastInboundAt,
         lastInboundMessageKey: msg.lastInboundMessageKey,
+        lastInboundTarget: msg.lastInboundTarget,
         lastOutboundSuccessAt: msg.lastOutboundSuccessAt,
         lastOutboundFailureAt: msg.lastOutboundFailureAt,
         outboundRetryCount: msg.outboundRetryCount,

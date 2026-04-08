@@ -17,6 +17,7 @@ import { filterByProjectScope } from "@/lib/project-context";
 import { useStore } from "@/store";
 import { randomId } from "@/lib/utils";
 import { cancelExecutionRun, sendExecutionDispatch } from "@/lib/execution-dispatch";
+import { ConversationComposerShell } from "@/components/ConversationComposerShell";
 
 type AttachmentKind = "image" | "document" | "audio" | "video" | "other";
 
@@ -445,59 +446,50 @@ export function CommandInput({
         </div>
       )}
 
-      {attachments.length > 0 && (
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 10 }}>
-          {attachments.map(({ id, file, kind }) => (
-            <div
-              key={id}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 8,
-                padding: "6px 10px",
-                borderRadius: "var(--radius-sm)",
-                border: "1px solid var(--border)",
-                background: "rgba(247,249,253,0.96)",
-                fontSize: 11,
-              }}
-            >
-              <span style={{ color: "var(--text-muted)" }}>{getAttachmentBadge(kind)}</span>
-              <span style={{ color: "var(--text)" }}>{file.name}</span>
-              <span style={{ color: "var(--text-muted)" }}>{formatFileSize(file.size)}</span>
-              <button type="button" className="btn-ghost" onClick={() => removeAttachment(id)} style={{ padding: "2px 6px", fontSize: 11 }}>
-                移除
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
-
-      <div className="command-input__row">
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept={ACCEPTED_FILE_TYPES}
-          multiple
-          onChange={handleFileChange}
-          style={{ display: "none" }}
-        />
-        <button
-          type="button"
-          className="command-input__upload command-input__send2"
-          onClick={openFilePicker}
-          disabled={isDispatching}
-          title="添加附件"
-        >
-          +
-        </button>
-        <textarea
-          className="input command-input__field"
-          value={commandDraft}
-          onChange={(event) => setCommandDraft(event.target.value)}
-          placeholder="输入你的任务、问题、网页研究需求或桌面执行目标"
-          rows={4}
-        />
-        {activeChatExecutionRun ? (
+      <ConversationComposerShell
+        accept={ACCEPTED_FILE_TYPES}
+        fileInputRef={fileInputRef}
+        onFileChange={handleFileChange}
+        onOpenFilePicker={openFilePicker}
+        uploadTitle="添加附件"
+        disabled={isDispatching}
+        uploadActive={attachments.length > 0}
+        attachments={attachments.length > 0 ? (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 10 }}>
+            {attachments.map(({ id, file, kind }) => (
+              <div
+                key={id}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  padding: "6px 10px",
+                  borderRadius: "var(--radius-sm)",
+                  border: "1px solid var(--border)",
+                  background: "rgba(247,249,253,0.96)",
+                  fontSize: 11,
+                }}
+              >
+                <span style={{ color: "var(--text-muted)" }}>{getAttachmentBadge(kind)}</span>
+                <span style={{ color: "var(--text)" }}>{file.name}</span>
+                <span style={{ color: "var(--text-muted)" }}>{formatFileSize(file.size)}</span>
+                <button type="button" className="btn-ghost" onClick={() => removeAttachment(id)} style={{ padding: "2px 6px", fontSize: 11 }}>
+                  移除
+                </button>
+              </div>
+            ))}
+          </div>
+        ) : null}
+        field={(
+          <textarea
+            className="input command-input__field"
+            value={commandDraft}
+            onChange={(event) => setCommandDraft(event.target.value)}
+            placeholder="输入你的任务、问题、网页研究需求或桌面执行目标"
+            rows={2}
+          />
+        )}
+        action={activeChatExecutionRun ? (
           <button
             className={`command-input__send command-input__send2 command-input__stop ${cancellingRunId === activeChatExecutionRun.id ? "is-pending" : "is-ready"}`}
             onClick={stopCurrentReply}
@@ -530,23 +522,22 @@ export function CommandInput({
             )}
           </button>
         )}
-      </div>
-
-      {showFooter ? (
-        <div className="command-input__footer">
-          {attachments.length > 0
-            ? `${attachments.length} attachment(s) ready.${activeProjectMemory && includeProjectMemory ? ` Active memory: ${activeProjectMemory.name}.` : ""} You can also inject file context directly from Desk preview tabs.`
-            : activeProjectMemory && includeProjectMemory
-              ? `当前发送会自动附带项目记忆「${activeProjectMemory.name}」，也可以在上方随时关闭。`
-              : recommendedProjectMemories.length > 0
-                ? `未手动激活项目记忆时，系统会优先参考推荐结果，并在命中足够高时自动召回。`
-                : recommendedDeskNotes.length > 0
-                  ? `系统已找到相关 Desk Notes，可一键注入输入框作为语义上下文。`
-                  : recommendedKnowledgeDocuments.length > 0
-                    ? `系统已命中可复用知识文档，可直接注入输入框或在发送时自动参与召回。`
-                    : "Use the + button for attachments, or send file path/context from Desk with one click."}
-        </div>
-      ) : null}
+        hint={showFooter ? (
+          <div className="command-input__footer">
+            {attachments.length > 0
+              ? `${attachments.length} attachment(s) ready.${activeProjectMemory && includeProjectMemory ? ` Active memory: ${activeProjectMemory.name}.` : ""} You can also inject file context directly from Desk preview tabs.`
+              : activeProjectMemory && includeProjectMemory
+                ? `当前发送会自动附带项目记忆「${activeProjectMemory.name}」，也可以在上方随时关闭。`
+                : recommendedProjectMemories.length > 0
+                  ? `未手动激活项目记忆时，系统会优先参考推荐结果，并在命中足够高时自动召回。`
+                  : recommendedDeskNotes.length > 0
+                    ? `系统已找到相关 Desk Notes，可一键注入输入框作为语义上下文。`
+                    : recommendedKnowledgeDocuments.length > 0
+                      ? `系统已命中可复用知识文档，可直接注入输入框或在发送时自动参与召回。`
+                      : "Use the + button for attachments, or send file path/context from Desk with one click."}
+          </div>
+        ) : null}
+      />
     </div>
   );
 }

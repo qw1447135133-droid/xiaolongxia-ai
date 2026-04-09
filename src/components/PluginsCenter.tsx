@@ -1,5 +1,6 @@
 "use client";
 
+import type { CSSProperties } from "react";
 import { useMemo, useState } from "react";
 import { useStore } from "@/store";
 import { pickLocaleText } from "@/lib/ui-locale";
@@ -8,6 +9,7 @@ import type { UiLocale } from "@/store/types";
 
 export function PluginsCenter() {
   const locale = useStore(s => s.locale);
+  const theme = useStore(s => s.theme);
   const enabledPluginIds = useStore(s => s.enabledPluginIds);
   const togglePlugin = useStore(s => s.togglePlugin);
   const applyPluginPack = useStore(s => s.applyPluginPack);
@@ -44,6 +46,7 @@ export function PluginsCenter() {
     () => PLUGIN_CATALOG.find(plugin => plugin.id === selectedPluginId) ?? null,
     [selectedPluginId],
   );
+  const isDark = theme === "dark";
 
   const extensionGoal = pickLocaleText(locale, {
     "zh-CN": "先把插件能力边界、权限等级与扩展方向讲清楚，再逐步接入更深的后端插件协议。",
@@ -105,9 +108,13 @@ export function PluginsCenter() {
                     padding: 14,
                     minHeight: 224,
                     borderRadius: 18,
-                    border: `1px solid ${pack.accent}33`,
-                    background: `linear-gradient(180deg, ${pack.accent}18, rgba(255,255,255,0.92) 42%, rgba(255,255,255,0.98) 100%)`,
-                    boxShadow: "0 14px 30px rgba(15, 23, 42, 0.05)",
+                    border: `1px solid ${isDark ? `${pack.accent}4d` : `${pack.accent}33`}`,
+                    background: isDark
+                      ? `linear-gradient(180deg, ${pack.accent}26, rgba(28, 33, 44, 0.96) 36%, rgba(22, 26, 35, 0.98) 100%)`
+                      : `linear-gradient(180deg, ${pack.accent}18, rgba(255,255,255,0.92) 42%, rgba(255,255,255,0.98) 100%)`,
+                    boxShadow: isDark
+                      ? "inset 0 1px 0 rgba(255,255,255,0.04), 0 14px 30px rgba(0, 0, 0, 0.26)"
+                      : "0 14px 30px rgba(15, 23, 42, 0.05)",
                   }}
                 >
                   <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}>
@@ -119,9 +126,9 @@ export function PluginsCenter() {
                           borderRadius: 12,
                           display: "grid",
                           placeItems: "center",
-                          border: `1px solid ${pack.accent}44`,
-                          background: `${pack.accent}18`,
-                          color: "var(--text)",
+                          border: `1px solid ${isDark ? `${pack.accent}52` : `${pack.accent}44`}`,
+                          background: isDark ? "rgba(255,255,255,0.06)" : `${pack.accent}18`,
+                          color: isDark ? "rgba(255,255,255,0.92)" : "var(--text)",
                           flexShrink: 0,
                         }}
                       >
@@ -148,9 +155,13 @@ export function PluginsCenter() {
                         display: "inline-flex",
                         alignItems: "center",
                         justifyContent: "center",
-                        background: packEnabled ? `${pack.accent}18` : "rgba(148, 163, 184, 0.12)",
-                        border: `1px solid ${packEnabled ? `${pack.accent}36` : "rgba(148, 163, 184, 0.18)"}`,
-                        color: packEnabled ? pack.accent : "var(--text-muted)",
+                        background: packEnabled
+                          ? (isDark ? `${pack.accent}24` : `${pack.accent}18`)
+                          : (isDark ? "rgba(255, 255, 255, 0.05)" : "rgba(148, 163, 184, 0.12)"),
+                        border: `1px solid ${packEnabled
+                          ? (isDark ? `${pack.accent}42` : `${pack.accent}36`)
+                          : (isDark ? "rgba(148, 163, 184, 0.2)" : "rgba(148, 163, 184, 0.18)")}`,
+                        color: packEnabled ? (isDark ? "rgba(255,255,255,0.9)" : pack.accent) : "var(--text-muted)",
                         fontSize: 10,
                         fontWeight: 700,
                       }}
@@ -176,8 +187,12 @@ export function PluginsCenter() {
                           style={{
                             padding: "4px 8px",
                             borderRadius: 999,
-                            border: `1px solid ${pluginEnabled ? `${pack.accent}26` : "rgba(148, 163, 184, 0.18)"}`,
-                            background: pluginEnabled ? `${pack.accent}12` : "rgba(255,255,255,0.72)",
+                            border: `1px solid ${pluginEnabled
+                              ? (isDark ? `${pack.accent}38` : `${pack.accent}26`)
+                              : (isDark ? "rgba(148, 163, 184, 0.18)" : "rgba(148, 163, 184, 0.18)")}`,
+                            background: pluginEnabled
+                              ? (isDark ? `${pack.accent}1c` : `${pack.accent}12`)
+                              : (isDark ? "rgba(255,255,255,0.05)" : "rgba(255,255,255,0.72)"),
                             fontSize: 10,
                             color: pluginEnabled ? "var(--text)" : "var(--text-muted)",
                             fontWeight: pluginEnabled ? 700 : 600,
@@ -197,8 +212,10 @@ export function PluginsCenter() {
                       minHeight: 36,
                       width: "100%",
                       borderRadius: 14,
-                      borderColor: packEnabled ? `${pack.accent}30` : "var(--border)",
-                      background: packEnabled ? `${pack.accent}10` : "rgba(255,255,255,0.82)",
+                      borderColor: packEnabled ? `${pack.accent}${isDark ? "42" : "30"}` : "var(--border)",
+                      background: packEnabled
+                        ? (isDark ? `${pack.accent}1e` : `${pack.accent}10`)
+                        : (isDark ? "rgba(255,255,255,0.06)" : "rgba(255,255,255,0.82)"),
                       color: packEnabled ? "var(--text)" : "var(--text)",
                       fontWeight: 700,
                       fontSize: 11,
@@ -377,10 +394,16 @@ export function PluginsCenter() {
                     minHeight: 76,
                     padding: "10px 12px",
                     borderRadius: 14,
-                    border: `1px solid ${active ? `${plugin.accent}66` : `${plugin.accent}33`}`,
+                    border: `1px solid ${active
+                      ? `${plugin.accent}${isDark ? "80" : "66"}`
+                      : `${plugin.accent}${isDark ? "40" : "33"}`}`,
                     background: active
-                      ? `linear-gradient(180deg, ${plugin.accent}1a, rgba(255,255,255,0.92) 72%)`
-                      : `linear-gradient(180deg, ${plugin.accent}12, rgba(255,255,255,0.02) 60%)`,
+                      ? (isDark
+                        ? `linear-gradient(180deg, ${plugin.accent}24, rgba(29, 34, 44, 0.98) 78%)`
+                        : `linear-gradient(180deg, ${plugin.accent}1a, rgba(255,255,255,0.92) 72%)`)
+                      : (isDark
+                        ? `linear-gradient(180deg, ${plugin.accent}16, rgba(255,255,255,0.02) 60%)`
+                        : `linear-gradient(180deg, ${plugin.accent}12, rgba(255,255,255,0.02) 60%)`),
                     cursor: "pointer",
                   }}
                 >
@@ -391,12 +414,14 @@ export function PluginsCenter() {
                           height: 40,
                           borderRadius: 12,
                           display: "grid",
-                        placeItems: "center",
-                        flexShrink: 0,
-                        background: "#ffffff",
-                        border: `1px solid ${plugin.accent}24`,
-                        boxShadow: "0 6px 18px rgba(15, 23, 42, 0.08)",
-                      }}
+                          placeItems: "center",
+                          flexShrink: 0,
+                          background: isDark ? "rgba(255,255,255,0.06)" : "#ffffff",
+                          border: `1px solid ${plugin.accent}${isDark ? "36" : "24"}`,
+                          boxShadow: isDark
+                            ? "inset 0 1px 0 rgba(255,255,255,0.04), 0 6px 18px rgba(0, 0, 0, 0.22)"
+                            : "0 6px 18px rgba(15, 23, 42, 0.08)",
+                        }}
                     >
                       {renderPluginIcon(plugin.id)}
                     </div>
@@ -451,15 +476,20 @@ export function PluginsCenter() {
                 overflowY: "auto",
                 padding: 14,
                 borderRadius: 18,
-                border: `1px solid ${selectedPlugin.accent}3d`,
-                background: "#ffffff",
-                boxShadow: "0 16px 38px rgba(15, 23, 42, 0.12)",
+                border: `1px solid ${isDark ? `${selectedPlugin.accent}42` : `${selectedPlugin.accent}3d`}`,
+                background: isDark
+                  ? "linear-gradient(180deg, rgba(19, 22, 29, 0.98), rgba(24, 27, 35, 0.98))"
+                  : "#ffffff",
+                boxShadow: isDark
+                  ? "0 24px 56px rgba(0, 0, 0, 0.36)"
+                  : "0 16px 38px rgba(15, 23, 42, 0.12)",
                 zIndex: 1100,
               }}
             >
               <PluginDetailDialog
                 locale={locale}
                 plugin={selectedPlugin}
+                isDark={isDark}
                 enabled={enabledPluginIds.includes(selectedPlugin.id)}
                 onToggle={() => togglePlugin(selectedPlugin.id)}
               />
@@ -504,11 +534,13 @@ function PluginNote({ label, value }: { label: string; value: string }) {
 function PluginDetailDialog({
   locale,
   plugin,
+  isDark,
   enabled,
   onToggle,
 }: {
   locale: UiLocale;
   plugin: PluginSpec;
+  isDark: boolean;
   enabled: boolean;
   onToggle: () => void;
 }) {
@@ -519,27 +551,23 @@ function PluginDetailDialog({
       <div style={{ display: "flex", justifyContent: "space-between", gap: 14, alignItems: "flex-start" }}>
         <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
           <div
-            style={{
-              width: 48,
-              height: 48,
-              borderRadius: 16,
-              display: "grid",
-              placeItems: "center",
-              background: "#ffffff",
-              border: `1px solid ${plugin.accent}2a`,
-              boxShadow: "0 10px 24px rgba(15, 23, 42, 0.08)",
-              flexShrink: 0,
-            }}
+            style={buildPluginGlyphShellStyle(plugin.accent, isDark)}
           >
             {renderPluginIcon(plugin.id, 34)}
           </div>
           <div style={{ display: "grid", gap: 6 }}>
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-            <span style={badgeStyle(plugin.permission === "full-access" ? "var(--warning)" : "var(--success)")}>
+            <span style={badgeStyle(plugin.permission === "full-access" ? "var(--warning)" : "var(--success)", "var(--text)", isDark)}>
               {getPermissionLabel(locale, plugin.permission)}
             </span>
-            <span style={badgeStyle(plugin.accent, "var(--text)")}>{getCategoryLabel(locale, plugin.category)}</span>
-            <span style={badgeStyle(enabled ? "var(--accent)" : "#64748b", enabled ? "var(--accent)" : "#334155")}>
+            <span style={badgeStyle(plugin.accent, "var(--text)", isDark)}>{getCategoryLabel(locale, plugin.category)}</span>
+            <span
+              style={badgeStyle(
+                enabled ? "var(--accent)" : "#64748b",
+                enabled ? "var(--accent)" : (isDark ? "#bdc1c6" : "#334155"),
+                isDark,
+              )}
+            >
               {enabled
                 ? pickLocaleText(locale, { "zh-CN": "本地已启用", "zh-TW": "本地已啟用", en: "Enabled locally", ja: "ローカルで有効" })
                 : pickLocaleText(locale, { "zh-CN": "本地已关闭", "zh-TW": "本地已關閉", en: "Disabled locally", ja: "ローカルで無効" })}
@@ -555,13 +583,10 @@ function PluginDetailDialog({
 
       <div
         style={{
+          ...buildPluginDetailSurfaceStyle(isDark),
           fontSize: 12,
           color: "var(--text-muted)",
           lineHeight: 1.7,
-          padding: "12px 14px",
-          borderRadius: 16,
-          border: "1px solid rgba(148, 163, 184, 0.18)",
-          background: "#ffffff",
         }}
       >
         {copy.description}
@@ -569,12 +594,9 @@ function PluginDetailDialog({
 
       <div
         style={{
+          ...buildPluginDetailSurfaceStyle(isDark),
           display: "grid",
           gap: 8,
-          padding: "12px 14px",
-          borderRadius: 16,
-          border: "1px solid rgba(148, 163, 184, 0.18)",
-          background: "#ffffff",
         }}
       >
         <div style={{ fontSize: 12, fontWeight: 700, color: "var(--text)" }}>
@@ -587,9 +609,14 @@ function PluginDetailDialog({
               style={{
                 padding: "4px 8px",
                 borderRadius: 999,
-                border: "1px solid rgba(148, 163, 184, 0.18)",
-                background: "rgba(248, 250, 252, 0.96)",
+                border: isDark
+                  ? "1px solid rgba(232, 234, 237, 0.1)"
+                  : "1px solid rgba(148, 163, 184, 0.18)",
+                background: isDark
+                  ? "rgba(24, 27, 35, 0.94)"
+                  : "rgba(248, 250, 252, 0.96)",
                 fontSize: 11,
+                color: isDark ? "#d2e3fc" : "var(--text)",
               }}
             >
               {getContributionLabel(locale, item)}
@@ -1019,15 +1046,45 @@ function mostCommonContribution(enabledPlugins: PluginSpec[], locale: UiLocale) 
   });
 }
 
-function badgeStyle(color: string, textColor = "var(--text)") {
+function badgeStyle(color: string, textColor = "var(--text)", isDark = false): CSSProperties {
   return {
     padding: "3px 8px",
     borderRadius: 999,
-    border: `1px solid ${color}33`,
-    background: `${color}1f`,
+    border: `1px solid color-mix(in srgb, ${color} ${isDark ? "28%" : "20%"}, transparent)`,
+    background: `color-mix(in srgb, ${color} ${isDark ? "16%" : "12%"}, transparent)`,
     color: textColor,
     fontSize: 10,
     fontWeight: 700,
+  };
+}
+
+function buildPluginGlyphShellStyle(accent: string, isDark: boolean): CSSProperties {
+  return {
+    width: 48,
+    height: 48,
+    borderRadius: 16,
+    display: "grid",
+    placeItems: "center",
+    background: isDark
+      ? "linear-gradient(180deg, rgba(30, 34, 43, 0.98), rgba(24, 27, 35, 0.96))"
+      : "#ffffff",
+    border: `1px solid ${isDark ? `${accent}32` : `${accent}2a`}`,
+    boxShadow: isDark ? "none" : "0 10px 24px rgba(15, 23, 42, 0.08)",
+    flexShrink: 0,
+  };
+}
+
+function buildPluginDetailSurfaceStyle(isDark: boolean): CSSProperties {
+  return {
+    padding: "12px 14px",
+    borderRadius: 16,
+    border: isDark
+      ? "1px solid rgba(232, 234, 237, 0.1)"
+      : "1px solid rgba(148, 163, 184, 0.18)",
+    background: isDark
+      ? "linear-gradient(180deg, rgba(30, 34, 43, 0.94), rgba(24, 27, 35, 0.92))"
+      : "#ffffff",
+    boxShadow: "none",
   };
 }
 

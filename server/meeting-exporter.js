@@ -1,8 +1,8 @@
 import os from "os";
 import path from "path";
 import { promises as fs } from "fs";
+import { createRequire } from "module";
 import ExcelJS from "exceljs";
-import PptxGenJS from "pptxgenjs";
 import {
   AlignmentType,
   BorderStyle,
@@ -17,6 +17,9 @@ import {
   WidthType,
 } from "docx";
 import { normalizeMeetingExportBrief } from "./meeting-export-brief.js";
+
+const require = createRequire(import.meta.url);
+const PptxGenJS = require("pptxgenjs");
 
 const EXPORT_DIR = path.join(os.tmpdir(), "xiaolongxia-ai", "meeting-exports");
 const LOCAL_EXPORT_ROOT = path.join(os.homedir(), "Desktop", "STARCRAW", "meeting-exports");

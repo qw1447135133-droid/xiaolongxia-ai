@@ -14,6 +14,7 @@ import { PluginsCenter } from "./PluginsCenter";
 import { RemoteOpsCenter } from "./RemoteOpsCenter";
 import { SettingsPanel } from "./SettingsPanel";
 import { SkillsCenter } from "./SkillsCenter";
+import { UserProfileCenter } from "./UserProfileCenter";
 
 function truncateText(value: string, maxLength: number): string {
   if (value.length <= maxLength) return value;
@@ -30,6 +31,16 @@ function getControlCenterSections(locale: UiLocale): Array<{ id: ControlCenterSe
         "zh-TW": "工作台狀態與控制台結構",
         en: "Workbench status and shell structure",
         ja: "ワークベンチ状態とコントロール構造",
+      }),
+    },
+    {
+      id: "user",
+      label: pickLocaleText(locale, { "zh-CN": "用户信息", "zh-TW": "使用者資訊", en: "User Profile", ja: "ユーザー情報" }),
+      hint: pickLocaleText(locale, {
+        "zh-CN": "用户画像、身份信息与引导录入",
+        "zh-TW": "使用者畫像、身分資訊與引導錄入",
+        en: "User profile, identity context, and guided intake",
+        ja: "ユーザープロファイル、利用者情報、ガイド付きヒアリング",
       }),
     },
     {
@@ -230,6 +241,7 @@ export function ControlCenter() {
             <LaunchReadinessPanel compact onSelectSection={setActiveControlCenterSection} />
           </div>
         )}
+        {section === "user" && <UserProfileCenter />}
         {section === "entities" && <EntitiesChannelsCenter activeTab={entitiesSubTab} onTabChange={setEntitiesSubTab} />}
         {section === "remote" && <RemoteOpsCenter />}
         {section === "skills" && <SkillsCenter />}

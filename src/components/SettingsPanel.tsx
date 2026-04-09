@@ -137,9 +137,8 @@ export function SettingsPanel({
             <button
               key={section.id}
               type="button"
-              className="btn-ghost"
+              className={activeSection === section.id ? "btn-ghost settings-panel__section-tab is-active" : "btn-ghost settings-panel__section-tab"}
               onClick={() => setActiveSection(section.id)}
-              style={activeSection === section.id ? { borderColor: "rgba(var(--accent-rgb), 0.24)", background: "rgba(var(--accent-rgb), 0.1)", color: "var(--accent)" } : undefined}
             >
               {section.label}
             </button>
@@ -298,15 +297,12 @@ function AgentsSection() {
             }}
           />
           <button
+            className="btn-primary"
             onClick={handleNicknameSave}
             style={{
               padding: "5px 12px",
-              background: "var(--accent)",
-              border: "none",
               borderRadius: 6,
-              color: "#fff",
               fontSize: 11,
-              cursor: "pointer",
             }}
           >
             保存
@@ -325,7 +321,7 @@ function AgentsSection() {
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
             <button
               type="button"
-              className="btn-primary"
+              className="btn-primary settings-panel__template-bulk-button"
               style={{ fontSize: 11, padding: "5px 10px" }}
               onClick={() => void applyRolePresetToAllAgents()}
               disabled={configuredProviders.length === 0}
@@ -348,10 +344,9 @@ function AgentsSection() {
             return (
               <article
                 key={template.id}
+                className={`settings-panel__template-card ${active ? "is-active" : ""}`}
                 style={{
                   borderRadius: 14,
-                  border: `1px solid ${active ? "rgba(var(--accent-rgb), 0.36)" : "var(--border)"}`,
-                  background: active ? "rgba(var(--accent-rgb), 0.08)" : "rgba(255,255,255,0.03)",
                   padding: 8,
                   display: "grid",
                   gap: 6,
@@ -370,7 +365,7 @@ function AgentsSection() {
 
                 <button
                   type="button"
-                  className={active ? "btn-primary" : "btn-ghost"}
+                  className={active ? "btn-primary settings-panel__template-button settings-panel__template-button--active" : "btn-ghost settings-panel__template-button"}
                   style={{ fontSize: 11, padding: "5px 10px" }}
                   onClick={() => void applyOperatingTemplate(template.id)}
                   disabled={configuredProviders.length === 0}
@@ -383,9 +378,13 @@ function AgentsSection() {
         </div>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 8 }}>
+      <div className="settings-agent-grid">
         {(Object.keys(AGENT_META) as AgentId[]).map(id => (
-          <div key={id} style={editing === id ? { gridColumn: "1 / -1" } : undefined}>
+          <div
+            key={id}
+            className="settings-agent-grid__cell"
+            style={editing === id ? { gridColumn: "1 / -1" } : undefined}
+          >
             <AgentConfigCard
               agentId={id}
               config={agentConfigs[id]}
@@ -489,26 +488,24 @@ function AgentConfigCard({
   };
 
   return (
-    <div className="card" style={{ padding: 10, overflow: "visible", position: "relative" }}>
-      <div style={{ display: "flex", alignItems: "flex-start", gap: 10, marginBottom: isEditing ? 10 : 0 }}>
+    <div className="card settings-agent-card" style={{ padding: 10, overflow: "visible", position: "relative" }}>
+      <div className="settings-agent-card__preview" style={{ marginBottom: isEditing ? 10 : 0 }}>
         <div
+          className="settings-agent-card__avatar-wrap"
           style={{
-            width: 34,
-            height: 34,
-            borderRadius: 10,
+            width: 48,
+            height: 48,
             display: "grid",
             placeItems: "center",
-            background: "rgba(var(--accent-rgb), 0.08)",
-            border: "1px solid rgba(var(--accent-rgb), 0.2)",
             flexShrink: 0,
           }}
         >
-          <AgentIcon agentId={agentId} size={20} color={getAgentIconColor(agentId)} />
+          <AgentIcon agentId={agentId} size={34} color={getAgentIconColor(agentId)} />
         </div>
 
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginBottom: 2 }}>
-            <div style={{ fontWeight: 700, fontSize: 12 }}>{config.name || meta.name}</div>
+        <div className="settings-agent-card__content">
+          <div className="settings-agent-card__title-row">
+            <div className="settings-agent-card__name">{config.name || meta.name}</div>
             <span className={`badge ${meta.badge}`}>{agentId}</span>
             <span
               style={{
@@ -536,11 +533,11 @@ function AgentConfigCard({
             </span>
           </div>
 
-          <div style={{ fontSize: 10, color: "var(--text-muted)", lineHeight: 1.45 }}>
+          <div className="settings-agent-card__model">
             {config.model || "默认模型"} · {providers.find(p => p.id === config.providerId)?.name || "默认供应商"}
           </div>
 
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 6 }}>
+          <div className="settings-agent-card__chips">
             <span
               style={{
                 padding: "2px 7px",
@@ -584,12 +581,12 @@ function AgentConfigCard({
             ) : null}
           </div>
 
-          <div style={{ fontSize: 10, color: "var(--text-muted)", marginTop: 6, lineHeight: 1.45 }}>
+          <div className="settings-agent-card__summary">
             {routingProfile.summary}
           </div>
         </div>
 
-        <div style={{ display: "flex", gap: 8, alignItems: "center", flexShrink: 0 }}>
+        <div className="settings-agent-card__actions">
           <button className="btn-ghost" style={{ fontSize: 11, padding: "4px 9px" }} onClick={onEdit}>
             {isEditing ? "关闭编辑" : "编辑设置"}
           </button>
@@ -602,10 +599,9 @@ function AgentConfigCard({
             <div>
               <label style={labelStyle}>图标</label>
               <div
-                className="input"
-                style={{ display: "grid", placeItems: "center", minHeight: 42, padding: "8px 4px", color: "var(--text)" }}
+                style={{ display: "grid", placeItems: "center", minHeight: 48, padding: "8px 4px", color: "var(--text)" }}
               >
-                <AgentIcon agentId={agentId} size={22} color={getAgentIconColor(agentId)} />
+                <AgentIcon agentId={agentId} size={34} color={getAgentIconColor(agentId)} />
               </div>
             </div>
             <div>
@@ -664,6 +660,7 @@ function AgentConfigCard({
             <label style={labelStyle}>推荐模型档位</label>
             <div style={{ display: "grid", gap: 8 }}>
               <div
+                className="settings-panel__role-recommendation"
                 style={{
                   display: "flex",
                   alignItems: "center",
@@ -671,8 +668,6 @@ function AgentConfigCard({
                   gap: 8,
                   padding: "10px 12px",
                   borderRadius: 12,
-                  border: "1px solid rgba(var(--accent-rgb), 0.22)",
-                  background: "rgba(var(--accent-rgb), 0.06)",
                   flexWrap: "wrap",
                 }}
               >
@@ -687,7 +682,7 @@ function AgentConfigCard({
                 </div>
                 <button
                   type="button"
-                  className="btn-ghost"
+                  className="btn-ghost settings-panel__role-recommendation-action"
                   style={{ fontSize: 12, padding: "6px 10px" }}
                   disabled={!roleRecommendedProvider || !roleRecommendedModel}
                   onClick={() => void onApplyRolePreset(draft.providerId || defaultConfiguredProviderId)}
@@ -730,7 +725,7 @@ function AgentConfigCard({
                     <button
                       key={item.tier}
                       type="button"
-                      className="btn-ghost"
+                      className={`btn-ghost settings-panel__tier-button${active ? " is-active" : ""}${!model ? " is-disabled" : ""}`}
                       disabled={!model}
                       onClick={() => void handleApplyModelPreset(item.tier)}
                       style={{
@@ -740,9 +735,6 @@ function AgentConfigCard({
                         gap: 4,
                         padding: "10px 12px",
                         minHeight: 86,
-                        borderColor: active ? "rgba(var(--accent-rgb), 0.42)" : "var(--border)",
-                        background: active ? "rgba(var(--accent-rgb), 0.1)" : "rgba(255,255,255,0.02)",
-                        color: active ? "var(--accent)" : "var(--text)",
                         opacity: model ? 1 : 0.5,
                       }}
                     >
@@ -1386,8 +1378,8 @@ function AddProviderForm({ onAdd, onCancel }: { onAdd: (provider: ModelProvider)
   const defaultModel = getModelsForProviderInstance(previewProvider)[0] ?? PROVIDER_MODELS[preset.id]?.[0] ?? "";
 
   return (
-    <div className="card" style={{ padding: 14, borderColor: "rgba(var(--accent-rgb), 0.3)", background: "var(--accent-dim)" }}>
-      <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 12, color: "var(--accent)" }}>新增供应商</div>
+    <div className="card settings-panel__provider-form" style={{ padding: 14 }}>
+      <div className="settings-panel__provider-form-title">新增供应商</div>
 
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
         <div>

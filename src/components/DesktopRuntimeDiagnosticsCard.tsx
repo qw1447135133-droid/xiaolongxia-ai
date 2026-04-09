@@ -521,7 +521,7 @@ export function DesktopRuntimeDiagnosticsCard() {
               <>
                 <button
                   type="button"
-                  className="btn-ghost"
+                  className="btn-handoff"
                   onClick={() => {
                     focusResumeContext();
                     setCommandDraft(desktopInputSession.resumeInstruction!);
@@ -710,8 +710,8 @@ export function DesktopRuntimeDiagnosticsCard() {
                 borderRadius: 16,
                 overflow: "hidden",
                 border: "1px solid var(--border)",
-                background: "linear-gradient(180deg, rgba(255,255,255,0.98), rgba(247,249,253,0.96))",
-                boxShadow: "0 12px 26px rgba(15, 23, 42, 0.06)",
+                background: "linear-gradient(180deg, var(--bg-elevated-strong), var(--bg-card))",
+                boxShadow: "none",
               }}
             >
               <img
@@ -732,7 +732,7 @@ export function DesktopRuntimeDiagnosticsCard() {
             {screenshotLinkedContentTask ? (
               <button
                 type="button"
-                className="btn-ghost"
+                className="btn-handoff"
                 onClick={() => {
                   focusBusinessContentTask(screenshotLinkedContentTask.id);
                   setActiveControlCenterSection("entities");
@@ -878,9 +878,9 @@ export function DesktopRuntimeDiagnosticsCard() {
             marginTop: 12,
             padding: "12px 14px",
             borderRadius: 16,
-            background: "linear-gradient(180deg, rgba(255,255,255,0.98), rgba(247,249,253,0.96))",
+            background: "linear-gradient(180deg, var(--bg-elevated-strong), var(--bg-card))",
             border: "1px solid var(--border)",
-            boxShadow: "0 12px 26px rgba(15, 23, 42, 0.05)",
+            boxShadow: "none",
             display: "grid",
             gap: 8,
           }}
@@ -899,8 +899,8 @@ export function DesktopRuntimeDiagnosticsCard() {
                 gap: 4,
                 padding: "10px 12px",
                 borderRadius: 14,
-                background: "rgba(255,255,255,0.04)",
-                border: "1px solid rgba(255,255,255,0.06)",
+                background: "var(--bg-hover)",
+                border: "1px solid var(--border)",
               }}
             >
               <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>

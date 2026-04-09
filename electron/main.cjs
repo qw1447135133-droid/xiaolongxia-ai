@@ -44,7 +44,6 @@ let wsHealthMonitor = null;
 let wsRecoveryPromise = null;
 let splashPlaybackFinished = true;
 let mainWindowCanShow = false;
-let mainWindowDevToolsOpened = false;
 const allowedWorkspaceRoots = new Set();
 const previewWindows = new Map();
 let installedApplicationsCache = {
@@ -1485,6 +1484,7 @@ async function startWsServer(reason = 'startup') {
       ELECTRON_RUN_AS_NODE: '1',
       WS_PORT: String(WS_PORT),
       NODE_ENV: isDev() ? 'development' : 'production',
+      XIAOLONGXIA_OUTPUT_ROOT: path.join(app.getPath('userData'), 'output'),
     },
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
@@ -1624,11 +1624,20 @@ function revealMainWindow(reason = 'unknown') {
   if (!mainWindow.isVisible()) {
     mainWindow.show();
   }
+}
 
-  if (isDev() && !mainWindowDevToolsOpened) {
-    mainWindowDevToolsOpened = true;
-    mainWindow.webContents.openDevTools({ mode: 'detach' });
+function toggleWindowDevTools(targetWindow) {
+  if (!targetWindow || targetWindow.isDestroyed()) {
+    return;
   }
+
+  const { webContents } = targetWindow;
+  if (webContents.isDevToolsOpened()) {
+    webContents.closeDevTools();
+    return;
+  }
+
+  webContents.openDevTools({ mode: 'detach' });
 }
 
 function createSplashWindow() {
@@ -1835,7 +1844,6 @@ function createMainWindow() {
   }
 
   mainWindowCanShow = false;
-  mainWindowDevToolsOpened = false;
   mainWindow = new BrowserWindow({
     width: 1400,
     height: 900,
@@ -1843,6 +1851,7 @@ function createMainWindow() {
     minHeight: 600,
     title: 'STARCRAW',
     backgroundColor: '#0d0f14',
+    autoHideMenuBar: true,
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -1852,6 +1861,11 @@ function createMainWindow() {
     // frame: false,
     show: false,
   });
+
+  if (process.platform !== 'darwin') {
+    mainWindow.setMenuBarVisibility(false);
+    mainWindow.removeMenu();
+  }
 
   const productionIndex = path.join(process.resourcesPath, 'app.asar.unpacked', 'out', 'index.html');
   const baseUrl = process.env.NEXT_DEV_URL || 'http://localhost:3000';
@@ -1903,6 +1917,24 @@ function createMainWindow() {
     );
   });
 
+  mainWindow.webContents.on('before-input-event', (event, input) => {
+    if (input.type !== 'keyDown') {
+      return;
+    }
+
+    const key = String(input.key || '').toLowerCase();
+    const shouldToggleDevTools =
+      key === 'f12' ||
+      (key === 'i' && input.control && input.shift);
+
+    if (!shouldToggleDevTools) {
+      return;
+    }
+
+    event.preventDefault();
+    toggleWindowDevTools(mainWindow);
+  });
+
   mainWindow.once('ready-to-show', () => {
     log('[main] ready-to-show');
     windowReady = true;
@@ -1920,7 +1952,6 @@ function createMainWindow() {
     log('[main] window closed');
     clearTimeout(loadGuard);
     mainWindowCanShow = false;
-    mainWindowDevToolsOpened = false;
     mainWindow = null;
   });
 

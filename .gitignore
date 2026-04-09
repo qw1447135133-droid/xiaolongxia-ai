@@ -5,3 +5,4 @@ dist/
 *.log
 /apps/web/dist-electron
 output/hermes-dispatch/
+/dist-electron

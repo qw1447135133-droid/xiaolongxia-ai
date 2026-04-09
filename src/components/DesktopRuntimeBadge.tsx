@@ -83,7 +83,7 @@ function badgePanelStyle(dot: string): CSSProperties {
     padding: "8px 12px",
     borderRadius: 999,
     border: "1px solid var(--border)",
-    background: "rgba(255,255,255,0.92)",
+    background: "var(--bg-elevated-strong)",
     color: "var(--text)",
     fontSize: 12,
     fontWeight: 600,

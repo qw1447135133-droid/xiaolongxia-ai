@@ -13,13 +13,13 @@
     "dev:next": "next dev -p 3000",
     "dev": "concurrently -n WS,Next -c cyan,yellow \"node server/ws-server.js\" \"next dev -p 3000\"",
     "preelectron:dev": "node scripts/sync-skill-catalog.mjs",
-    "electron:dev": "node scripts/electron-dev.js",
-    "electron:dev:clean": "node scripts/electron-dev.js --clean",
+    "electron:dev": "cross-env ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/ node scripts/electron-dev.js",
+    "electron:dev:clean": "cross-env ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/ node scripts/electron-dev.js --clean",
     "prototype:dispatch": "node prototypes/hermes-dispatch/run.mjs",
     "prebuild": "node scripts/sync-skill-catalog.mjs",
     "build": "next build",
-    "electron:build": "cross-env ELECTRON_BUILD=true next build && electron-builder --win nsis portable",
-    "electron:build:mac": "cross-env ELECTRON_BUILD=true next build && electron-builder --mac",
+    "electron:build": "cross-env ELECTRON_BUILD=true ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/ next build && cross-env ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/ electron-builder --win nsis portable",
+    "electron:build:mac": "cross-env ELECTRON_BUILD=true ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/ next build && cross-env ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/ electron-builder --mac",
     "start": "next start"
   },
   "build": {

@@ -157,20 +157,20 @@ function PlatformCard({ def }: { def: PlatformDef }) {
         : "#ef4444";
   const diagnosis = getPlatformDiagnosis(def, config.status, allRequiredFilled);
   const communicationTarget = preferredDebugTarget;
+  const headerClassName = [
+    "platform-settings__card-header",
+    config.enabled ? "platform-settings__card-header--enabled" : "",
+    expanded ? "platform-settings__card-header--expanded" : "",
+  ].filter(Boolean).join(" ");
+  const toggleClassName = [
+    "platform-settings__toggle",
+    config.enabled ? "platform-settings__toggle--checked" : "",
+  ].filter(Boolean).join(" ");
 
   return (
-    <div className="card" style={{ padding: 0, overflow: "hidden" }}>
+    <div className="card platform-settings__card">
       {/* 卡片头部 */}
-      <div
-        style={{
-          display: "flex", alignItems: "center", gap: 10,
-          padding: "10px 14px",
-          cursor: "pointer",
-          background: config.enabled ? "var(--accent-dim)" : "var(--bg-card)",
-          borderBottom: expanded ? "1px solid var(--border)" : "none",
-        }}
-        onClick={() => setExpanded(e => !e)}
-      >
+      <div className={headerClassName} onClick={() => setExpanded(e => !e)}>
         <span style={{ fontSize: 20 }}>{def.emoji}</span>
         <div style={{ flex: 1 }}>
           <div style={{ fontWeight: 600, fontSize: 13, color: "var(--text)" }}>{def.name}</div>
@@ -179,8 +179,8 @@ function PlatformCard({ def }: { def: PlatformDef }) {
 
         {/* 连接状态 */}
         {config.enabled && (
-          <div style={{ display: "flex", alignItems: "center", gap: 5, marginRight: 6 }}>
-            <span style={{ width: 7, height: 7, borderRadius: "50%", background: statusDot, display: "inline-block" }} />
+          <div className="platform-settings__card-meta">
+            <span className="platform-settings__status-dot" style={{ background: statusDot }} />
             <span style={{ fontSize: 11, color: statusColor }}>
               {getPlatformStatusLabel(config.status)}
             </span>
@@ -188,43 +188,23 @@ function PlatformCard({ def }: { def: PlatformDef }) {
         )}
 
         {/* 开关 */}
-        <div
-          onClick={e => { e.stopPropagation(); toggle(); }}
-          style={{
-            width: 36, height: 20, borderRadius: 10, position: "relative", cursor: "pointer",
-            background: config.enabled ? "var(--accent)" : "var(--border)",
-            transition: "background 0.2s",
-            flexShrink: 0,
-          }}
-        >
-          <div style={{
-            position: "absolute", top: 2,
-            left: config.enabled ? 18 : 2,
-            width: 16, height: 16, borderRadius: "50%",
-            background: "#fff",
-            transition: "left 0.2s",
-            boxShadow: "0 1px 3px rgba(0,0,0,0.2)",
-          }} />
+        <div className={toggleClassName} onClick={e => { e.stopPropagation(); toggle(); }}>
+          <div className="platform-settings__toggle-thumb" />
         </div>
 
-        <span style={{ fontSize: 11, color: "var(--text-muted)", marginLeft: 2 }}>
+        <span className="platform-settings__expand-indicator">
           {expanded ? "▲" : "▼"}
         </span>
       </div>
 
       {/* 展开的配置区域 */}
       {expanded && (
-        <div style={{ padding: "12px 14px", display: "flex", flexDirection: "column", gap: 10 }}>
+        <div className="platform-settings__body">
           {/* Webhook 提示 */}
           {def.webhookBased && (
-            <div style={{
-              fontSize: 11, padding: "6px 10px", borderRadius: "var(--radius-sm)",
-              background: "rgba(var(--accent-rgb),0.08)",
-              border: "1px solid rgba(var(--accent-rgb),0.2)",
-              color: "var(--accent)",
-            }}>
+            <div className="platform-settings__notice platform-settings__notice--webhook">
               ⚠️ 此平台需要公网 Webhook 回调地址。开发阶段可用{" "}
-              <code style={{ fontFamily: "monospace", background: "rgba(0,0,0,0.15)", padding: "1px 4px", borderRadius: 3 }}>
+              <code className="platform-settings__notice-code">
                 ngrok http 3001
               </code>{" "}
               获取临时地址。
@@ -288,18 +268,7 @@ function PlatformCard({ def }: { def: PlatformDef }) {
             );
           })}
 
-          <label
-            style={{
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-              gap: 12,
-              padding: "8px 10px",
-              borderRadius: "var(--radius-sm)",
-              background: "rgba(247,249,253,0.96)",
-              border: "1px solid var(--border)",
-            }}
-          >
+          <label className="platform-settings__approval-panel">
             <div style={{ display: "grid", gap: 4 }}>
               <div style={{ fontSize: 12, color: "var(--text)", fontWeight: 600 }}>自动外发需审批</div>
               <div style={{ fontSize: 11, color: "var(--text-muted)", lineHeight: 1.6 }}>
@@ -318,28 +287,18 @@ function PlatformCard({ def }: { def: PlatformDef }) {
 
           {/* 错误信息 */}
           {config.errorMsg && (
-            <div style={{
-              fontSize: 11, padding: "5px 8px", borderRadius: "var(--radius-sm)",
-              background: "rgba(var(--danger-rgb),0.08)",
-              border: "1px solid rgba(var(--danger-rgb),0.2)",
-              color: "var(--danger)",
-            }}>
+            <div className="platform-settings__notice platform-settings__notice--error">
               ✗ {config.errorMsg}
             </div>
           )}
 
           {!config.errorMsg && config.detail ? (
-            <div style={{
-              fontSize: 11, padding: "5px 8px", borderRadius: "var(--radius-sm)",
-              background: "rgba(255,255,255,0.04)",
-              border: "1px solid rgba(255,255,255,0.08)",
-              color: "var(--text-muted)",
-            }}>
+            <div className="platform-settings__notice platform-settings__notice--neutral">
               {config.detail}
             </div>
           ) : null}
 
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, fontSize: 11, color: "var(--text-muted)" }}>
+          <div className="platform-settings__meta">
             <span>诊断 {diagnosis}</span>
             <span>健康度 {config.healthScore ?? 0}%</span>
             {config.lastSyncedAt ? (
@@ -388,29 +347,12 @@ function PlatformCard({ def }: { def: PlatformDef }) {
           </div>
 
           {config.webhookUrl ? (
-            <div style={{
-              fontSize: 11,
-              padding: "6px 8px",
-              borderRadius: "var(--radius-sm)",
-              background: "rgba(255,255,255,0.04)",
-              border: "1px solid rgba(255,255,255,0.08)",
-              color: "var(--text-muted)",
-              lineHeight: 1.7,
-              wordBreak: "break-all",
-            }}>
+            <div className="platform-settings__webhook-row">
               Webhook: {config.webhookUrl}
             </div>
           ) : null}
 
-          <div style={{
-            display: "flex",
-            flexDirection: "column",
-            gap: 8,
-            padding: "10px 12px",
-            borderRadius: "var(--radius-sm)",
-            background: "rgba(247,249,253,0.96)",
-            border: "1px solid var(--border)",
-          }}>
+          <div className="platform-settings__debug-panel">
             <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text)" }}>测试通信</div>
             <div style={{ fontSize: 11, color: "var(--text-muted)", lineHeight: 1.6 }}>
               向当前平台发送一条测试消息，用于确认账号、凭证和默认目标是否连通。
@@ -432,14 +374,13 @@ function PlatformCard({ def }: { def: PlatformDef }) {
             ) : null}
 
             {debugFeedback ? (
-              <div style={{
-                fontSize: 11,
-                padding: "6px 8px",
-                borderRadius: "var(--radius-sm)",
-                background: debugFeedback.ok ? "rgba(var(--success-rgb),0.08)" : "rgba(var(--danger-rgb),0.08)",
-                border: debugFeedback.ok ? "1px solid rgba(var(--success-rgb),0.2)" : "1px solid rgba(var(--danger-rgb),0.2)",
-                color: debugFeedback.ok ? "var(--success)" : "var(--danger)",
-              }}>
+              <div
+                className={
+                  debugFeedback.ok
+                    ? "platform-settings__notice platform-settings__debug-feedback--success"
+                    : "platform-settings__notice platform-settings__debug-feedback--error"
+                }
+              >
                 {debugFeedback.ok ? "✓" : "✗"} {debugFeedback.text}
               </div>
             ) : null}
@@ -457,7 +398,7 @@ function PlatformCard({ def }: { def: PlatformDef }) {
           </div>
 
           {/* 操作按钮 */}
-          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+          <div className="platform-settings__actions">
             {config.status === "connected" && (
               <button
                 onClick={handleDisconnect}
@@ -530,24 +471,14 @@ function ToggleableField({ field, value, onChange }: {
 
   return (
     <div>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: open ? 6 : 0 }}>
+      <div className={open ? "platform-settings__toggle-row platform-settings__toggle-row--open" : "platform-settings__toggle-row"}>
         <div
+          className={open ? "platform-settings__field-toggle platform-settings__field-toggle--checked" : "platform-settings__field-toggle"}
           onClick={toggle}
-          style={{
-            width: 30, height: 17, borderRadius: 9, position: "relative", cursor: "pointer",
-            background: open ? "var(--accent)" : "var(--border)",
-            transition: "background 0.2s", flexShrink: 0,
-          }}
         >
-          <div style={{
-            position: "absolute", top: 2,
-            left: open ? 15 : 2,
-            width: 13, height: 13, borderRadius: "50%",
-            background: "#fff", transition: "left 0.2s",
-            boxShadow: "0 1px 2px rgba(0,0,0,0.2)",
-          }} />
+          <div className="platform-settings__field-toggle-thumb" />
         </div>
-        <span style={{ fontSize: 11, color: open ? "var(--text)" : "var(--text-muted)" }}>
+        <span className={open ? "platform-settings__field-toggle-label platform-settings__field-toggle-label--open" : "platform-settings__field-toggle-label"}>
           {field.label}
           {field.hint && !open && (
             <span style={{ marginLeft: 6, color: "var(--text-muted)", fontWeight: 400 }}>

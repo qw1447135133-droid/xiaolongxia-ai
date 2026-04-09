@@ -26,7 +26,7 @@ function formatTimestamp(timestamp: number, locale: UiLocale) {
   }).format(timestamp);
 }
 
-function statusTone(locale: UiLocale, status: ExecutionRun["status"]) {
+function statusTone(locale: UiLocale, status: ExecutionRun["status"], completedColor = "#86efac") {
   switch (status) {
     case "queued":
       return { label: pickLocaleText(locale, { "zh-CN": "已排队", "zh-TW": "已排隊", en: "Queued", ja: "キュー済み" }), color: "#94a3b8" };
@@ -35,7 +35,7 @@ function statusTone(locale: UiLocale, status: ExecutionRun["status"]) {
     case "running":
       return { label: pickLocaleText(locale, { "zh-CN": "执行中", "zh-TW": "執行中", en: "Running", ja: "実行中" }), color: "#fbbf24" };
     case "completed":
-      return { label: pickLocaleText(locale, { "zh-CN": "已完成", "zh-TW": "已完成", en: "Completed", ja: "完了" }), color: "#86efac" };
+      return { label: pickLocaleText(locale, { "zh-CN": "已完成", "zh-TW": "已完成", en: "Completed", ja: "完了" }), color: completedColor };
     case "failed":
       return { label: pickLocaleText(locale, { "zh-CN": "已失败", "zh-TW": "已失敗", en: "Failed", ja: "失敗" }), color: "#fda4af" };
     default:
@@ -86,6 +86,7 @@ function getExecutionEntityLabel(
 
 export function ExecutionCenter({ compact = false }: { compact?: boolean }) {
   const locale = useStore(s => s.locale);
+  const theme = useStore(s => s.theme);
   const executionRuns = useStore(s => s.executionRuns);
   const activeExecutionRunId = useStore(s => s.activeExecutionRunId);
   const setActiveExecutionRun = useStore(s => s.setActiveExecutionRun);
@@ -102,6 +103,10 @@ export function ExecutionCenter({ compact = false }: { compact?: boolean }) {
   const desktopInputSession = useStore(s => s.desktopInputSession);
   const clearDesktopInputSession = useStore(s => s.clearDesktopInputSession);
   const setAutomationPaused = useStore(s => s.setAutomationPaused);
+  const isDark = theme === "dark";
+  const completedAccent = isDark ? "#8ab4f8" : "#0b57d0";
+  const completedChipText = isDark ? "#d2e3fc" : "#0b57d0";
+  const completedChipBackground = isDark ? "rgba(138, 180, 248, 0.16)" : "rgba(11, 87, 208, 0.1)";
 
   const openControlSection = (section: ControlCenterSectionId) => {
     setActiveControlCenterSection(section);
@@ -253,7 +258,7 @@ export function ExecutionCenter({ compact = false }: { compact?: boolean }) {
     <div style={{ display: "grid", gap: 16 }}>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
         <MetricCard label={pickLocaleText(locale, { "zh-CN": "运行中", "zh-TW": "運行中", en: "Active Runs", ja: "実行中" })} value={activeRuns} accent="#fbbf24" />
-        <MetricCard label={pickLocaleText(locale, { "zh-CN": "已完成", "zh-TW": "已完成", en: "Completed", ja: "完了" })} value={completedRuns} accent="#86efac" />
+        <MetricCard label={pickLocaleText(locale, { "zh-CN": "已完成", "zh-TW": "已完成", en: "Completed", ja: "完了" })} value={completedRuns} accent={completedAccent} />
         <MetricCard label={pickLocaleText(locale, { "zh-CN": "已失败", "zh-TW": "已失敗", en: "Failed", ja: "失敗" })} value={failedRuns} accent="#fda4af" />
         <MetricCard label={pickLocaleText(locale, { "zh-CN": "恢复队列", "zh-TW": "恢復佇列", en: "Recovery Queue", ja: "復旧キュー" })} value={recoveryRuns.length} accent={recoveryRuns.length > 0 ? "#fbbf24" : "#94a3b8"} />
         <MetricCard label={pickLocaleText(locale, { "zh-CN": "轨迹事件", "zh-TW": "軌跡事件", en: "Trace Events", ja: "トレースイベント" })} value={totalEvents} accent="#7dd3fc" />
@@ -357,11 +362,11 @@ export function ExecutionCenter({ compact = false }: { compact?: boolean }) {
                         {pickLocaleText(locale, { "zh-CN": "验证完成继续", "zh-TW": "驗證完成繼續", en: "Continue After Verification", ja: "確認後に続行" })}
                       </button>
                     ) : (
-                      <button type="button" className="btn-ghost" onClick={() => handoffToChat(run)}>
+                      <button type="button" className="btn-handoff" onClick={() => handoffToChat(run)}>
                         {pickLocaleText(locale, { "zh-CN": "回聊天接管", "zh-TW": "回聊天接管", en: "Back to Chat", ja: "チャットへ戻る" })}
                       </button>
                     )}
-                    <button type="button" className="btn-ghost" onClick={() => handoffToChat(run)}>
+                    <button type="button" className="btn-handoff" onClick={() => handoffToChat(run)}>
                       {pickLocaleText(locale, { "zh-CN": "去聊天接管", "zh-TW": "去聊天接管", en: "Take Over in Chat", ja: "チャットで引き継ぐ" })}
                     </button>
                     <button type="button" className="btn-ghost" onClick={() => openExecutionRun(run.id)}>
@@ -397,13 +402,13 @@ export function ExecutionCenter({ compact = false }: { compact?: boolean }) {
       ) : (
         <div style={{ display: "grid", gap: 12 }}>
           {visibleRuns.map(run => {
-            const tone = statusTone(locale, run.status);
+            const tone = statusTone(locale, run.status, completedAccent);
             const currentAgent = run.currentAgentId ? AGENT_META[run.currentAgentId] : null;
             const lastEvent = run.events[run.events.length - 1];
             const events = compact ? run.events.slice(-4) : run.events.slice(-8);
             const semanticEvents = getSemanticRecallEvents(run);
             const isActive = activeExecutionRunId === run.id;
-            const verificationTone = run.verificationStatus ? verificationStatusTone(locale, run.verificationStatus) : null;
+            const verificationTone = run.verificationStatus ? verificationStatusTone(locale, run.verificationStatus, completedAccent) : null;
             const linkedContentTask = run.entityType === "contentTask" && run.entityId ? contentTaskMap[run.entityId] ?? null : null;
             const linkedWorkflowRun = run.workflowRunId ? workflowRunMap[run.workflowRunId] ?? null : null;
             const executionEntityLabel = getExecutionEntityLabel(run, {
@@ -566,7 +571,7 @@ export function ExecutionCenter({ compact = false }: { compact?: boolean }) {
                           >
                             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
                               <strong style={{ fontSize: 12 }}>{step.label}</strong>
-                              <span style={badgeStyle(step.status === "passed" ? "#86efac" : step.status === "failed" ? "#fda4af" : "#94a3b8")}>
+                              <span style={badgeStyle(step.status === "passed" ? completedAccent : step.status === "failed" ? "#fda4af" : "#94a3b8")}>
                                 {pickLocaleText(locale, {
                                   "zh-CN": step.status === "passed" ? "通过" : step.status === "failed" ? "失败" : "跳过",
                                   "zh-TW": step.status === "passed" ? "通過" : step.status === "failed" ? "失敗" : "跳過",
@@ -609,7 +614,13 @@ export function ExecutionCenter({ compact = false }: { compact?: boolean }) {
                     <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{pickLocaleText(locale, { "zh-CN": "最新节点", "zh-TW": "最新節點", en: "Latest", ja: "最新" })}</div>
                     <div style={{ marginTop: 4, fontSize: 13, fontWeight: 700 }}>{lastEvent.title}</div>
                     {hasStructuredSkillPayload(lastEvent) ? (
-                      <ExecutionEventSkillSummary event={lastEvent} locale={locale} skillLabelMap={skillLabelMap} />
+                      <ExecutionEventSkillSummary
+                        event={lastEvent}
+                        locale={locale}
+                        skillLabelMap={skillLabelMap}
+                        createdSkillBackground={completedChipBackground}
+                        createdSkillColor={completedChipText}
+                      />
                     ) : null}
                     {lastEvent.detail && (
                       <div style={{ marginTop: 6, fontSize: 12, lineHeight: 1.75, color: "var(--text-muted)", whiteSpace: "pre-wrap" }}>
@@ -656,7 +667,14 @@ export function ExecutionCenter({ compact = false }: { compact?: boolean }) {
                             </div>
                           </div>
                           {hasStructuredSkillPayload(event) ? (
-                            <ExecutionEventSkillSummary event={event} locale={locale} skillLabelMap={skillLabelMap} compact />
+                            <ExecutionEventSkillSummary
+                              event={event}
+                              locale={locale}
+                              skillLabelMap={skillLabelMap}
+                              compact
+                              createdSkillBackground={completedChipBackground}
+                              createdSkillColor={completedChipText}
+                            />
                           ) : null}
                           {event.detail && (
                             <div style={{ marginTop: 4, fontSize: 11, lineHeight: 1.7, color: "var(--text-muted)", whiteSpace: "pre-wrap" }}>
@@ -751,11 +769,15 @@ function ExecutionEventSkillSummary({
   locale,
   skillLabelMap,
   compact = false,
+  createdSkillBackground = "rgba(187, 247, 208, 0.18)",
+  createdSkillColor = "#86efac",
 }: {
   event: Pick<ExecutionEvent, "matchedSkillIds" | "createdSkillIds">;
   locale: UiLocale;
   skillLabelMap: Record<string, string>;
   compact?: boolean;
+  createdSkillBackground?: string;
+  createdSkillColor?: string;
 }) {
   const matchedSkillIds = event.matchedSkillIds ?? [];
   const createdSkillIds = event.createdSkillIds ?? [];
@@ -795,7 +817,7 @@ function ExecutionEventSkillSummary({
           </div>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
             {createdSkillIds.map(skillId => (
-              <span key={`created-${skillId}`} style={skillChipStyle("rgba(187, 247, 208, 0.18)", "#86efac")}>
+              <span key={`created-${skillId}`} style={skillChipStyle(createdSkillBackground, createdSkillColor)}>
                 {getSkillDisplayName(skillId, locale, skillLabelMap)}
               </span>
             ))}
@@ -832,12 +854,12 @@ function skillChipStyle(background: string, color: string): CSSProperties {
   };
 }
 
-function verificationStatusTone(locale: UiLocale, status: NonNullable<ExecutionRun["verificationStatus"]>) {
+function verificationStatusTone(locale: UiLocale, status: NonNullable<ExecutionRun["verificationStatus"]>, passedColor = "#86efac") {
   switch (status) {
     case "running":
       return { label: pickLocaleText(locale, { "zh-CN": "验证中", "zh-TW": "驗證中", en: "Running", ja: "検証中" }), color: "#fbbf24" };
     case "passed":
-      return { label: pickLocaleText(locale, { "zh-CN": "通过", "zh-TW": "通過", en: "Passed", ja: "合格" }), color: "#86efac" };
+      return { label: pickLocaleText(locale, { "zh-CN": "通过", "zh-TW": "通過", en: "Passed", ja: "合格" }), color: passedColor };
     case "failed":
       return { label: pickLocaleText(locale, { "zh-CN": "失败", "zh-TW": "失敗", en: "Failed", ja: "失敗" }), color: "#fda4af" };
     case "skipped":

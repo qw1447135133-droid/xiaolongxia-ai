@@ -8,6 +8,7 @@ const electronBinary = require("electron");
 const { WebSocket } = require("ws");
 
 const projectRoot = path.resolve(__dirname, "..");
+const wsServerScript = path.join(projectRoot, "server", "ws-server.js");
 const preferredNextPort = Number(process.env.XLX_NEXT_PORT || 3000);
 const wsPort = Number(process.env.WS_PORT || 3001);
 const children = [];
@@ -100,8 +101,24 @@ function isWsReady(port, timeoutMs = 1500) {
     const timer = setTimeout(() => finish(false), timeoutMs);
 
     socket.once("open", () => {
-      clearTimeout(timer);
-      finish(true);
+      try {
+        socket.send(JSON.stringify({ type: "ping" }));
+      } catch {
+        clearTimeout(timer);
+        finish(false);
+      }
+    });
+
+    socket.on("message", payload => {
+      let message = null;
+      try {
+        message = JSON.parse(payload.toString());
+      } catch {}
+
+      if (message?.type === "pong") {
+        clearTimeout(timer);
+        finish(true);
+      }
     });
 
     socket.once("error", () => {
@@ -192,9 +209,29 @@ function spawnManaged(name, command, args, envOverrides = {}) {
   return child;
 }
 
+function normalizeCommandLine(commandLine) {
+  return String(commandLine || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\\/g, "/");
+}
+
 function isRepoOwnedCommandLine(commandLine) {
   if (!commandLine) return false;
-  return String(commandLine).toLowerCase().includes(projectRoot.toLowerCase());
+  return normalizeCommandLine(commandLine).includes(projectRoot.toLowerCase().replace(/\\/g, "/"));
+}
+
+function isCompatibleWsOwnerCommandLine(commandLine) {
+  const normalized = normalizeCommandLine(commandLine);
+  if (!normalized) return false;
+  const normalizedProjectRoot = projectRoot.toLowerCase().replace(/\\/g, "/");
+  const normalizedWsServerScript = normalizeCommandLine(wsServerScript);
+  if (normalized.includes(normalizedProjectRoot) || normalized.includes(normalizedWsServerScript)) {
+    return true;
+  }
+
+  // Backward-compatible fallback for older local runs launched with a relative script path.
+  return /(^|[\s"'=])server\/ws-server\.js($|[\s"'=])/.test(normalized);
 }
 
 function execForText(command, args) {
@@ -469,7 +506,7 @@ async function ensureNextDev() {
 async function ensureWsServer() {
   if (await isTcpPortOpen(wsPort)) {
     const ownerCommandLine = await getPortOwnerCommandLine(wsPort);
-    const ownedByRepo = isRepoOwnedCommandLine(ownerCommandLine);
+    const ownedByRepo = isCompatibleWsOwnerCommandLine(ownerCommandLine);
     const healthy = await isWsReady(wsPort);
 
     if (healthy && ownedByRepo) {
@@ -484,14 +521,20 @@ async function ensureWsServer() {
       log("WS", `clean mode detected an unknown process on fixed port ${wsPort}; reclaiming the port for this repo`);
       const stopped = await stopPortOwnerProcess(wsPort, "WS");
       if (!stopped && await isTcpPortOpen(wsPort)) {
-        throw new Error(`Port ${wsPort} is occupied by another process, and clean mode could not reclaim the fixed desktop WebSocket port.`);
+        throw new Error(
+          `Port ${wsPort} is occupied by another process, and clean mode could not reclaim the fixed desktop WebSocket port. ` +
+          `Owner: ${ownerCommandLine || "unknown process"}.`,
+        );
       }
     } else if (!ownedByRepo) {
-      throw new Error(`Port ${wsPort} is occupied by another process, so the desktop WebSocket service cannot start on its fixed port.`);
+      throw new Error(
+        `Port ${wsPort} is occupied by another process, so the desktop WebSocket service cannot start on its fixed port. ` +
+        `Owner: ${ownerCommandLine || "unknown process"}. If this is a stale local run, try \`npm run electron:dev:clean\`.`,
+      );
     }
   }
 
-  const child = spawnManaged("WS", process.execPath, [path.join("server", "ws-server.js")], {
+  const child = spawnManaged("WS", process.execPath, [wsServerScript], {
     WS_PORT: String(wsPort),
   });
   await waitForReadyOrChildExit(child, () => isWsReady(wsPort), "WS server");

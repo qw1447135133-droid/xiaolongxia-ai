@@ -446,9 +446,9 @@ export function NativeAppsCenter() {
               </div>
             </div>
 
-            <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", gap: 8 }}>
+            <div className="native-apps__allowlist-row">
               <input
-                className="input scheduled-form__input"
+                className="input scheduled-form__input native-apps__allowlist-input"
                 value={target}
                 onChange={event => setTarget(event.target.value)}
                 placeholder='选择应用路径，例如 "C:\\Program Files\\App\\app.exe"'
@@ -456,11 +456,10 @@ export function NativeAppsCenter() {
               />
               <button
                 type="button"
-                className="btn-primary"
+                className="btn-handoff native-apps__allowlist-button"
                 disabled={pickerBusy}
                 onClick={() => void selectApplicationPath()}
                 title="打开资源管理器选择应用程序"
-                style={{ minWidth: 120 }}
               >
                 {pickerBusy ? "选择中..." : "加入白名单"}
               </button>

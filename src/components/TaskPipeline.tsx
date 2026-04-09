@@ -9,15 +9,36 @@ import { timeAgo, formatChatDividerTime } from "@/lib/utils";
 import { CHAT_GAP_MS, CHAT_TIMELINE_MAX, CHAT_VIEWPORT_MAX } from "@/lib/chat-sessions";
 import { pickLocaleText } from "@/lib/ui-locale";
 
-// 每个 Agent 的主题色
-const AGENT_COLORS: Record<string, { bg: string; text: string; border: string }> = {
-  orchestrator: { bg: "rgba(255, 255, 255, 0.94)", text: "var(--text)", border: "rgba(148, 163, 184, 0.18)" },
-  explorer:     { bg: "rgba(255, 255, 255, 0.94)", text: "var(--text)", border: "rgba(148, 163, 184, 0.18)" },
-  writer:       { bg: "rgba(255, 255, 255, 0.94)", text: "var(--text)", border: "rgba(148, 163, 184, 0.18)" },
-  designer:     { bg: "rgba(255, 255, 255, 0.94)", text: "var(--text)", border: "rgba(148, 163, 184, 0.18)" },
-  performer:    { bg: "rgba(255, 255, 255, 0.94)", text: "var(--text)", border: "rgba(148, 163, 184, 0.18)" },
-  greeter:      { bg: "rgba(255, 255, 255, 0.94)", text: "var(--text)", border: "rgba(148, 163, 184, 0.18)" },
-};
+type BubblePalette = { bg: string; text: string; border: string };
+type BubbleTheme = "light" | "dark";
+
+function getBubblePalette(theme: BubbleTheme, isUser: boolean): BubblePalette {
+  if (isUser) {
+    return theme === "dark"
+      ? {
+          bg: "rgba(43, 64, 101, 0.92)",
+          text: "#edf3ff",
+          border: "rgba(138, 180, 248, 0.24)",
+        }
+      : {
+          bg: "rgba(233, 243, 255, 0.96)",
+          text: "#1f1f1f",
+          border: "rgba(147, 197, 253, 0.32)",
+        };
+  }
+
+  return theme === "dark"
+    ? {
+        bg: "rgba(28, 32, 40, 0.96)",
+        text: "#e8eaed",
+        border: "rgba(232, 234, 237, 0.1)",
+      }
+    : {
+        bg: "rgba(255, 255, 255, 0.94)",
+        text: "var(--text)",
+        border: "rgba(148, 163, 184, 0.18)",
+      };
+}
 
 type TimelineItem =
   | { kind: "task"; task: Task }
@@ -502,18 +523,12 @@ function ChatBubble({
   onRegenerateAssistant: () => void;
 }) {
   const locale = useStore(s => s.locale);
+  const theme = useStore(s => s.theme);
   const meta = AGENT_META[task.assignedTo];
-  const colors = AGENT_COLORS[task.assignedTo];
   const isUser = task.isUserMessage === true;
   const [copied, setCopied] = useState(false);
 
-  const userColors = {
-    bg: "rgba(233, 243, 255, 0.96)",
-    text: "#1F1F1F",
-    border: "rgba(147, 197, 253, 0.32)",
-  };
-
-  const bubbleColors = isUser ? userColors : colors;
+  const bubbleColors = getBubblePalette(theme, isUser);
   const displayDescription = sanitizeMessageContent(task.description);
   const displayResult = task.result ? sanitizeMessageContent(task.result) : "";
   const copyLabel = pickLocaleText(locale, {
@@ -602,7 +617,7 @@ function ChatBubble({
       }
     >
       <div className="chat-bubble__meta">
-        {!isUser && <span className="chat-bubble__avatar"><AgentIcon agentId={task.assignedTo} size={16} /></span>}
+        {!isUser && <span className="chat-bubble__avatar"><AgentIcon agentId={task.assignedTo} size={22} /></span>}
         <span className="chat-bubble__author">
           {isUser ? pickLocaleText(locale, { "zh-CN": "你", "zh-TW": "你", en: "You", ja: "あなた" }) : meta.name}
         </span>

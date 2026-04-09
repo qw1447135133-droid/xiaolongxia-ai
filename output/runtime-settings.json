@@ -1,13 +1,20 @@
 {
-  "providers": [],
+  "providers": [
+    {
+      "id": "volcengine-coding-uikol2z0",
+      "name": "火山方舟 Coding Plan",
+      "apiKey": "8997b6ae-3bcd-4043-bbd5-41eb38e0aa04",
+      "baseUrl": "https://ark.cn-beijing.volces.com/api/coding/v3"
+    }
+  ],
   "agentConfigs": {
     "orchestrator": {
       "id": "orchestrator",
       "name": "鹦鹉螺",
       "emoji": "🐚",
-      "personality": "你是跨境电商 AI 团队的总调度员，负责任务拆解和团队协调。",
-      "model": "doubao-seed-2.0-pro",
-      "providerId": "volcengine-coding-344z0p7e",
+      "personality": "你是 AI 团队的总调度员，负责任务拆解、团队协调和统一对外表达。",
+      "model": "doubao-seed-2.0-code",
+      "providerId": "volcengine-coding-uikol2z0",
       "skills": [
         "frontend",
         "doc_word",
@@ -48,9 +55,9 @@
       "id": "explorer",
       "name": "探海鲸鱼",
       "emoji": "🐋",
-      "personality": "你是跨境电商选品专家，专注竞品分析、选品趋势研究和市场数据分析，提供具体可执行的洞察。",
+      "personality": "你是研究与分析专家，擅长竞品研究、信息梳理、趋势判断和结构化洞察输出。",
       "model": "doubao-seed-2.0-lite",
-      "providerId": "volcengine-coding-344z0p7e",
+      "providerId": "volcengine-coding-uikol2z0",
       "skills": [
         "frontend",
         "doc_word",
@@ -91,9 +98,9 @@
       "id": "writer",
       "name": "星海章鱼",
       "emoji": "🐙",
-      "personality": "你是跨境电商文案专家，专注多语种文案创作、SEO 标题优化和商品详情页撰写，输出高转化率文案。",
+      "personality": "你是写作与表达专家，擅长多语种文案、结构化写作、标题优化和高转化表达。",
       "model": "doubao-seed-2.0-code",
-      "providerId": "volcengine-coding-344z0p7e",
+      "providerId": "volcengine-coding-uikol2z0",
       "skills": [
         "frontend",
         "doc_word",
@@ -134,9 +141,9 @@
       "id": "designer",
       "name": "珊瑚水母",
       "emoji": "🪼",
-      "personality": "你是电商视觉设计专家。当需要生成图片时，请先输出一段英文图片生成提示词（以 [IMAGE_PROMPT] 开头），然后再输出设计方案说明。",
+      "personality": "你是视觉设计专家。当需要生成图片时，请先输出一段英文图片生成提示词（以 [IMAGE_PROMPT] 开头），然后再输出设计方案说明。",
       "model": "doubao-seed-2.0-lite",
-      "providerId": "volcengine-coding-344z0p7e",
+      "providerId": "volcengine-coding-uikol2z0",
       "skills": [
         "frontend",
         "doc_word",
@@ -177,9 +184,9 @@
       "id": "performer",
       "name": "逐浪海豚",
       "emoji": "🐬",
-      "personality": "你是短视频内容专家，专注数字人视频脚本、TikTok/抖音内容策略和多平台矩阵发布计划。",
+      "personality": "你是内容与短视频专家，擅长脚本策划、多平台内容策略和传播节奏设计。",
       "model": "doubao-seed-2.0-lite",
-      "providerId": "volcengine-coding-344z0p7e",
+      "providerId": "volcengine-coding-uikol2z0",
       "skills": [
         "frontend",
         "doc_word",
@@ -220,9 +227,9 @@
       "id": "greeter",
       "name": "招潮蟹",
       "emoji": "🦀",
-      "personality": "你是多语种客服专家，专注客服话术、评论回复模板和买家互动策略，保持友好专业语气。",
+      "personality": "你是对话与客服专家，擅长客服话术、评论回复、互动策略与友好专业表达。",
       "model": "doubao-seed-2.0-code",
-      "providerId": "volcengine-coding-344z0p7e",
+      "providerId": "volcengine-coding-uikol2z0",
       "skills": [
         "frontend",
         "doc_word",
@@ -262,26 +269,22 @@
   },
   "platformConfigs": {
     "telegram": {
-      "enabled": false,
-      "fields": {},
+      "enabled": true,
+      "fields": {
+        "botToken": "8246778735:AAGUnsxj_O_p1w7GLnQrsoOZ8tlc1Ru2ucc",
+        "defaultChatId": "6470391105",
+        "proxy": "http://127.0.0.1:9974"
+      },
       "status": "connected",
-      "detail": "连接器已自动恢复，可直接接收和发送消息。",
+      "detail": "连接器已启动，可直接接收和发送消息。",
       "healthScore": 100,
       "lastDebugAction": "send_test_message",
       "lastDebugOk": true,
       "lastDebugStatus": "sent",
       "lastDebugMessage": "已向 6470391105 发送测试消息",
       "lastDebugTarget": "6470391105",
-      "lastDebugAt": 1775592866508,
+      "lastDebugAt": 1775686778605,
       "debugHistory": [
-        {
-          "action": "send_test_message",
-          "ok": false,
-          "status": "failed",
-          "target": "qa-final-002",
-          "message": "ETELEGRAM: 400 Bad Request: chat not found",
-          "at": 1775590042373
-        },
         {
           "action": "send_test_message",
           "ok": false,
@@ -337,13 +340,21 @@
           "target": "6470391105",
           "message": "已向 6470391105 发送测试消息",
           "at": 1775592866508
+        },
+        {
+          "action": "send_test_message",
+          "ok": true,
+          "status": "sent",
+          "target": "6470391105",
+          "message": "已向 6470391105 发送测试消息",
+          "at": 1775686778605
         }
       ],
-      "lastCheckedAt": 1775652667770,
+      "lastCheckedAt": 1775741040160,
       "pendingEvents": 0,
-      "lastEventAt": 1775592866508,
-      "lastInboundAt": 1775591843184,
-      "lastInboundMessageKey": "telegram:6470391105:24",
+      "lastEventAt": 1775686778628,
+      "lastInboundAt": 1775686774966,
+      "lastInboundMessageKey": "telegram:6470391105:30",
       "accountLabel": "chat:6470391105",
       "lastOutboundFailureAt": 1775591816646,
       "outboundRetryCount": 0,
@@ -391,9 +402,10 @@
           "retryCount": 1
         }
       ],
-      "lastSyncedAt": 1775652667770,
+      "lastSyncedAt": 1775741040160,
       "requireOutboundApproval": false,
-      "lastOutboundSuccessAt": 1775592866508
+      "lastOutboundSuccessAt": 1775686778628,
+      "lastInboundTarget": "6470391105"
     },
     "line": {
       "enabled": false,
@@ -442,8 +454,8 @@
     "favorites": [],
     "whitelist": [],
     "inputControl": {
-      "enabled": false,
-      "autoOpenPanelOnAction": false,
+      "enabled": true,
+      "autoOpenPanelOnAction": true,
       "requireManualTakeoverForVerification": true
     }
   },

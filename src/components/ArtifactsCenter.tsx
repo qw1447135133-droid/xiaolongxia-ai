@@ -320,8 +320,8 @@ export function ArtifactsCenter() {
                       padding: 12,
                       borderRadius: 14,
                       border: "1px solid var(--border)",
-                      background: "linear-gradient(180deg, rgba(255,255,255,0.98), rgba(247,249,253,0.96))",
-                      boxShadow: "inset 0 1px 0 rgba(255,255,255,0.82)",
+                      background: "linear-gradient(180deg, var(--bg-elevated-strong), var(--bg-card))",
+                      boxShadow: "var(--field-shadow-inset)",
                     }}
                   >
                     {item.body}
@@ -335,8 +335,8 @@ export function ArtifactsCenter() {
                       padding: 12,
                       borderRadius: 14,
                       border: "1px solid var(--border)",
-                      background: "linear-gradient(180deg, rgba(255,255,255,0.98), rgba(247,249,253,0.96))",
-                      boxShadow: "inset 0 1px 0 rgba(255,255,255,0.82)",
+                      background: "linear-gradient(180deg, var(--bg-elevated-strong), var(--bg-card))",
+                      boxShadow: "var(--field-shadow-inset)",
                     }}
                   >
                     <img

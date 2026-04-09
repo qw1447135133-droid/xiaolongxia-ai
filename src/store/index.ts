@@ -26,6 +26,8 @@ import type {
   VerificationStatus,
   VerificationStepResult,
   ModelProvider,
+  UserProfile,
+  UserProfileOnboardingState,
   PlatformConfig,
   AssistantFeedbackProfile,
   AssistantMessageFeedback,
@@ -59,6 +61,12 @@ import {
   getNextCycleActionDetail,
   getNextCycleStatusFromRecommendation,
 } from "@/lib/content-governance";
+import {
+  createEmptyUserProfile,
+  createIdleUserProfileOnboarding,
+  getUserProfileMissingFields,
+  normalizeUserProfile,
+} from "@/lib/user-profile";
 import { getWorkflowTemplateById } from "@/lib/workflow-runtime";
 import { buildProjectContext, getProjectScopeKey, matchProjectScope } from "@/lib/project-context";
 import { derivePlatformProvisionState, getPlatformDefinition } from "@/lib/platform-connectors";
@@ -213,6 +221,8 @@ interface SettingsSlice {
   platformConfigs: Record<string, PlatformConfig>;
   enabledPluginIds: string[];
   userNickname: string;
+  userProfile: UserProfile;
+  userProfileOnboarding: UserProfileOnboardingState;
   activeTeamOperatingTemplateId: TeamOperatingTemplateId | null;
   semanticMemoryConfig: SemanticMemoryConfig;
   desktopProgramSettings: DesktopProgramSettings;
@@ -227,6 +237,10 @@ interface SettingsSlice {
   togglePlugin: (id: string) => void;
   applyPluginPack: (id: string) => void;
   setUserNickname: (nickname: string) => void;
+  setUserProfile: (updates: Partial<UserProfile>) => void;
+  resetUserProfile: () => void;
+  setUserProfileOnboarding: (updates: Partial<UserProfileOnboardingState>) => void;
+  startUserProfileOnboarding: (sessionId: string, resetProfile?: boolean) => void;
   setActiveTeamOperatingTemplate: (id: TeamOperatingTemplateId | null) => void;
   updateSemanticMemoryConfig: (updates: Partial<SemanticMemoryConfig>) => void;
   updateSemanticMemoryPgvectorConfig: (updates: Partial<SemanticMemoryConfig["pgvector"]>) => void;
@@ -634,6 +648,15 @@ const LEGACY_AGENT_EMOJIS: Record<AgentId, string[]> = {
   greeter: ["💬"],
 };
 
+const LEGACY_AGENT_PERSONALITIES: Record<AgentId, string[]> = {
+  orchestrator: ["你是跨境电商 AI 团队的总调度员，负责任务拆解和团队协调。"],
+  explorer: ["你是跨境电商选品专家，专注竞品分析、选品趋势研究和市场数据分析，提供具体可执行的洞察。"],
+  writer: ["你是跨境电商文案专家，专注多语种文案创作、SEO 标题优化和商品详情页撰写，输出高转化率文案。"],
+  designer: ["你是电商视觉设计专家。当需要生成图片时，请先输出一段英文图片生成提示词（以 [IMAGE_PROMPT] 开头），然后再输出设计方案说明。"],
+  performer: ["你是短视频内容专家，专注数字人视频脚本、TikTok/抖音内容策略和多平台矩阵发布计划。"],
+  greeter: ["你是多语种客服专家，专注客服话术、评论回复模板和买家互动策略，保持友好专业语气。"],
+};
+
 function shouldMigrateLegacyAgentName(agentId: AgentId, value?: string) {
   if (!value) return false;
   return LEGACY_AGENT_NAMES[agentId]?.includes(value.trim()) ?? false;
@@ -642,6 +665,11 @@ function shouldMigrateLegacyAgentName(agentId: AgentId, value?: string) {
 function shouldMigrateLegacyAgentEmoji(agentId: AgentId, value?: string) {
   if (!value) return false;
   return LEGACY_AGENT_EMOJIS[agentId]?.includes(value.trim()) ?? false;
+}
+
+function shouldMigrateLegacyAgentPersonality(agentId: AgentId, value?: string) {
+  if (!value) return false;
+  return LEGACY_AGENT_PERSONALITIES[agentId]?.includes(value.trim()) ?? false;
 }
 
 function normalizeAgentConfigs(
@@ -660,6 +688,7 @@ function normalizeAgentConfigs(
             ...persisted,
             name: shouldMigrateLegacyAgentName(id, persisted?.name) ? fallback.name : (persisted?.name ?? fallback.name),
             emoji: shouldMigrateLegacyAgentEmoji(id, persisted?.emoji) ? fallback.emoji : (persisted?.emoji ?? fallback.emoji),
+            personality: shouldMigrateLegacyAgentPersonality(id, persisted?.personality) ? fallback.personality : (persisted?.personality ?? fallback.personality),
             skills: Array.from(new Set([
               ...allSkillIds,
               ...(Array.isArray(persisted?.skills) ? persisted.skills : fallback.skills),
@@ -1847,6 +1876,8 @@ export const useStore = create<Store>()(
       agentConfigs: initAgentConfigs(),
       enabledPluginIds: DEFAULT_ENABLED_PLUGIN_IDS,
       userNickname: "您",
+      userProfile: createEmptyUserProfile(),
+      userProfileOnboarding: createIdleUserProfileOnboarding(),
       activeTeamOperatingTemplateId: null,
       assistantFeedbackProfile: DEFAULT_ASSISTANT_FEEDBACK_PROFILE,
       semanticMemoryConfig: DEFAULT_SEMANTIC_MEMORY_CONFIG,
@@ -1904,6 +1935,44 @@ export const useStore = create<Store>()(
           };
         }),
       setUserNickname: (nickname) => set({ userNickname: nickname }),
+      setUserProfile: (updates) =>
+        set(s => ({
+          userProfile: normalizeUserProfile({
+            ...s.userProfile,
+            ...updates,
+            updatedAt: typeof updates.updatedAt === "number" ? updates.updatedAt : Date.now(),
+          }),
+        })),
+      resetUserProfile: () =>
+        set({
+          userProfile: createEmptyUserProfile(),
+          userProfileOnboarding: createIdleUserProfileOnboarding(),
+        }),
+      setUserProfileOnboarding: (updates) =>
+        set(s => ({
+          userProfileOnboarding: {
+            ...s.userProfileOnboarding,
+            ...updates,
+            missingFields: Array.isArray(updates.missingFields)
+              ? updates.missingFields
+              : s.userProfileOnboarding.missingFields,
+          },
+        })),
+      startUserProfileOnboarding: (sessionId, resetProfile = false) =>
+        set(s => {
+          const nextProfile = resetProfile ? createEmptyUserProfile() : s.userProfile;
+          return {
+            userProfile: nextProfile,
+            userProfileOnboarding: {
+              status: "collecting",
+              sessionId,
+              startedAt: Date.now(),
+              completedAt: null,
+              lastUserInputAt: null,
+              missingFields: getUserProfileMissingFields(nextProfile),
+            },
+          };
+        }),
       setActiveTeamOperatingTemplate: (activeTeamOperatingTemplateId) => set({ activeTeamOperatingTemplateId }),
       platformConfigs: Object.fromEntries(
         PLATFORM_DEFINITIONS.map(p => [p.id, { enabled: false, fields: {}, status: "idle" as const, healthScore: 0 }])
@@ -2096,7 +2165,7 @@ export const useStore = create<Store>()(
       locale: "zh-CN",
       leftOpen: true,
       rightOpen: true,
-      activeTab: "dashboard",
+      activeTab: "tasks",
       activeControlCenterSectionId: "overview",
       focusedBusinessContentTaskId: null,
       focusedWorkflowRunId: null,
@@ -2516,7 +2585,11 @@ export const useStore = create<Store>()(
         const now = Date.now();
         const scope = resolveBusinessScope(state);
         const existing = state.businessChannelSessions.find(item =>
-          (payload.id && item.id === payload.id) || item.externalRef === payload.externalRef,
+          (payload.id && item.id === payload.id)
+          || (
+            item.channel === payload.channel
+            && item.externalRef === payload.externalRef
+          ),
         );
         const nextId = payload.id ?? existing?.id ?? `channel-session-${now}-${Math.random().toString(36).slice(2, 7)}`;
         const mergedSession: BusinessChannelSession = {
@@ -3957,13 +4030,15 @@ export const useStore = create<Store>()(
     }),
     {
       name: "xiaolongxia-settings",
-      version: 2,
+      version: 3,
       partialize: (s) => ({
         providers: s.providers,
         agentConfigs: s.agentConfigs,
         enabledPluginIds: s.enabledPluginIds,
         platformConfigs: s.platformConfigs,
         userNickname: s.userNickname,
+        userProfile: s.userProfile,
+        userProfileOnboarding: s.userProfileOnboarding,
         activeTeamOperatingTemplateId: s.activeTeamOperatingTemplateId,
         assistantFeedbackProfile: s.assistantFeedbackProfile,
         semanticMemoryConfig: s.semanticMemoryConfig,
@@ -3973,7 +4048,6 @@ export const useStore = create<Store>()(
         locale: s.locale,
         leftOpen: s.leftOpen,
         rightOpen: s.rightOpen,
-        activeTab: s.activeTab,
         automationMode: s.automationMode,
         automationPaused: s.automationPaused,
         remoteSupervisorEnabled: s.remoteSupervisorEnabled,
@@ -4042,13 +4116,24 @@ export const useStore = create<Store>()(
           ...(persistedStore.desktopScreenshot ?? {}),
         };
         const desktopEvidenceLog = normalizeDesktopEvidenceLog(persistedStore.desktopEvidenceLog);
+        const userProfile = normalizeUserProfile(persistedStore.userProfile ?? current.userProfile);
+        const userProfileOnboarding = {
+          ...current.userProfileOnboarding,
+          ...(persistedStore.userProfileOnboarding ?? {}),
+          missingFields: Array.isArray(persistedStore.userProfileOnboarding?.missingFields)
+            ? persistedStore.userProfileOnboarding?.missingFields ?? current.userProfileOnboarding.missingFields
+            : getUserProfileMissingFields(userProfile),
+        };
 
         return ensureChatHydration({
           ...merged,
+          activeTab: current.activeTab,
           theme: sanitizeUiTheme(persistedStore.theme, current.theme),
           agentConfigs,
           agents,
           assistantFeedbackProfile,
+          userProfile,
+          userProfileOnboarding,
           semanticMemoryConfig,
           desktopProgramSettings,
           hermesDispatchSettings,

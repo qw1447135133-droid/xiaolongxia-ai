@@ -726,7 +726,7 @@ export function RemoteOpsCenter() {
               <button
                 key={mode.id}
                 type="button"
-                className={automationMode === mode.id ? "btn-primary" : "btn-ghost"}
+                className={`control-center__mode-pill ${automationMode === mode.id ? "is-active" : ""}`}
                 onClick={() => {
                   const preset = automationModePresets[mode.id];
                   setAutomationMode(mode.id);
@@ -742,7 +742,7 @@ export function RemoteOpsCenter() {
           <div className="control-center__quick-actions" style={{ justifyContent: "flex-end", gap: 8 }}>
             <button
               type="button"
-              className={remoteSupervisorEnabled ? "btn-primary" : "btn-ghost"}
+              className={`control-center__status-pill ${remoteSupervisorEnabled ? "is-on" : ""}`}
               disabled
               aria-disabled="true"
               style={{ cursor: "default", pointerEvents: "none" }}
@@ -751,7 +751,7 @@ export function RemoteOpsCenter() {
             </button>
             <button
               type="button"
-              className={automationPaused ? "btn-ghost" : "btn-primary"}
+              className={`control-center__status-pill ${automationPaused ? "" : "is-on"}`}
               disabled
               aria-disabled="true"
               style={{ cursor: "default", pointerEvents: "none" }}
@@ -760,7 +760,7 @@ export function RemoteOpsCenter() {
             </button>
             <button
               type="button"
-              className={autoDispatchScheduledTasks ? "btn-primary" : "btn-ghost"}
+              className={`control-center__status-pill ${autoDispatchScheduledTasks ? "is-on" : ""}`}
               disabled
               aria-disabled="true"
               style={{ cursor: "default", pointerEvents: "none" }}
@@ -894,7 +894,7 @@ export function RemoteOpsCenter() {
                       <span>{formatRemoteTimestamp(session.lastMessageAt)}</span>
                     </div>
                     <div className="control-center__quick-actions" style={{ gap: 8 }}>
-                      <button type="button" className="btn-primary" onClick={() => handoffChannelSessionToChat(session)}>
+                      <button type="button" className="btn-handoff" onClick={() => handoffChannelSessionToChat(session)}>
                         聊天接管
                       </button>
                       {linkedRun ? (

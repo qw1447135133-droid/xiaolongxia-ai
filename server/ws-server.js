@@ -2,7 +2,7 @@ import { WebSocketServer, WebSocket } from "ws";
 import { createServer } from "http";
 import { promises as fs, readFileSync, existsSync, readdirSync, statSync } from "fs";
 import { fileURLToPath } from "url";
-import { basename, dirname, join } from "path";
+import { basename, dirname, join, resolve, sep } from "path";
 import { spawn } from "child_process";
 import os from "os";
 import Anthropic from "@anthropic-ai/sdk";
@@ -12,10 +12,13 @@ import OpenAI from "openai";
 const __dirname_ws = dirname(fileURLToPath(import.meta.url));
 const envPath = join(__dirname_ws, '..', '.env.local');
 const repoRoot = join(__dirname_ws, "..");
+const outputRoot = process.env.XIAOLONGXIA_OUTPUT_ROOT
+  ? resolve(process.env.XIAOLONGXIA_OUTPUT_ROOT)
+  : join(repoRoot, "output");
 const hermesDispatchPrototypePath = join(repoRoot, "prototypes", "hermes-dispatch", "run.mjs");
 const hermesDispatchSamplePlanPath = join(repoRoot, "prototypes", "hermes-dispatch", "sample-plan.json");
-const hermesDispatchOutputRoot = join(repoRoot, "output", "hermes-dispatch");
-const runtimeSettingsPath = join(repoRoot, "output", "runtime-settings.json");
+const hermesDispatchOutputRoot = join(outputRoot, "hermes-dispatch");
+const runtimeSettingsPath = join(outputRoot, "runtime-settings.json");
 if (existsSync(envPath)) {
   for (const line of readFileSync(envPath, 'utf-8').split(/\r?\n/)) {
     const m = line.trim().match(/^([A-Z_][A-Z0-9_]*)=(.*)$/);
@@ -131,6 +134,7 @@ let settings = {
 const hermesDispatchRuns = new Map();
 const hermesDispatchRuntime = new Map();
 const activeExecutionControllers = new Map();
+const platformResultListeners = new Map();
 const PLATFORM_WEBHOOK_PATHS = {
   line: "/webhook/line",
   feishu: "/webhook/feishu",
@@ -544,7 +548,7 @@ const DESKTOP_AUTOMATION_PROMPT =
   "\n\n【桌面执行能力】当任务要求真实打开本机程序、外部浏览器、网站页面，或通过鼠标键盘在桌面界面中点击、点开、播放、输入、滚动时，你可以使用桌面工具链：desktop_list_installed_applications、desktop_open_external_browser、desktop_launch_native_application、desktop_cdp_open_app、desktop_cdp_snapshot、desktop_cdp_act、desktop_capture_screenshot、desktop_control_input。对 Chrome、Edge、飞书、Figma、Notion 这类 Chromium / Electron 应用，优先进入 CDP App Mode，再读取结构化快照并基于 ref 操作；只有在结构化控制不可用时，才退回“先截图定位 → 再点击/输入 → 再截图验证”的物理桌面闭环。若第一次验证失败，优先参考 retrySuggestions 做一次偏移重试。只有验证码、人机验证、OTP/2FA 等验证场景必须转人工接管，不要口头假设自己没有鼠标键盘能力。若用户要求真实打开视频网站、视频页、播放器并点开/播放视频，不要先空口解释限制，必须先实际尝试桌面工具链。对于物理桌面操作请求，除验证场景外，不要只给文字建议而不动手。";
 
 const SYSTEM_PROMPTS = {
-  orchestrator: "你是跨境电商 AI 团队的总协调员鹦鹉螺，负责任务拆解和团队协调。回复与汇报都要简短有力。"
+  orchestrator: "你是 AI 团队的总协调员鹦鹉螺，负责任务拆解、团队协调和统一对外表达。回复与汇报都要简短有力。"
     + "\n\n你拥有浏览器控制能力，可以使用以下工具：browser_goto（导航到URL）、browser_get_text（读取页面文字内容，搜索后必须用这个提取结果）、browser_page_info（获取页面信息）、browser_screenshot（截图识图）、browser_act（自然语言操作，如点击/填写/滚动）、browser_act_single（精确选择器操作）、browser_act_multi（批量操作）。"
     + DOCUMENT_EXPORT_PROMPT
     + "\n\n你还拥有真实外部浏览器启动能力：desktop_open_external_browser 可打开 Chrome、Edge、Firefox 或系统默认浏览器。凡是用户明确要求打开浏览器，或要求打开/访问某个网站、链接、URL，都应优先使用它；只有自主搜索、读取网页、抓取资料、验证页面时，才继续使用内置 browser_*。"
@@ -557,29 +561,45 @@ const SYSTEM_PROMPTS = {
     + "\n\n【搜索流程】：1.browser_goto 导航到搜索页或目标页 → 2.browser_get_text 读取页面内容 → 3.整理结果回复用户。不要反复跳转，读到内容就总结。"
     + "\n\n【遇到登录页】：换用百度/必应搜索该关键词，或直接总结已知信息。"
     + BREVITY,
-  explorer: "你是探海鲸鱼，跨境电商选品专家，专注竞品分析、选品趋势研究和市场数据分析，提供可执行洞察。"
+  explorer: "你是探海鲸鱼，研究与分析专家，专注竞品分析、趋势研究、资料整理和结构化洞察输出。"
     + DOCUMENT_EXPORT_PROMPT
     + DESKTOP_AUTOMATION_PROMPT
     + BREVITY,
-  writer: "你是星海章鱼，跨境电商文案专家，专注多语种文案创作、SEO 标题和详情页撰写，输出高转化文案。"
+  writer: "你是星海章鱼，写作与表达专家，专注多语种文案创作、标题优化、详情表达和高转化内容输出。"
     + DOCUMENT_EXPORT_PROMPT
     + DESKTOP_AUTOMATION_PROMPT
     + BREVITY,
-  designer: "你是珊瑚水母，电商视觉设计专家；需要出图时先给出 [IMAGE_PROMPT] 英文提示词，再补充设计说明。"
+  designer: "你是珊瑚水母，视觉设计专家；需要出图时先给出 [IMAGE_PROMPT] 英文提示词，再补充设计说明。"
     + DOCUMENT_EXPORT_PROMPT
     + DESKTOP_AUTOMATION_PROMPT
     + BREVITY,
-  performer: "你是逐浪海豚，短视频内容专家，专注数字人视频脚本、TikTok/抖音内容策略和多平台矩阵发布。"
+  performer: "你是逐浪海豚，内容与短视频专家，专注脚本策划、内容策略和多平台分发节奏。"
     + DOCUMENT_EXPORT_PROMPT
     + DESKTOP_AUTOMATION_PROMPT
     + BREVITY,
-  greeter: "你是招潮蟹，多语种客服专家，专注客服话术、评论回复模板和买家互动策略。"
+  greeter: "你是招潮蟹，对话与客服专家，专注客服话术、评论回复模板和互动策略。"
     + DOCUMENT_EXPORT_PROMPT
     + DESKTOP_AUTOMATION_PROMPT
     + BREVITY,
 };
 
 const AGENT_IDS = ["orchestrator", "explorer", "writer", "designer", "performer", "greeter"];
+const AGENT_DEFAULT_PERSONALITIES = {
+  orchestrator: "你是 AI 团队的总协调员鹦鹉螺，负责任务拆解、团队协调和统一对外表达。",
+  explorer: "你是探海鲸鱼，研究与分析专家，专注竞品分析、趋势研究、资料整理和结构化洞察输出。",
+  writer: "你是星海章鱼，写作与表达专家，专注多语种文案创作、标题优化、详情表达和高转化内容输出。",
+  designer: "你是珊瑚水母，视觉设计专家；需要出图时先给出 [IMAGE_PROMPT] 英文提示词，再补充设计说明。",
+  performer: "你是逐浪海豚，内容与短视频专家，专注脚本策划、内容策略和多平台分发节奏。",
+  greeter: "你是招潮蟹，对话与客服专家，专注客服话术、评论回复模板和互动策略。",
+};
+const LEGACY_AGENT_PERSONALITIES = {
+  orchestrator: ["你是跨境电商 AI 团队的总协调员鹦鹉螺，负责任务拆解和团队协调。回复与汇报都要简短有力。", "你是跨境电商 AI 团队的总调度员，负责任务拆解和团队协调。"],
+  explorer: ["你是探海鲸鱼，跨境电商选品专家，专注竞品分析、选品趋势研究和市场数据分析，提供可执行洞察。", "你是跨境电商选品专家，专注竞品分析、选品趋势研究和市场数据分析，提供具体可执行的洞察。"],
+  writer: ["你是星海章鱼，跨境电商文案专家，专注多语种文案创作、SEO 标题和详情页撰写，输出高转化文案。", "你是跨境电商文案专家，专注多语种文案创作、SEO 标题优化和商品详情页撰写，输出高转化率文案。"],
+  designer: ["你是珊瑚水母，电商视觉设计专家；需要出图时先给出 [IMAGE_PROMPT] 英文提示词，再补充设计说明。", "你是电商视觉设计专家。当需要生成图片时，请先输出一段英文图片生成提示词（以 [IMAGE_PROMPT] 开头），然后再输出设计方案说明。"],
+  performer: ["你是逐浪海豚，短视频内容专家，专注数字人视频脚本、TikTok/抖音内容策略和多平台矩阵发布。", "你是短视频内容专家，专注数字人视频脚本、TikTok/抖音内容策略和多平台矩阵发布计划。"],
+  greeter: ["你是招潮蟹，多语种客服专家，专注客服话术、评论回复模板和买家互动策略。", "你是多语种客服专家，专注客服话术、评论回复模板和买家互动策略，保持友好专业语气。"],
+};
 const MEETING_DEBATE_PARTICIPANTS = ["explorer", "writer", "designer", "performer", "greeter"];
 const MEETING_ROLE_STANCES = {
   orchestrator: {
@@ -689,6 +709,7 @@ function buildMeetingAgentSystemPrompt(agentId) {
     "允许有火气、允许点名回应、允许轻度呛声和回怼，但尺度保持在同事开会吵起来的程度；不要恶毒辱骂、不要仇恨、不要低俗脏话连篇。",
     "你可以引用公开网页、平台页面、行业报告、产品链接、品牌站点作为证据，但只能把它们当作佐证，不要把发言写成“我要去打开/查看/启动某网站”。",
     "你拥有会议专用网页取证能力：browser_goto、browser_get_text、browser_page_info、browser_list_images、browser_screenshot、browser_act。只有在需要证据时才使用；禁止转去桌面程序、安装应用或执行型工具。",
+    "凡是涉及市场变化、平台政策、品牌动作、融资、宏观事件、竞品动态的判断，优先使用近15天内的公开网页新闻、资讯、公告或报道来验证；如果拿不出近15天证据，就明确说“近15天暂未看到足够证据”，不要硬编。",
     "若你要拿网页上的新闻配图、财报图、图表图做证据，可先 browser_goto 到页面，再用 browser_list_images 找公开图片 URL，然后在发言里输出 [IMAGE|标题|图片URL|这图说明了什么]。",
     "若你想直接摆一个对比表，可用 ```table 代码块```；若想摆趋势对比，可用 ```chart 代码块```。",
     "如果你要补充证据，请优先用以下轻量格式之一，并单独占行：",
@@ -724,6 +745,46 @@ function buildMeetingAgentSystemPrompt(agentId) {
   }
 
   return basePrompt.join("\n");
+}
+
+function formatMeetingEvidenceDate(value) {
+  const date = value instanceof Date ? value : new Date(value);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function getMeetingRecentEvidenceWindow(now = Date.now(), days = 15) {
+  const end = new Date(now);
+  const start = new Date(now);
+  start.setDate(start.getDate() - days);
+  return {
+    startDate: formatMeetingEvidenceDate(start),
+    endDate: formatMeetingEvidenceDate(end),
+  };
+}
+
+function buildMeetingResearchPrompt(topic, evidenceWindow) {
+  return [
+    `你现在要在正式辩论开始前完成一轮“会前外部情报核验”。会议主题：${topic}`,
+    `硬性时间窗：只采纳 ${evidenceWindow.startDate} 到 ${evidenceWindow.endDate}（含）之间的公开网页新闻、资讯、公告、采访、行业报道或官方更新。`,
+    "你必须实际调用会议专用 browser_* 工具，不要凭记忆、不要靠常识脑补。",
+    "优先覆盖全球可信公开网站，至少检查 3 个不同站点，尽量优先 Reuters、AP、Bloomberg、Financial Times、BBC、WSJ、CNBC、TechCrunch、官方公告站、品牌官网、监管机构站点等来源；如果这些站点没有合适结果，再换其他可信公开网站。",
+    "至少整理 4 条、最多 6 条可直接用于会议验证观点的近15天证据。",
+    "如果某条内容发布时间不在时间窗内，或者发布时间看不清，就不要把它当核心证据。",
+    "不要站队，不要下最终结论，你这轮只做情报简报。",
+    "输出格式必须紧凑，按下面结构：",
+    "【会前近15天情报简报】",
+    "- YYYY-MM-DD｜来源站点｜发生了什么｜它能验证/反驳什么判断",
+    "[LINK|证据标题|https://example.com|这条证据支持什么判断]",
+    "【目前可被验证的判断】",
+    "- 判断 A",
+    "- 判断 B",
+    "【仍缺近15天证据的点】",
+    "- 缺口 A",
+    "- 缺口 B",
+  ].join("\n");
 }
 
 function stripMeetingPresentationSyntax(text = "") {
@@ -846,12 +907,20 @@ function normalizeAgentSkillIds(skillIds, fallback = []) {
   );
 }
 
+function shouldMigrateLegacyAgentPersonality(agentId, value) {
+  if (!value) return false;
+  return LEGACY_AGENT_PERSONALITIES[agentId]?.includes(String(value).trim()) ?? false;
+}
+
 function buildDefaultAgentConfig(agentId, currentConfig = {}) {
+  const currentPersonality = String(currentConfig?.personality || "").trim();
   return {
     id: agentId,
     name: currentConfig?.name || AGENT_DISPLAY[agentId] || agentId,
     emoji: currentConfig?.emoji || "",
-    personality: currentConfig?.personality || "",
+    personality: currentPersonality && !shouldMigrateLegacyAgentPersonality(agentId, currentPersonality)
+      ? currentPersonality
+      : (AGENT_DEFAULT_PERSONALITIES[agentId] || ""),
     model: currentConfig?.model || "",
     providerId: currentConfig?.providerId || "",
     skills: normalizeAgentSkillIds(currentConfig?.skills),
@@ -876,7 +945,9 @@ function normalizeAgentConfigs(nextConfigs = {}, currentConfigs = settings.agent
       id: agentId,
       name: String(incoming?.name || fallback.name),
       emoji: String(incoming?.emoji || fallback.emoji || ""),
-      personality: String(incoming?.personality || fallback.personality || ""),
+      personality: shouldMigrateLegacyAgentPersonality(agentId, incoming?.personality)
+        ? String(fallback.personality || "")
+        : String(incoming?.personality || fallback.personality || ""),
       model: String(incoming?.model || fallback.model || ""),
       providerId: String(incoming?.providerId || fallback.providerId || ""),
       skills: normalizeAgentSkillIds(
@@ -935,7 +1006,7 @@ function mergePlatformConfigs(nextConfigs = {}) {
 
 async function persistRuntimeSettings() {
   try {
-    await fs.mkdir(join(repoRoot, "output"), { recursive: true });
+    await fs.mkdir(outputRoot, { recursive: true });
     await fs.writeFile(runtimeSettingsPath, JSON.stringify(settings, null, 2), "utf8");
   } catch (error) {
     console.error("[ws-server] persist settings failed:", error?.message || error);
@@ -1182,6 +1253,27 @@ function buildDefaultHermesSessionStateFile(profileId) {
   return `output/hermes-dispatch/planner-sessions/${id}.json`;
 }
 
+function resolveOutputScopedPath(relativePath) {
+  const normalized = String(relativePath || "").trim().replace(/\\/g, "/");
+  if (!normalized) {
+    return null;
+  }
+
+  if (normalized !== "output" && !normalized.startsWith("output/")) {
+    return null;
+  }
+
+  const relativeToOutput = normalized === "output" ? "" : normalized.slice("output/".length);
+  const resolvedPath = resolve(outputRoot, relativeToOutput);
+  const normalizedOutputRoot = `${outputRoot}${sep}`;
+
+  if (resolvedPath !== outputRoot && !resolvedPath.startsWith(normalizedOutputRoot)) {
+    return null;
+  }
+
+  return resolvedPath;
+}
+
 function normalizeHermesDispatchSettings(input) {
   const fallbackProfiles = DEFAULT_HERMES_DISPATCH_SETTINGS.plannerProfiles;
   const rawProfiles = Array.isArray(input?.plannerProfiles) ? input.plannerProfiles : fallbackProfiles;
@@ -1245,17 +1337,7 @@ function resolveHermesSessionStatePath(sessionStateFile) {
   if (!relativePath) {
     return null;
   }
-
-  const outputRoot = join(repoRoot, "output", "hermes-dispatch");
-  const resolvedPath = join(repoRoot, relativePath);
-  const normalizedOutputRoot = `${outputRoot}${process.platform === "win32" ? "\\" : "/"}`;
-  const normalizedResolvedPath = resolvedPath;
-
-  if (normalizedResolvedPath !== outputRoot && !normalizedResolvedPath.startsWith(normalizedOutputRoot)) {
-    return null;
-  }
-
-  return resolvedPath;
+  return resolveOutputScopedPath(relativePath);
 }
 
 function resolveHermesPlannerProfile(selectedProfileId) {
@@ -1863,8 +1945,12 @@ function broadcast(msg) {
       ws.send(data);
     }
   }
-  if (global.__platformResultListener) {
-    global.__platformResultListener(msg);
+  for (const listener of platformResultListeners.values()) {
+    try {
+      listener(msg);
+    } catch (error) {
+      console.error("[ws-server] platform result listener failed:", error?.message || error);
+    }
   }
 }
 
@@ -2173,15 +2259,21 @@ function buildChannelSessionPayload({
   lastHandledAt,
   lastDeliveryError,
   externalMessageId,
+  title,
+  participantLabel,
+  remoteUserId,
+  accountLabel,
+  serviceMode,
 }) {
   const channel = mapPlatformToChannel(platformId);
   return {
     channel,
     externalRef: String(externalRef),
-    title: `${platformId}:${externalRef}`,
-    participantLabel: String(externalRef),
-    remoteUserId: String(externalRef),
-    accountLabel: summarizePlatformAccount(platformId, settings.platformConfigs?.[platformId]?.fields ?? {}),
+    title: title || `${platformId}:${externalRef}`,
+    participantLabel: participantLabel || String(externalRef),
+    remoteUserId: remoteUserId || String(externalRef),
+    accountLabel: accountLabel || summarizePlatformAccount(platformId, settings.platformConfigs?.[platformId]?.fields ?? {}),
+    ...(serviceMode ? { serviceMode } : {}),
     lastMessageDirection: direction,
     lastDeliveryStatus: deliveryStatus,
     lastMessagePreview: String(text || "").slice(0, 140),
@@ -2415,14 +2507,20 @@ function buildChannelSessionSnapshot({
   timestamp,
   deliveryError,
   externalMessageId,
+  title,
+  participantLabel,
+  remoteUserId,
+  accountLabel,
+  serviceMode,
 }) {
   const channel = mapPlatformToChannel(platformId);
   return {
     channel,
     externalRef: String(targetId),
-    title: `${platformId}:${targetId}`,
-    participantLabel: String(targetId),
-    remoteUserId: String(targetId),
+    title: title || `${platformId}:${targetId}`,
+    participantLabel: participantLabel || String(targetId),
+    remoteUserId: remoteUserId || String(targetId),
+    ...(serviceMode ? { serviceMode } : {}),
     lastMessageDirection: direction,
     lastDeliveryStatus: deliveryStatus,
     lastDeliveryError: deliveryError,
@@ -2437,7 +2535,7 @@ function buildChannelSessionSnapshot({
     lastOutboundAt: direction === "outbound" ? timestamp : undefined,
     lastOutboundText: direction === "outbound" ? String(text || "") : undefined,
     lastFailedOutboundText: deliveryStatus === "failed" ? String(text || "") : undefined,
-    accountLabel: summarizePlatformAccount(platformId, settings.platformConfigs?.[platformId]?.fields ?? {}),
+    accountLabel: accountLabel || summarizePlatformAccount(platformId, settings.platformConfigs?.[platformId]?.fields ?? {}),
   };
 }
 
@@ -3261,9 +3359,24 @@ function shouldForceDecomposition(text) {
   const t = String(text || "").trim();
   if (t.length < 4) return false;
   if (/^(?:你好|在吗|hi|hello|谢谢|感谢|再见|拜拜)[!！.?\s]*$/i.test(t)) return false;
+  if (isUserProfileOnboardingInstruction(t)) return false;
   if (/(?:分析|列出|对比|总结|梳理|拆解|建议|方案|分别|既要|还要|并且|以及|第一|第二)/i.test(t)) return true;
   if (/(?:新闻|资讯|热点|趋势|舆情|时事)/i.test(t)) return true;
   return false;
+}
+
+function isUserProfileOnboardingInstruction(text) {
+  const t = String(text || "").trim();
+  if (!t) return false;
+
+  return [
+    /用户信息录入引导/i,
+    /开始录入用户信息/i,
+    /用户画像/i,
+    /企业还是个人/i,
+    /从事什么工作/i,
+    /职位是什么/i,
+  ].some((pattern) => pattern.test(t));
 }
 
 function shouldPreferOrchestratorForWebResearch(text) {
@@ -3404,7 +3517,7 @@ function buildDirectOrchestratorReply(text) {
 
   if (!t) return `我在，${nick}可以直接说需求。`;
   if (/^(?:你好|您好|嗨|哈喽|hello|hi|早上好|中午好|下午好|晚上好)[!！。.?？\s]*$/i.test(t)) {
-    return `我在，${nick}可以直接说需求，我来帮你判断是我直接回复，还是分给对应龙虾执行。`;
+    return `我在，${nick}可以直接说需求，我来判断是由我直接回复，还是安排对应角色继续处理。`;
   }
   if (/^(?:在吗)[!！。.?？\s]*$/i.test(t)) {
     return `在，${nick}直接说。`;
@@ -3416,10 +3529,10 @@ function buildDirectOrchestratorReply(text) {
     return `好，${nick}，有需要随时叫我。`;
   }
   if (/^(?:你是谁|介绍一下自己)[!！。.?？\s]*$/i.test(t)) {
-    return `我是鹦鹉螺，${nick}可以把需求直接发给我，我会判断是由我直接回复，还是分配给选品、文案、设计、视频、客服这些执行角色。`;
+    return `我是鹦鹉螺，${nick}可以把需求直接发给我，我会判断是由我直接回复，还是分配给研究、写作、设计、内容、客服这些执行角色。`;
   }
   if (/^(?:你是干什么的|你能做什么|怎么用)[!！。.?？\s]*$/i.test(t)) {
-    return `我是负责调度的 STARCRAW 主管。${nick}可以直接发任务，比如选品分析、文案、海报、短视频脚本、客服话术，我会直接处理或安排合适的执行角色。`;
+    return `我是负责调度的鹦鹉螺。${nick}可以直接发任务，比如研究分析、文案、海报、脚本、客服话术，我会直接处理或安排合适的执行角色。`;
   }
 
   return "";
@@ -3433,6 +3546,9 @@ function nextTaskTimestamp() {
 
 function routeTask(instruction) {
   const lower = String(instruction || "").toLowerCase();
+  if (isUserProfileOnboardingInstruction(lower)) {
+    return { agent: "orchestrator", complexity: "low" };
+  }
   if (shouldPreferOrchestratorForDesktopControl(lower)) {
     return { agent: "orchestrator", complexity: "high" };
   }
@@ -3705,10 +3821,16 @@ async function dispatch(
   source = "chat",
   requesterWs = null,
   userInstruction = instruction,
+  options = {},
 ) {
   const runId = executionRunId || randomUUID();
   const createdAt = Date.now();
   const controller = new AbortController();
+  const forcedAgentId = AGENT_IDS.includes(options?.forcedAgentId) ? options.forcedAgentId : null;
+  const forcedComplexity = options?.forcedComplexity === "high" || options?.forcedComplexity === "medium" || options?.forcedComplexity === "low"
+    ? options.forcedComplexity
+    : null;
+  const disableDirectReply = Boolean(options?.disableDirectReply);
   registerActiveExecutionRun(runId, {
     controller,
     sessionId,
@@ -3740,7 +3862,7 @@ async function dispatch(
     idleAllExcept("orchestrator");
     broadcast({ type: "agent_status", agentId: "orchestrator", status: "running", currentTask: "理解指令中...", executionRunId: runId });
 
-    if (shouldReplyDirectlyByOrchestrator(userInstruction)) {
+    if (!disableDirectReply && shouldReplyDirectlyByOrchestrator(userInstruction)) {
       totalTasksForCancellation = 1;
       let taskId = randomUUID();
       try {
@@ -3915,6 +4037,12 @@ async function dispatch(
 
     let tasks = [];
     const browserExecutionGuardrail = buildBrowserExecutionGuardrail(userInstruction);
+    const forcedRoute = forcedAgentId
+      ? {
+          agent: forcedAgentId,
+          complexity: forcedComplexity ?? routeTask(userInstruction).complexity,
+        }
+      : null;
 
     if (shouldForceDecomposition(userInstruction)) {
       const candidateTasks = [
@@ -3922,7 +4050,7 @@ async function dispatch(
         userInstruction,
       ];
       tasks = candidateTasks.map((desc) => {
-        const routed = routeTask(desc);
+        const routed = forcedRoute ?? routeTask(desc);
         const isPrimaryInstruction = desc === userInstruction;
         return {
           id: randomUUID(),
@@ -3935,7 +4063,7 @@ async function dispatch(
         };
       });
     } else {
-      const routed = routeTask(userInstruction);
+      const routed = forcedRoute ?? routeTask(userInstruction);
       tasks = [{
         id: randomUUID(),
         description: userInstruction,
@@ -4509,6 +4637,7 @@ async function meeting(
 ) {
   const meetingId = options.meetingId ?? randomUUID();
   const signal = options.signal;
+  const evidenceWindow = getMeetingRecentEvidenceWindow(Date.now(), 15);
   const defaultParticipants = MEETING_DEBATE_PARTICIPANTS;
   const activeParticipants = Array.from(
     new Set(
@@ -4531,6 +4660,9 @@ async function meeting(
     "会议风格：像真人开会，不像提交作业；可以打断感、回怼感、补刀感，但要保持专业判断。",
     "允许自然使用 emoji；必要时可补一行 [MEME|...] 表情包文案；真的需要证据时再补 [LINK|标题|URL|它支撑什么] 或 ```chart``` 小数据板。",
     "可以引用公开网站、行业报告、平台页面、品牌站点或产品链接来佐证，但不能把发言写成要去打开、操作或搜索网站。",
+    `证据时间窗：凡是用来验证观点的新闻、资讯、公告或报道，默认只认 ${evidenceWindow.startDate} 到 ${evidenceWindow.endDate}（含）之间的公开网页内容；超出时间窗的材料最多当背景，不得当主证据。`,
+    "正式辩论前会先做一轮会前近15天情报简报；后续发言优先引用这份简报里的事实。若你要新增证据，也必须落在同一时间窗内。",
+    "如果某个判断拿不出近15天证据，就明确说“近15天暂未看到足够证据”，不要把旧闻当新消息，也不要编造好像很具体的假新闻。",
     "如果没有把握精确数据，就写区间、趋势或在图表里明确标“估”。不要编造看起来很真的假数字。",
     "允许点名回怼，允许轻度讽刺和呛声，但不要恶毒辱骂、歧视或低俗脏话。",
   ].join("\n");
@@ -4585,9 +4717,18 @@ async function meeting(
     throwIfMeetingCancelled(signal);
       await runMeetingTurn(
         "orchestrator",
+        "briefing",
+        `会前检索 ${evidenceWindow.startDate} 至 ${evidenceWindow.endDate} 的全球资讯`,
+        buildMeetingResearchPrompt(topic, evidenceWindow),
+        "high",
+        760,
+      );
+
+      await runMeetingTurn(
+        "orchestrator",
         "open",
         `主持会议: ${topic}`,
-        `你是会议主持人。请像高压评审会一开场那样，先把这次必须拍板的核心选择题钉死，再明确要求五位业务角色全部站队、互相拆台、拿证据说话。你自己保持中立主持。控制在80字内。会议主题：${topic}`,
+        `${context}\n你是会议主持人。请像高压评审会一开场那样，先把这次必须拍板的核心选择题钉死，再明确要求五位业务角色全部站队、互相拆台、拿近15天证据说话。提醒他们：会前情报简报已经给出，后续谁要做强判断，谁就要用它或本轮新增的同时间窗证据验证。你自己保持中立主持。控制在80字内。`,
         "low",
         120,
       );
@@ -4692,6 +4833,73 @@ function normalizePlatformInboundMessage(messageOrUserId, text, platformId) {
   };
 }
 
+function normalizePlatformIdentityList(value) {
+  return String(value || "")
+    .split(/[\n,，;；]/)
+    .map(item => item.trim())
+    .filter(Boolean);
+}
+
+function getPlatformOwnerIdentifiers(platformId) {
+  const fields = settings.platformConfigs?.[platformId]?.fields ?? {};
+  const ownerIds = normalizePlatformIdentityList(fields.ownerUserIds);
+
+  if (platformId === "telegram" && fields.defaultChatId) {
+    ownerIds.push(String(fields.defaultChatId).trim());
+  }
+  if (platformId === "feishu" && fields.defaultOpenId) {
+    ownerIds.push(String(fields.defaultOpenId).trim());
+  }
+
+  return [...new Set(ownerIds.filter(Boolean))];
+}
+
+function isOwnerPlatformConversation(platformId, userId) {
+  const normalizedUserId = String(userId || "").trim();
+  if (!normalizedUserId) return false;
+  return getPlatformOwnerIdentifiers(platformId).includes(normalizedUserId);
+}
+
+function buildPlatformConversationIdentity(platformId, userId, serviceMode = "customer_service") {
+  const normalizedUserId = String(userId || "").trim();
+  const accountLabel = summarizePlatformAccount(platformId, settings.platformConfigs?.[platformId]?.fields ?? {});
+  return {
+    title: serviceMode === "owner" ? `${platformId} · 我的会话` : `${platformId} · ${normalizedUserId}`,
+    participantLabel: serviceMode === "owner" ? "我" : normalizedUserId,
+    remoteUserId: normalizedUserId,
+    accountLabel,
+    serviceMode,
+  };
+}
+
+function buildPlatformConversationDispatchInstruction({
+  platformId,
+  userId,
+  inboundText,
+  serviceMode,
+}) {
+  if (serviceMode === "owner") {
+    return String(inboundText || "").trim();
+  }
+
+  const channel = mapPlatformToChannel(platformId);
+  const accountLabel = summarizePlatformAccount(platformId, settings.platformConfigs?.[platformId]?.fields ?? {});
+  return [
+    "这是来自外部消息平台的一段真实客户会话，请直接以客服/售前/售后支持身份回复。",
+    "回复要求：",
+    "- 不要暴露内部 agent、系统、任务拆解、工具调用、工作流或任何软件后台信息。",
+    "- 直接站在当前软件用户的业务视角回复，把对方当成客户或潜在客户来服务。",
+    "- 语气专业、自然、简洁，先解决问题，再推进下一步。",
+    "- 如果信息不足，只追问最关键的一两个澄清点，不要像问卷一样连续盘问。",
+    "- 直接输出要发给对方的话，不要附加解释。",
+    `平台：${platformId}`,
+    `渠道：${channel}`,
+    `账号：${accountLabel || "默认账号"}`,
+    `会话对象：${userId}`,
+    `客户消息：${String(inboundText || "").trim()}`,
+  ].join("\n");
+}
+
 async function handlePlatformMessage(messageOrUserId, text, platformId) {
   const taskAgentMap = {};
   const inboundMessage = normalizePlatformInboundMessage(messageOrUserId, text, platformId);
@@ -4700,8 +4908,12 @@ async function handlePlatformMessage(messageOrUserId, text, platformId) {
   }
 
   const { userId, text: inboundText, platformId: inboundPlatformId, inboundMessageKey, externalMessageId } = inboundMessage;
-  const channel = mapPlatformToChannel(inboundPlatformId);
   const inboundTimestamp = Date.now();
+  const ownerConversation = isOwnerPlatformConversation(inboundPlatformId, userId);
+  const serviceMode = ownerConversation ? "owner" : "customer_service";
+  const sessionIdentity = buildPlatformConversationIdentity(inboundPlatformId, userId, serviceMode);
+  const dispatchSessionId = `${serviceMode === "owner" ? "platform-owner" : "platform-support"}:${inboundPlatformId}:${userId}`;
+  const channelExecutionRunId = `platform-run:${randomUUID()}`;
 
   if (inboundMessageKey && hasProcessedInboundMessage(inboundPlatformId, inboundMessageKey, inboundTimestamp)) {
     broadcastPlatformStatus(inboundPlatformId, {
@@ -4744,6 +4956,7 @@ async function handlePlatformMessage(messageOrUserId, text, platformId) {
       summary: `最近收到入站消息：${inboundText.slice(0, 80)}`,
       timestamp: inboundTimestamp,
       externalMessageId,
+      ...sessionIdentity,
     }),
     title: "收到入站消息",
     detail: inboundText.slice(0, 500),
@@ -4755,13 +4968,11 @@ async function handlePlatformMessage(messageOrUserId, text, platformId) {
   const deliverPlatformReply = (agentId, resultText) => {
     const normalizedResult = String(resultText || "").trim();
     if (!normalizedResult) return;
-    const label = AGENT_DISPLAY[agentId] || agentId || "龙虾";
-    const outboundEnvelope = `【${label}】\n\n${normalizedResult}`;
 
     sendPlatformMessageWithRetry({
       platformId: inboundPlatformId,
       targetId: userId,
-      text: outboundEnvelope,
+      text: normalizedResult,
       trigger: "auto",
       successDetail: "最近一条出站回复已成功送达。",
       failureDetailPrefix: "最近一条出站回复发送失败",
@@ -4778,9 +4989,10 @@ async function handlePlatformMessage(messageOrUserId, text, platformId) {
             status: "active",
             summary: `最近回复已发出：${normalizedResult.slice(0, 80)}`,
             timestamp: outboundTimestamp,
+            ...sessionIdentity,
           }),
           title: "发送平台回复",
-          detail: `【${label}】 ${normalizedResult.slice(0, 500)}`,
+          detail: normalizedResult.slice(0, 500),
           status: "sent",
           eventType: "message",
           externalRef: String(userId),
@@ -4805,6 +5017,7 @@ async function handlePlatformMessage(messageOrUserId, text, platformId) {
             summary: failure.summary,
             timestamp: failureAt,
             deliveryError: failure.detail,
+            ...sessionIdentity,
           }),
           title: failure.operationStatus === "blocked" ? "平台回复等待人工" : "平台回复发送失败",
           detail: failure.detail,
@@ -4816,7 +5029,11 @@ async function handlePlatformMessage(messageOrUserId, text, platformId) {
       });
   };
 
-  global.__platformResultListener = (msg) => {
+  const listenerId = randomUUID();
+  platformResultListeners.set(listenerId, (msg) => {
+    if (msg.executionRunId !== channelExecutionRunId) {
+      return;
+    }
     if (msg.type === "task_add" && msg.task) {
       taskAgentMap[msg.task.id] = msg.task.assignedTo;
       if (msg.task.status === "done" && msg.task.result) {
@@ -4827,13 +5044,30 @@ async function handlePlatformMessage(messageOrUserId, text, platformId) {
       const agentId = taskAgentMap[msg.taskId];
       deliverPlatformReply(agentId, msg.updates.result);
     }
-  };
+  });
 
   try {
-    await dispatch(inboundText);
+    await dispatch(
+      buildPlatformConversationDispatchInstruction({
+        platformId: inboundPlatformId,
+        userId,
+        inboundText,
+        serviceMode,
+      }),
+      dispatchSessionId,
+      channelExecutionRunId,
+      "chat",
+      null,
+      inboundText,
+      {
+        disableDirectReply: serviceMode !== "owner",
+        forcedAgentId: serviceMode === "owner" ? undefined : "greeter",
+        forcedComplexity: serviceMode === "owner" ? undefined : "low",
+      },
+    );
     await new Promise((resolve) => setTimeout(resolve, 1500));
   } finally {
-    global.__platformResultListener = null;
+    platformResultListeners.delete(listenerId);
   }
 }
 

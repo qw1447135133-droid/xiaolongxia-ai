@@ -564,13 +564,6 @@ function DesktopWorkspaceApp() {
           {leftOpen ? (
             <>
               <div className="desktop-workspace-shell__sidebar-top">
-                <div className="desktop-workspace-shell__sidebar-brand">
-                  <div className="desktop-workspace-shell__brand-mark" aria-hidden="true" />
-                  <div className="desktop-workspace-shell__sidebar-brand-copy">
-                    <span>{uiText.common.desktopBrandEyebrow}</span>
-                    <strong>{uiText.common.desktopBrandTitle}</strong>
-                  </div>
-                </div>
                 <button
                   type="button"
                   className="desktop-workspace-shell__sidebar-collapse"
@@ -952,7 +945,7 @@ function DashboardTab({ onOpenTab }: { onOpenTab: (tab: AppTab) => void }) {
                     <article key={agent.id} className="ios-home__agent-compact-card">
                       <div className="ios-home__agent-compact-head">
                         <div className="ios-home__agent-avatar">
-                          <AgentIcon agentId={agent.id} size={20} />
+                          <AgentIcon agentId={agent.id} size={26} />
                         </div>
                         <div className="ios-home__agent-compact-name">
                           <strong>{AGENT_META[agent.id].name}</strong>
@@ -3544,7 +3537,7 @@ function MeetingTab() {
                 <span className="chat-bubble__avatar">
                   <AgentIcon
                     agentId={(speech.agentId in AGENT_META ? speech.agentId : "orchestrator") as keyof typeof AGENT_META}
-                    size={16}
+                    size={22}
                     color={speech.agentId in AGENT_META ? getAgentIconColor(speech.agentId as keyof typeof AGENT_META) : info.color}
                   />
                 </span>
@@ -3574,7 +3567,7 @@ function MeetingTab() {
           >
             <div className="chat-bubble__meta">
               <span className="chat-bubble__avatar">
-                <AgentIcon agentId="orchestrator" size={16} />
+                <AgentIcon agentId="orchestrator" size={22} />
               </span>
               <span className="chat-bubble__author">{pickLocaleText(locale, {
                 "zh-CN": "会议中",

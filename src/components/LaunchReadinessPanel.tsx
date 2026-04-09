@@ -861,8 +861,8 @@ const adviceStepsStyle = {
 const adviceStepStyle = {
   padding: "10px 12px",
   borderRadius: 12,
-  border: "1px solid rgba(148, 163, 184, 0.16)",
-  background: "rgba(255,255,255,0.72)",
+  border: "1px solid var(--launch-readiness-step-border)",
+  background: "var(--launch-readiness-step-bg)",
   fontSize: 12,
   lineHeight: 1.65,
   color: "var(--text)",

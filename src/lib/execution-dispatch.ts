@@ -21,6 +21,13 @@ import {
   shouldAutoCompressLongTermMemory,
 } from "@/lib/memory-compression";
 import { buildWorldModelSnippet, deriveWorldModelSnapshot } from "@/lib/world-model";
+import {
+  buildUserProfileOnboardingSnippet,
+  buildUserProfileSnippet,
+  getUserProfileMissingFields,
+  inferUserProfilePatchFromMessage,
+  normalizeUserProfile,
+} from "@/lib/user-profile";
 
 type DispatchAttachmentMeta = {
   id: string;
@@ -77,6 +84,7 @@ export async function sendExecutionDispatch({
   retryOfRunId,
   lastRecoveryHint,
   recentTasksOverride,
+  skipUserProfileIngestion = false,
 }: {
   instruction: string;
   source?: ExecutionRunSource;
@@ -91,6 +99,7 @@ export async function sendExecutionDispatch({
   retryOfRunId?: string;
   lastRecoveryHint?: string;
   recentTasksOverride?: Task[];
+  skipUserProfileIngestion?: boolean;
 }) {
   const trimmed = instruction.trim();
   const store = useStore.getState();
@@ -108,6 +117,41 @@ export async function sendExecutionDispatch({
   const scopedBusinessContentTasks = filterByProjectScope(store.businessContentTasks, activeSession ?? {});
   const scopedBusinessChannelSessions = filterByProjectScope(store.businessChannelSessions, activeSession ?? {});
   const scopedExecutionRuns = store.executionRuns.filter(run => (run.projectId ?? null) === (activeSession?.projectId ?? null));
+  let currentUserProfile = store.userProfile;
+  let currentUserProfileOnboarding = store.userProfileOnboarding;
+  let userProfileJustCompleted = false;
+  const shouldIngestUserProfile =
+    !skipUserProfileIngestion &&
+    source === "chat" &&
+    currentUserProfileOnboarding.status === "collecting" &&
+    currentUserProfileOnboarding.sessionId === resolvedSessionId;
+
+  if (shouldIngestUserProfile) {
+    const nextProfile = normalizeUserProfile({
+      ...currentUserProfile,
+      ...inferUserProfilePatchFromMessage(trimmed, currentUserProfile),
+      updatedAt: Date.now(),
+    });
+    const missingFields = getUserProfileMissingFields(nextProfile);
+    userProfileJustCompleted = missingFields.length === 0;
+    const nextOnboarding = {
+      ...currentUserProfileOnboarding,
+      status: userProfileJustCompleted ? "ready" as const : "collecting" as const,
+      completedAt: userProfileJustCompleted ? Date.now() : currentUserProfileOnboarding.completedAt,
+      lastUserInputAt: Date.now(),
+      missingFields,
+    };
+
+    store.setUserProfile(nextProfile);
+    store.setUserProfileOnboarding(nextOnboarding);
+    if (nextProfile.displayName && (!store.userNickname || store.userNickname === "您")) {
+      store.setUserNickname(nextProfile.displayName);
+    }
+
+    currentUserProfile = nextProfile;
+    currentUserProfileOnboarding = nextOnboarding;
+  }
+
   const businessGraph = buildBusinessEntityGraph({
     customers: scopedBusinessCustomers,
     leads: scopedBusinessLeads,
@@ -132,6 +176,12 @@ export async function sendExecutionDispatch({
   const feedbackSnippet = source === "chat"
     ? buildAssistantFeedbackSnippet(store.assistantFeedbackProfile)
     : "";
+  const userProfileSnippet = buildUserProfileSnippet(currentUserProfile);
+  const userProfileOnboardingSnippet =
+    currentUserProfileOnboarding.sessionId === resolvedSessionId &&
+    (currentUserProfileOnboarding.status === "collecting" || userProfileJustCompleted)
+      ? buildUserProfileOnboardingSnippet(currentUserProfile, currentUserProfileOnboarding, userProfileJustCompleted)
+      : "";
   const enableSemanticRecall = includeActiveProjectMemory || !store.activeWorkspaceProjectMemoryId;
   const sessionTasks = recentTasksOverride ?? activeSession?.tasks ?? store.tasks;
   const orderedSessionTasks = [...sessionTasks].sort((left, right) => left.createdAt - right.createdAt);
@@ -182,6 +232,8 @@ export async function sendExecutionDispatch({
   const standardInstructionSections = resolvedProjectMemory || noteSnippet || knowledgeSnippet || graphSnippet || worldSnippet
     ? [
         feedbackSnippet,
+        userProfileSnippet,
+        userProfileOnboardingSnippet,
         activeSession ? `Project scope:\n${getSessionProjectLabel(activeSession)}` : "",
         resolvedProjectMemory ? buildProjectMemorySnippet(resolvedProjectMemory) : "",
         noteSnippet,
@@ -190,9 +242,7 @@ export async function sendExecutionDispatch({
         worldSnippet,
         `User request:\n${trimmed}`,
       ]
-    : feedbackSnippet
-      ? [feedbackSnippet, `User request:\n${trimmed}`]
-      : [trimmed];
+    : [feedbackSnippet, userProfileSnippet, userProfileOnboardingSnippet, `User request:\n${trimmed}`];
   const standardInstruction = standardInstructionSections.filter(Boolean).join("\n\n---\n\n");
   const sessionTranscript = buildSessionTranscriptForEstimation(orderedSessionTasks);
   const estimatedContextTokens =
@@ -217,6 +267,8 @@ export async function sendExecutionDispatch({
   const finalInstruction = compressionDoc
     ? [
         feedbackSnippet,
+        userProfileSnippet,
+        userProfileOnboardingSnippet,
         activeSession ? `Project scope:\n${getSessionProjectLabel(activeSession)}` : "",
         `System note: Long-term memory compression triggered automatically because the estimated context is approaching ${LONG_TERM_MEMORY_CONTEXT_LIMIT_TOKENS} tokens. Use the compressed snapshot below as the working memory baseline, and do not ask the user to repeat context that is already captured here.`,
         `Compressed context snapshot:\n${compressionDoc.content}`,

@@ -1,9 +1,12 @@
 import os from "os";
 import path from "path";
 import { promises as fs } from "fs";
+import { createRequire } from "module";
 import ExcelJS from "exceljs";
-import PptxGenJS from "pptxgenjs";
 import { Document, HeadingLevel, Packer, Paragraph, TextRun } from "docx";
+
+const require = createRequire(import.meta.url);
+const PptxGenJS = require("pptxgenjs");
 
 const MIME_TYPES = {
   docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",

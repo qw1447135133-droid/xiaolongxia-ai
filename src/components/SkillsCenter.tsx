@@ -1,5 +1,6 @@
 "use client";
 
+import type { CSSProperties } from "react";
 import { useMemo, useState } from "react";
 import { pickLocaleText } from "@/lib/ui-locale";
 import { useStore } from "@/store";
@@ -10,6 +11,8 @@ type SkillCopy = AgentSkill["locales"][UiLocale];
 
 export function SkillsCenter() {
   const locale = useStore(s => s.locale);
+  const theme = useStore(s => s.theme);
+  const isDark = theme === "dark";
   const [category, setCategory] = useState<string>("all");
   const [selectedSkillId, setSelectedSkillId] = useState<string | null>(null);
   const [detailPosition, setDetailPosition] = useState<{ top: number; left: number } | null>(null);
@@ -116,20 +119,25 @@ export function SkillsCenter() {
                   minHeight: 126,
                   padding: "12px 14px",
                   borderRadius: 16,
-                  border: `1px solid ${active ? `${skill.accent}66` : `${skill.accent}33`}`,
+                  border: `1px solid ${active ? (isDark ? `${skill.accent}55` : `${skill.accent}66`) : (isDark ? `${skill.accent}30` : `${skill.accent}33`)}`,
                   background: active
-                    ? `linear-gradient(180deg, ${skill.accent}1a, rgba(255,255,255,0.96) 72%)`
-                    : `linear-gradient(180deg, ${skill.accent}12, rgba(255,255,255,0.02) 60%)`,
+                    ? isDark
+                      ? `linear-gradient(180deg, ${skill.accent}20, rgba(24, 27, 35, 0.98) 72%)`
+                      : `linear-gradient(180deg, ${skill.accent}1a, rgba(255,255,255,0.96) 72%)`
+                    : isDark
+                      ? `linear-gradient(180deg, ${skill.accent}12, rgba(19, 22, 29, 0.92) 60%)`
+                      : `linear-gradient(180deg, ${skill.accent}12, rgba(255,255,255,0.02) 60%)`,
+                  boxShadow: active && isDark ? "0 14px 34px rgba(0, 0, 0, 0.24)" : "none",
                   cursor: "pointer",
                 }}
               >
                 <div style={{ display: "flex", width: "100%", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}>
-                  <div style={{ width: 46, height: 46, borderRadius: 14, display: "grid", placeItems: "center", flexShrink: 0, background: "#ffffff", border: `1px solid ${skill.accent}24`, boxShadow: "0 6px 18px rgba(15, 23, 42, 0.08)" }}>
+                  <div style={buildSkillGlyphShellStyle(skill.accent, isDark, false)}>
                     {renderSkillIcon(skill.icon)}
                   </div>
                   <div style={{ display: "grid", gap: 4, justifyItems: "end" }}>
                     <div style={{ fontSize: 11, color: "var(--text-muted)", fontWeight: 700 }}>{getSkillCategoryLabel(locale, skill.category)}</div>
-                    <div style={{ ...badgeStyle(skill.accent, "var(--text)"), padding: "2px 7px", fontSize: 9 }}>
+                    <div style={{ ...badgeStyle(skill.accent, "var(--text)", isDark), padding: "2px 7px", fontSize: 9 }}>
                       {getSourceLabel(locale, skill)}
                     </div>
                   </div>
@@ -151,7 +159,7 @@ export function SkillsCenter() {
               style={{ position: "fixed", inset: 0, background: "transparent", zIndex: 1090 }}
             />
             <div
-              className="card"
+              className="card skills-center__detail-dialog"
               onClick={event => event.stopPropagation()}
               style={{
                 position: "fixed",
@@ -162,13 +170,17 @@ export function SkillsCenter() {
                 overflowY: "auto",
                 padding: 18,
                 borderRadius: 22,
-                border: `1px solid ${selectedSkill.accent}3d`,
-                background: "#ffffff",
-                boxShadow: "0 16px 38px rgba(15, 23, 42, 0.12)",
+                border: `1px solid ${isDark ? `${selectedSkill.accent}42` : `${selectedSkill.accent}3d`}`,
+                background: isDark
+                  ? "linear-gradient(180deg, rgba(19, 22, 29, 0.98), rgba(24, 27, 35, 0.98))"
+                  : "#ffffff",
+                boxShadow: isDark
+                  ? "0 24px 56px rgba(0, 0, 0, 0.36)"
+                  : "0 16px 38px rgba(15, 23, 42, 0.12)",
                 zIndex: 1100,
               }}
             >
-              <SkillDetailDialog locale={locale} skill={selectedSkill} />
+              <SkillDetailDialog locale={locale} skill={selectedSkill} isDark={isDark} />
             </div>
           </>
         ) : null}
@@ -186,20 +198,21 @@ function SkillMetric({ label, value, accent }: { label: string; value: string | 
   );
 }
 
-function SkillDetailDialog({ locale, skill }: { locale: UiLocale; skill: AgentSkill }) {
+function SkillDetailDialog({ locale, skill, isDark }: { locale: UiLocale; skill: AgentSkill; isDark: boolean }) {
   const copy = getSkillCopy(locale, skill);
+  const sourceAccent = isDark ? "#8ab4f8" : "#0b57d0";
 
   return (
     <div style={{ display: "grid", gap: 18 }}>
       <div style={{ display: "flex", justifyContent: "space-between", gap: 16, alignItems: "flex-start" }}>
         <div style={{ display: "flex", gap: 14, alignItems: "flex-start" }}>
-          <div style={{ width: 56, height: 56, borderRadius: 18, display: "grid", placeItems: "center", background: "#ffffff", border: `1px solid ${skill.accent}2a`, boxShadow: "0 10px 24px rgba(15, 23, 42, 0.08)", flexShrink: 0 }}>
+          <div style={buildSkillGlyphShellStyle(skill.accent, isDark, true)}>
             {renderSkillIcon(skill.icon, 34)}
           </div>
           <div style={{ display: "grid", gap: 8 }}>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              <span style={badgeStyle(skill.accent, "var(--text)")}>{getSkillCategoryLabel(locale, skill.category)}</span>
-              <span style={badgeStyle("var(--accent)", "var(--accent)")}>{getSourceLabel(locale, skill)}</span>
+              <span style={badgeStyle(skill.accent, "var(--text)", isDark)}>{getSkillCategoryLabel(locale, skill.category)}</span>
+              <span style={badgeStyle(sourceAccent, sourceAccent, isDark)}>{getSourceLabel(locale, skill)}</span>
             </div>
             <div style={{ fontSize: 24, fontWeight: 800, color: "var(--text)", lineHeight: 1.25 }}>{copy.name}</div>
             <div style={{ fontSize: 12, color: "var(--text-muted)" }}>{copy.short}</div>
@@ -207,30 +220,30 @@ function SkillDetailDialog({ locale, skill }: { locale: UiLocale; skill: AgentSk
         </div>
       </div>
 
-      <div style={{ fontSize: 13, color: "var(--text-muted)", lineHeight: 1.8, padding: "14px 16px", borderRadius: 18, border: "1px solid rgba(148, 163, 184, 0.18)", background: "#ffffff" }}>
+      <div style={{ ...buildSkillDetailSurfaceStyle(isDark), fontSize: 13, color: "var(--text-muted)", lineHeight: 1.8 }}>
         {copy.description}
       </div>
 
       {skill.tags.length > 0 ? (
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           {skill.tags.map(tag => (
-            <span key={tag} style={badgeStyle(skill.accent, "var(--text-muted)")}>
+            <span key={tag} style={badgeStyle(skill.accent, "var(--text-muted)", isDark)}>
               {tag}
             </span>
           ))}
         </div>
       ) : null}
 
-      <DetailBlock title={pickLocaleText(locale, { "zh-CN": "调度方式", "zh-TW": "調度方式", en: "Routing Logic", ja: "ルーティング方式" })} value={copy.dispatch} />
-      <DetailBlock title={pickLocaleText(locale, { "zh-CN": "常见任务", "zh-TW": "常見任務", en: "Typical Tasks", ja: "代表タスク" })} value={copy.typicalTasks} />
-      <DetailBlock title={pickLocaleText(locale, { "zh-CN": "主要产出", "zh-TW": "主要產出", en: "Outputs", ja: "主な出力" })} value={copy.outputs} />
+      <DetailBlock title={pickLocaleText(locale, { "zh-CN": "调度方式", "zh-TW": "調度方式", en: "Routing Logic", ja: "ルーティング方式" })} value={copy.dispatch} isDark={isDark} />
+      <DetailBlock title={pickLocaleText(locale, { "zh-CN": "常见任务", "zh-TW": "常見任務", en: "Typical Tasks", ja: "代表タスク" })} value={copy.typicalTasks} isDark={isDark} />
+      <DetailBlock title={pickLocaleText(locale, { "zh-CN": "主要产出", "zh-TW": "主要產出", en: "Outputs", ja: "主な出力" })} value={copy.outputs} isDark={isDark} />
     </div>
   );
 }
 
-function DetailBlock({ title, value }: { title: string; value: string }) {
+function DetailBlock({ title, value, isDark }: { title: string; value: string; isDark: boolean }) {
   return (
-    <div style={{ display: "grid", gap: 8, padding: "14px 16px", borderRadius: 18, border: "1px solid rgba(148, 163, 184, 0.18)", background: "#ffffff" }}>
+    <div style={{ ...buildSkillDetailSurfaceStyle(isDark), display: "grid", gap: 8 }}>
       <div style={{ fontSize: 13, fontWeight: 700, color: "var(--text)" }}>{title}</div>
       <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.7 }}>{value}</div>
     </div>
@@ -280,15 +293,45 @@ function getSourceLabel(locale: UiLocale, skill: AgentSkill) {
   return pickLocaleText(locale, { "zh-CN": "内建", "zh-TW": "內建", en: "Built-in", ja: "内蔵" });
 }
 
-function badgeStyle(color: string, textColor = "var(--text)") {
+function badgeStyle(color: string, textColor = "var(--text)", isDark = false): CSSProperties {
   return {
     padding: "3px 8px",
     borderRadius: 999,
-    border: `1px solid ${color}33`,
-    background: `${color}1f`,
+    border: `1px solid color-mix(in srgb, ${color} ${isDark ? "28%" : "20%"}, transparent)`,
+    background: `color-mix(in srgb, ${color} ${isDark ? "16%" : "12%"}, transparent)`,
     color: textColor,
     fontSize: 10,
     fontWeight: 700,
+  };
+}
+
+function buildSkillGlyphShellStyle(accent: string, isDark: boolean, large: boolean): CSSProperties {
+  return {
+    width: large ? 56 : 46,
+    height: large ? 56 : 46,
+    borderRadius: large ? 18 : 14,
+    display: "grid",
+    placeItems: "center",
+    flexShrink: 0,
+    background: isDark
+      ? "linear-gradient(180deg, rgba(30, 34, 43, 0.98), rgba(24, 27, 35, 0.96))"
+      : "#ffffff",
+    border: `1px solid ${isDark ? `${accent}32` : `${accent}24`}`,
+    boxShadow: isDark ? "none" : "0 6px 18px rgba(15, 23, 42, 0.08)",
+  };
+}
+
+function buildSkillDetailSurfaceStyle(isDark: boolean): CSSProperties {
+  return {
+    padding: "14px 16px",
+    borderRadius: 18,
+    border: isDark
+      ? "1px solid rgba(232, 234, 237, 0.1)"
+      : "1px solid rgba(148, 163, 184, 0.18)",
+    background: isDark
+      ? "linear-gradient(180deg, rgba(30, 34, 43, 0.94), rgba(24, 27, 35, 0.92))"
+      : "#ffffff",
+    boxShadow: "none",
   };
 }
 

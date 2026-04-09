@@ -101,6 +101,7 @@ export interface BusinessChannelSession extends BusinessScopedEntity {
   customerId: string | null;
   channel: "telegram" | "line" | "feishu" | "wecom" | "email" | "web";
   externalRef: string;
+  serviceMode?: "owner" | "customer_service";
   accountLabel?: string;
   participantLabel?: string;
   remoteUserId?: string;

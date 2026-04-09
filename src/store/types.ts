@@ -12,6 +12,7 @@ export type UiLocale = "zh-CN" | "zh-TW" | "en" | "ja";
 export type AutomationMode = "manual" | "supervised" | "autonomous";
 export type ControlCenterSectionId =
   | "overview"
+  | "user"
   | "entities"
   | "remote"
   | "execution"
@@ -290,6 +291,35 @@ export interface DesktopEvidenceRecord {
   createdAt: number;
 }
 
+export type UserProfileOrganizationType = "business" | "individual" | "unknown";
+export type UserProfileOnboardingStatus = "idle" | "collecting" | "ready";
+
+export interface UserProfile {
+  organizationType: UserProfileOrganizationType;
+  displayName: string;
+  organizationName: string;
+  industry: string;
+  workSummary: string;
+  roleTitle: string;
+  responsibilities: string[];
+  goals: string[];
+  targetAudience: string;
+  preferredChannels: string[];
+  region: string;
+  notes: string;
+  perspectiveSummary: string;
+  updatedAt: number | null;
+}
+
+export interface UserProfileOnboardingState {
+  status: UserProfileOnboardingStatus;
+  sessionId: string | null;
+  startedAt: number | null;
+  completedAt: number | null;
+  lastUserInputAt: number | null;
+  missingFields: string[];
+}
+
 export interface AgentSkill {
   id: string;
   order?: number;
@@ -339,42 +369,48 @@ export type PlatformConnectionStatus =
   | "webhook_unreachable"
   | "rate_limited";
 
-export const AGENT_META: Record<AgentId, { name: string; emoji: string; badge: string; defaultPersonality: string }> = {
+export const AGENT_META: Record<AgentId, { name: string; emoji: string; badge: string; defaultPersonality: string; avatarSrc: string }> = {
   orchestrator: {
     name: "鹦鹉螺",
     emoji: "🐚",
     badge: "badge-orchestrator",
-    defaultPersonality: "你是跨境电商 AI 团队的总调度员，负责任务拆解和团队协调。",
+    defaultPersonality: "你是 AI 团队的总调度员，负责任务拆解、团队协调和统一对外表达。",
+    avatarSrc: "/agents/orchestrator.webp",
   },
   explorer: {
     name: "探海鲸鱼",
     emoji: "🐋",
     badge: "badge-explorer",
-    defaultPersonality: "你是跨境电商选品专家，专注竞品分析、选品趋势研究和市场数据分析，提供具体可执行的洞察。",
+    defaultPersonality: "你是研究与分析专家，擅长竞品研究、信息梳理、趋势判断和结构化洞察输出。",
+    avatarSrc: "/agents/explorer.webp",
   },
   writer: {
     name: "星海章鱼",
     emoji: "🐙",
     badge: "badge-writer",
-    defaultPersonality: "你是跨境电商文案专家，专注多语种文案创作、SEO 标题优化和商品详情页撰写，输出高转化率文案。",
+    defaultPersonality: "你是写作与表达专家，擅长多语种文案、结构化写作、标题优化和高转化表达。",
+    avatarSrc: "/agents/writer.webp",
   },
   designer: {
     name: "珊瑚水母",
     emoji: "🪼",
     badge: "badge-designer",
-    defaultPersonality: "你是电商视觉设计专家。当需要生成图片时，请先输出一段英文图片生成提示词（以 [IMAGE_PROMPT] 开头），然后再输出设计方案说明。",
+    defaultPersonality: "你是视觉设计专家。当需要生成图片时，请先输出一段英文图片生成提示词（以 [IMAGE_PROMPT] 开头），然后再输出设计方案说明。",
+    avatarSrc: "/agents/designer.webp",
   },
   performer: {
     name: "逐浪海豚",
     emoji: "🐬",
     badge: "badge-performer",
-    defaultPersonality: "你是短视频内容专家，专注数字人视频脚本、TikTok/抖音内容策略和多平台矩阵发布计划。",
+    defaultPersonality: "你是内容与短视频专家，擅长脚本策划、多平台内容策略和传播节奏设计。",
+    avatarSrc: "/agents/performer.webp",
   },
   greeter: {
     name: "招潮蟹",
     emoji: "🦀",
     badge: "badge-greeter",
-    defaultPersonality: "你是多语种客服专家，专注客服话术、评论回复模板和买家互动策略，保持友好专业语气。",
+    defaultPersonality: "你是对话与客服专家，擅长客服话术、评论回复、互动策略与友好专业表达。",
+    avatarSrc: "/agents/greeter.webp",
   },
 };
 
@@ -986,6 +1022,13 @@ export const PLATFORM_DEFINITIONS: PlatformDef[] = [
         required: false,
         hint: "用于会议结束后主动发送文案",
       },
+      {
+        key: "ownerUserIds",
+        label: "本人 Chat ID 列表",
+        placeholder: "123456789, 987654321",
+        required: false,
+        hint: "这些 ID 的对话不会走客服模式，可用逗号或换行分隔",
+      },
     ],
   },
   {
@@ -1016,6 +1059,13 @@ export const PLATFORM_DEFINITIONS: PlatformDef[] = [
         placeholder: "https://your-domain.com/webhooks/line",
         required: false,
         hint: "用于标记已经配置公网回调地址",
+      },
+      {
+        key: "ownerUserIds",
+        label: "本人 LINE User ID 列表",
+        placeholder: "Uxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        required: false,
+        hint: "这些 ID 的对话不会走客服模式，可用逗号或换行分隔",
       },
     ],
   },
@@ -1068,6 +1118,13 @@ export const PLATFORM_DEFINITIONS: PlatformDef[] = [
         required: false,
         hint: "用于标记已经配置公网回调地址",
       },
+      {
+        key: "ownerUserIds",
+        label: "本人 Open ID 列表",
+        placeholder: "ou_xxxxxxxxxx",
+        required: false,
+        hint: "这些 ID 的对话不会走客服模式，可用逗号或换行分隔",
+      },
     ],
   },
   {
@@ -1118,6 +1175,13 @@ export const PLATFORM_DEFINITIONS: PlatformDef[] = [
         placeholder: "https://your-domain.com/webhooks/wecom",
         required: false,
         hint: "用于标记已经配置公网回调地址",
+      },
+      {
+        key: "ownerUserIds",
+        label: "本人企业微信 UserID 列表",
+        placeholder: "zhangsan, lisi",
+        required: false,
+        hint: "这些 ID 的对话不会走客服模式，可用逗号或换行分隔",
       },
     ],
   },

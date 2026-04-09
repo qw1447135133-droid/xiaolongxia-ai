@@ -59,14 +59,50 @@
       .footer {
         display: flex;
         align-items: flex-end;
-        justify-content: flex-end;
-        gap: 0;
+        justify-content: space-between;
+        gap: 16px;
+      }
+      @keyframes status-dot-pulse {
+        0%, 100% {
+          transform: scale(1);
+          opacity: 0.82;
+          box-shadow:
+            0 0 0 4px rgba(148, 163, 184, 0.08),
+            0 0 18px rgba(191, 219, 254, 0.2);
+        }
+        50% {
+          transform: scale(1.12);
+          opacity: 1;
+          box-shadow:
+            0 0 0 6px rgba(148, 163, 184, 0.1),
+            0 0 24px rgba(191, 219, 254, 0.34);
+        }
+      }
+      @keyframes status-bar-rise {
+        0%, 100% {
+          transform: scaleY(0.42);
+          opacity: 0.28;
+        }
+        50% {
+          transform: scaleY(1);
+          opacity: 0.92;
+        }
+      }
+      .version {
+        display: inline-flex;
+        align-items: center;
+        min-height: 20px;
+        padding-bottom: 2px;
+        font-size: 11px;
+        letter-spacing: 0.08em;
+        color: rgba(226, 232, 240, 0.58);
+        text-shadow: 0 0 14px rgba(15, 23, 42, 0.22);
       }
       .status {
         display: flex;
         align-items: center;
         gap: 10px;
-        min-width: 188px;
+        min-width: 204px;
         padding: 8px 0 0;
         border-top: 1px solid rgba(226, 232, 240, 0.18);
       }
@@ -80,12 +116,13 @@
           0 0 18px rgba(191, 219, 254, 0.28);
         flex: 0 0 auto;
         margin-top: 1px;
+        animation: status-dot-pulse 1.8s ease-in-out infinite;
       }
       .status-body {
         display: flex;
         flex-direction: column;
         align-items: flex-start;
-        gap: 2px;
+        gap: 4px;
         min-width: 0;
       }
       .status-label {
@@ -95,9 +132,39 @@
         color: rgba(226, 232, 240, 0.42);
       }
       .status-copy {
+        display: inline-flex;
+        align-items: center;
+        min-height: 14px;
         font-size: 12px;
-        letter-spacing: 0.05em;
-        color: rgba(248, 250, 252, 0.9);
+        letter-spacing: 0.04em;
+        color: rgba(248, 250, 252, 0.92);
+      }
+      .status-loader {
+        display: inline-flex;
+        align-items: flex-end;
+        gap: 3px;
+        height: 10px;
+      }
+      .status-loader span {
+        width: 2px;
+        height: 100%;
+        border-radius: 999px;
+        background: linear-gradient(180deg, rgba(226, 232, 240, 0.18), rgba(191, 219, 254, 0.86));
+        transform-origin: center bottom;
+        animation: status-bar-rise 1.05s ease-in-out infinite;
+        animation-delay: var(--delay, 0s);
+      }
+      .status-loader span:nth-child(1) { height: 5px; }
+      .status-loader span:nth-child(2) { height: 8px; }
+      .status-loader span:nth-child(3) { height: 10px; }
+      .status-loader span:nth-child(4) { height: 7px; }
+      .status-loader span:nth-child(5) { height: 4px; }
+
+      @media (prefers-reduced-motion: reduce) {
+        .status-dot,
+        .status-loader span {
+          animation: none;
+        }
       }
     </style>
   </head>
@@ -107,11 +174,19 @@
       <section class="overlay">
         <div class="eyebrow">Startup Sequence</div>
         <div class="footer">
+          <div class="version">STARCRAW v0.1.9-f9f6b9f</div>
           <div class="status">
             <span class="status-dot" aria-hidden="true"></span>
             <div class="status-body">
               <span class="status-label">System Link</span>
-              <span class="status-copy">主控中枢接入中</span>
+              <span id="status-copy" class="status-copy" aria-live="polite">正在加载插件系统</span>
+              <span class="status-loader" aria-hidden="true">
+                <span style="--delay: 0s"></span>
+                <span style="--delay: 0.12s"></span>
+                <span style="--delay: 0.24s"></span>
+                <span style="--delay: 0.36s"></span>
+                <span style="--delay: 0.48s"></span>
+              </span>
             </div>
           </div>
         </div>
@@ -124,10 +199,38 @@
       const params = new URLSearchParams(window.location.search);
       const videoUrl = params.get('video');
       const video = document.getElementById('startup-video');
+      const statusCopy = document.getElementById('status-copy');
+      const statusMessages = [
+        '正在加载插件系统',
+        '正在加载通讯组件',
+        '正在同步工作台状态',
+        '正在校准团队会话',
+        '正在准备执行环境',
+        '正在连接主控枢纽',
+      ];
+      let statusIndex = 0;
+      let statusTimer = null;
+
+      const startStatusTicker = () => {
+        if (!statusCopy) return;
+        statusCopy.textContent = statusMessages[0];
+        statusTimer = window.setInterval(() => {
+          statusIndex = (statusIndex + 1) % statusMessages.length;
+          statusCopy.textContent = statusMessages[statusIndex];
+        }, 860);
+      };
+
+      const stopStatusTicker = () => {
+        if (statusTimer) {
+          window.clearInterval(statusTimer);
+          statusTimer = null;
+        }
+      };
 
       if (!videoUrl) {
         finish(`${errorPrefix}:missing-video-url`);
       } else {
+        startStatusTicker();
         video.src = videoUrl;
         video.addEventListener('ended', () => finish(doneMarker), { once: true });
         video.addEventListener('error', () => {
@@ -139,6 +242,7 @@
         });
       }
 
+      window.addEventListener('beforeunload', stopStatusTicker, { once: true });
       setTimeout(() => finish(doneMarker), 12000);
     </script>
   </body>

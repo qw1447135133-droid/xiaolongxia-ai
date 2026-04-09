@@ -455,26 +455,20 @@ export function CommandInput({
         disabled={isDispatching}
         uploadActive={attachments.length > 0}
         attachments={attachments.length > 0 ? (
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 10 }}>
+          <div className="attachment-list command-input__attachment-list">
             {attachments.map(({ id, file, kind }) => (
-              <div
-                key={id}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 8,
-                  padding: "6px 10px",
-                  borderRadius: "var(--radius-sm)",
-                  border: "1px solid var(--border)",
-                  background: "rgba(247,249,253,0.96)",
-                  fontSize: 11,
-                }}
-              >
-                <span style={{ color: "var(--text-muted)" }}>{getAttachmentBadge(kind)}</span>
-                <span style={{ color: "var(--text)" }}>{file.name}</span>
-                <span style={{ color: "var(--text-muted)" }}>{formatFileSize(file.size)}</span>
-                <button type="button" className="btn-ghost" onClick={() => removeAttachment(id)} style={{ padding: "2px 6px", fontSize: 11 }}>
-                  移除
+              <div key={id} className="attachment-chip">
+                <span className="attachment-chip__type">{getAttachmentBadge(kind)}</span>
+                <span className="attachment-chip__name">{file.name}</span>
+                <span className="attachment-chip__size">{formatFileSize(file.size)}</span>
+                <button
+                  type="button"
+                  className="attachment-chip__remove"
+                  onClick={() => removeAttachment(id)}
+                  aria-label={`移除 ${file.name}`}
+                  title={`移除 ${file.name}`}
+                >
+                  ×
                 </button>
               </div>
             ))}

@@ -1,5 +1,6 @@
 import {
   PLATFORM_DEFINITIONS,
+  type PlatformCapabilitySet,
   type PlatformConfig,
   type PlatformConnectionStatus,
   type PlatformDef,
@@ -10,6 +11,13 @@ import type { BusinessChannelSession, BusinessOperationRecord } from "@/types/bu
 
 export function getPlatformDefinition(platformId: string): PlatformDef | null {
   return PLATFORM_DEFINITIONS.find(item => item.id === platformId) ?? null;
+}
+
+export function supportsPlatformCapability(
+  platformId: string,
+  capability: keyof PlatformCapabilitySet,
+) {
+  return Boolean(getPlatformDefinition(platformId)?.capabilities?.[capability]);
 }
 
 export function getPlatformRequiredFieldSummary(def: PlatformDef, config: PlatformConfig) {

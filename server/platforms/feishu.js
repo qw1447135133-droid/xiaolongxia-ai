@@ -37,16 +37,33 @@ export default class FeishuAdapter {
     this.defaultOpenId = defaultOpenId?.trim() || null;
     this.onMessage = onMessage;
 
-    globalThis.__feishuAdapter = this;
     console.log("[feishu] Adapter ready. Webhook path: POST /webhook/feishu");
   }
 
   resolveTarget(userId) {
-    const targetId = userId || this.defaultOpenId;
+    const normalized = String(userId || "").trim();
+    const targetId = normalized || this.defaultOpenId;
     if (!targetId) {
       throw new Error("飞书默认 Open ID 未配置");
     }
-    return targetId;
+
+    const separators = [":", "|"];
+    for (const separator of separators) {
+      if (targetId.includes(separator)) {
+        const [receiveIdType, ...rest] = targetId.split(separator);
+        if (receiveIdType && rest.length > 0) {
+          return {
+            receiveIdType,
+            targetId: rest.join(separator),
+          };
+        }
+      }
+    }
+
+    return {
+      receiveIdType: "open_id",
+      targetId,
+    };
   }
 
   async getAccessToken() {
@@ -83,30 +100,37 @@ export default class FeishuAdapter {
     if (!text) return {};
 
     const senderId = event.sender?.sender_id?.open_id;
+    const chatId = event.message?.chat_id;
     const externalMessageId = String(event.message?.message_id || `${senderId || "unknown"}:${Date.now()}`);
     if (senderId) {
+      const conversationRef = chatId ? `chat_id:${chatId}` : `open_id:${senderId}`;
       this.onMessage({
         userId: senderId,
         text,
         platformId: "feishu",
         externalMessageId,
         inboundMessageKey: `feishu:${externalMessageId}`,
+        conversationRef,
+        replyTargetId: conversationRef,
+        participantLabel: senderId,
+        title: `feishu · ${chatId || senderId}`,
+        remoteUserId: senderId,
+        remoteThreadId: chatId ? String(chatId) : undefined,
       });
     }
     return {};
   }
 
   async stop() {
-    globalThis.__feishuAdapter = null;
     this.accessToken = null;
   }
 
   async sendMessage(userId, text) {
-    const targetId = this.resolveTarget(userId);
+    const { receiveIdType, targetId } = this.resolveTarget(userId);
     const token = await this.getAccessToken();
     const chunks = splitText(text, 3000);
     for (const chunk of chunks) {
-      await fetch("https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=open_id", {
+      await fetch(`https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=${encodeURIComponent(receiveIdType)}`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -144,13 +168,13 @@ export default class FeishuAdapter {
   }
 
   async sendFile(userId, payload) {
-    const targetId = this.resolveTarget(userId);
+    const { receiveIdType, targetId } = this.resolveTarget(userId);
     if (payload.caption) {
-      await this.sendMessage(targetId, payload.caption);
+      await this.sendMessage(`${receiveIdType}:${targetId}`, payload.caption);
     }
 
     const { token, fileKey } = await this.uploadFile(payload.filePath, payload.fileName);
-    const res = await fetch("https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=open_id", {
+    const res = await fetch(`https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=${encodeURIComponent(receiveIdType)}`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -166,6 +190,28 @@ export default class FeishuAdapter {
     if (data.code !== 0) {
       throw new Error(data.msg || "飞书发送文件失败");
     }
+  }
+
+  async probe() {
+    const token = await this.getAccessToken();
+    return {
+      ok: Boolean(token),
+      status: "connected",
+      message: `飞书应用凭证校验通过${this.appId ? `：${this.appId}` : ""}`,
+      checkedAt: Date.now(),
+    };
+  }
+
+  async handleWebhookRequest({ body }) {
+    const parsed = body ? JSON.parse(body) : {};
+    const result = await this.handleWebhookEvent(parsed);
+    return {
+      ok: true,
+      statusCode: 200,
+      responseType: "json",
+      responseBody: result,
+      statusDetail: "已收到飞书 Webhook 回调。",
+    };
   }
 }
 

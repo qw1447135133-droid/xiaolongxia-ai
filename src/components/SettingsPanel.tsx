@@ -18,6 +18,7 @@ import {
   AGENT_SKILLS,
   AGENT_META,
   TEAM_OPERATING_TEMPLATES,
+  createDefaultAgentGovernance,
   getAgentModelRoutingProfile,
   getRecommendedTierForAgent,
   PROVIDER_MODELS,
@@ -29,11 +30,16 @@ import {
 } from "@/store/types";
 import type {
   AgentConfig,
+  AgentEscalationMode,
   AgentId,
+  AgentMeetingRoleMode,
+  AgentMemoryWriteScope,
   AgentSkill,
+  AgentToolAccess,
   DesktopProgramEntry,
   ModelPresetTier,
   ModelProvider,
+  AgentResponseStyle,
   TeamOperatingTemplateId,
 } from "@/store/types";
 import { PlatformSettings } from "./PlatformSettings";
@@ -195,6 +201,60 @@ export function SettingsPanel({
       </div>
     </div>
   );
+}
+
+function splitGovernanceList(value: string) {
+  return Array.from(
+    new Set(
+      value
+        .split(/[\n,，、]/)
+        .map(item => item.trim())
+        .filter(Boolean),
+    ),
+  );
+}
+
+function governanceToolAccessLabel(value: AgentToolAccess) {
+  switch (value) {
+    case "full":
+      return "完整执行";
+    case "meeting_only":
+      return "仅会议";
+    case "no_desktop":
+      return "禁桌面";
+    default:
+      return "标准";
+  }
+}
+
+function governanceMemoryLabel(value: AgentMemoryWriteScope) {
+  switch (value) {
+    case "project_memory":
+      return "项目记忆";
+    case "none":
+      return "不回写";
+    default:
+      return "执行事件";
+  }
+}
+
+function governanceMeetingRoleLabel(value: AgentMeetingRoleMode) {
+  return value === "judge" ? "裁判位" : "辩手位";
+}
+
+function governanceEscalationLabel(value: AgentEscalationMode) {
+  return value === "auto" ? "自动收敛" : "先人工确认";
+}
+
+function governanceResponseStyleLabel(value: AgentResponseStyle) {
+  switch (value) {
+    case "combative":
+      return "锋利强辩";
+    case "assertive":
+      return "强势明确";
+    default:
+      return "冷静中立";
+  }
 }
 
 function AgentsSection() {
@@ -430,7 +490,10 @@ function AgentConfigCard({
 }) {
   const locale = useStore(s => s.locale);
   const meta = AGENT_META[agentId];
-  const [draft, setDraft] = useState<AgentConfig>(config);
+  const [draft, setDraft] = useState<AgentConfig>({
+    ...config,
+    governance: config.governance ?? createDefaultAgentGovernance(agentId),
+  });
   const configuredProviders = useMemo(() => getConfiguredProviders(providers), [providers]);
   const defaultConfiguredProviderId = configuredProviders[0]?.id || "";
   const selectedSkills = useMemo(
@@ -453,8 +516,11 @@ function AgentConfigCard({
   }, [agentId, draft.skills]);
 
   useEffect(() => {
-    setDraft(config);
-  }, [config]);
+    setDraft({
+      ...config,
+      governance: config.governance ?? createDefaultAgentGovernance(agentId),
+    });
+  }, [agentId, config]);
 
   const selectedProvider = providers.find(p => p.id === draft.providerId);
   const modelOptions = selectedProvider ? getModelsForProviderInstance(selectedProvider) : [];
@@ -579,6 +645,42 @@ function AgentConfigCard({
                 +{selectedSkills.length - 2}
               </span>
             ) : null}
+            <span
+              style={{
+                padding: "2px 7px",
+                borderRadius: 999,
+                border: "1px solid rgba(var(--accent-rgb), 0.18)",
+                background: "rgba(var(--accent-rgb), 0.06)",
+                fontSize: 10,
+                color: "var(--text-muted)",
+              }}
+            >
+              {governanceMeetingRoleLabel(config.governance?.meetingRoleMode ?? createDefaultAgentGovernance(agentId).meetingRoleMode)}
+            </span>
+            <span
+              style={{
+                padding: "2px 7px",
+                borderRadius: 999,
+                border: "1px solid rgba(var(--accent-rgb), 0.18)",
+                background: "rgba(var(--accent-rgb), 0.06)",
+                fontSize: 10,
+                color: "var(--text-muted)",
+              }}
+            >
+              {governanceToolAccessLabel(config.governance?.toolAccess ?? createDefaultAgentGovernance(agentId).toolAccess)}
+            </span>
+            <span
+              style={{
+                padding: "2px 7px",
+                borderRadius: 999,
+                border: "1px solid rgba(var(--accent-rgb), 0.18)",
+                background: "rgba(var(--accent-rgb), 0.06)",
+                fontSize: 10,
+                color: "var(--text-muted)",
+              }}
+            >
+              {governanceMemoryLabel(config.governance?.memoryWriteScope ?? createDefaultAgentGovernance(agentId).memoryWriteScope)}
+            </span>
           </div>
 
           <div className="settings-agent-card__summary">
@@ -775,6 +877,121 @@ function AgentConfigCard({
               value={draft.personality}
               onChange={e => setDraft(prev => ({ ...prev, personality: e.target.value }))}
             />
+          </div>
+
+          <div style={{ display: "grid", gap: 10 }}>
+            <label style={labelStyle}>治理合同</label>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 10 }}>
+              <div>
+                <label style={labelStyle}>工具权限</label>
+                <select
+                  className="input"
+                  value={draft.governance.toolAccess}
+                  onChange={e => setDraft(prev => ({
+                    ...prev,
+                    governance: { ...prev.governance, toolAccess: e.target.value as AgentToolAccess },
+                  }))}
+                >
+                  <option value="standard">标准</option>
+                  <option value="no_desktop">禁用桌面执行</option>
+                  <option value="meeting_only">仅会议模式</option>
+                  <option value="full">完整执行</option>
+                </select>
+              </div>
+              <div>
+                <label style={labelStyle}>会议站位</label>
+                <select
+                  className="input"
+                  value={draft.governance.meetingRoleMode}
+                  onChange={e => setDraft(prev => ({
+                    ...prev,
+                    governance: { ...prev.governance, meetingRoleMode: e.target.value as AgentMeetingRoleMode },
+                  }))}
+                >
+                  <option value="participant">辩手位</option>
+                  <option value="judge">裁判位</option>
+                </select>
+              </div>
+              <div>
+                <label style={labelStyle}>记忆回写</label>
+                <select
+                  className="input"
+                  value={draft.governance.memoryWriteScope}
+                  onChange={e => setDraft(prev => ({
+                    ...prev,
+                    governance: { ...prev.governance, memoryWriteScope: e.target.value as AgentMemoryWriteScope },
+                  }))}
+                >
+                  <option value="none">不回写</option>
+                  <option value="execution_events">执行事件</option>
+                  <option value="project_memory">项目记忆</option>
+                </select>
+              </div>
+              <div>
+                <label style={labelStyle}>升级策略</label>
+                <select
+                  className="input"
+                  value={draft.governance.escalationMode}
+                  onChange={e => setDraft(prev => ({
+                    ...prev,
+                    governance: { ...prev.governance, escalationMode: e.target.value as AgentEscalationMode },
+                  }))}
+                >
+                  <option value="auto">自动收敛</option>
+                  <option value="manual_first">先人工确认</option>
+                </select>
+              </div>
+              <div style={{ gridColumn: "1 / -1" }}>
+                <label style={labelStyle}>表达风格</label>
+                <select
+                  className="input"
+                  value={draft.governance.responseStyle}
+                  onChange={e => setDraft(prev => ({
+                    ...prev,
+                    governance: { ...prev.governance, responseStyle: e.target.value as AgentResponseStyle },
+                  }))}
+                >
+                  <option value="neutral">冷静中立</option>
+                  <option value="assertive">强势明确</option>
+                  <option value="combative">锋利强辩</option>
+                </select>
+              </div>
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 10 }}>
+              <div>
+                <label style={labelStyle}>禁区主题</label>
+                <textarea
+                  className="input"
+                  style={{ resize: "vertical", minHeight: 74, fontFamily: "inherit" }}
+                  placeholder="多个条目可用逗号、顿号或换行分隔"
+                  value={draft.governance.forbiddenTopics.join("\n")}
+                  onChange={e => setDraft(prev => ({
+                    ...prev,
+                    governance: { ...prev.governance, forbiddenTopics: splitGovernanceList(e.target.value) },
+                  }))}
+                />
+              </div>
+              <div>
+                <label style={labelStyle}>停止条件</label>
+                <textarea
+                  className="input"
+                  style={{ resize: "vertical", minHeight: 74, fontFamily: "inherit" }}
+                  placeholder="例如：验证码、OTP、删除客户数据"
+                  value={draft.governance.stopConditions.join("\n")}
+                  onChange={e => setDraft(prev => ({
+                    ...prev,
+                    governance: { ...prev.governance, stopConditions: splitGovernanceList(e.target.value) },
+                  }))}
+                />
+              </div>
+            </div>
+
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+              <span style={{ fontSize: 11, color: "var(--text-muted)" }}>
+                当前治理摘要：{governanceMeetingRoleLabel(draft.governance.meetingRoleMode)} / {governanceToolAccessLabel(draft.governance.toolAccess)} / {governanceMemoryLabel(draft.governance.memoryWriteScope)} / {governanceEscalationLabel(draft.governance.escalationMode)} / {governanceResponseStyleLabel(draft.governance.responseStyle)}
+              </span>
+            </div>
           </div>
 
           <div>

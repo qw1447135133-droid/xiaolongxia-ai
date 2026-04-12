@@ -42,14 +42,12 @@ export function ChannelsCenter() {
   const { platformConfigs } = useStore();
   const chatSessions = useStore(s => s.chatSessions);
   const activeSessionId = useStore(s => s.activeSessionId);
-  const executionRuns = useStore(s => s.executionRuns);
   const businessOperationLogs = useStore(s => s.businessOperationLogs);
   const businessContentTasks = useStore(s => s.businessContentTasks);
   const businessChannelSessions = useStore(s => s.businessChannelSessions);
   const channelActionResult = useStore(s => s.channelActionResult);
   const wsStatus = useStore(s => s.wsStatus);
-  const setActiveChatSession = useStore(s => s.setActiveChatSession);
-  const setCommandDraft = useStore(s => s.setCommandDraft);
+  const openChannelSessionChat = useStore(s => s.openChannelSessionChat);
   const setActiveControlCenterSection = useStore(s => s.setActiveControlCenterSection);
   const setTab = useStore(s => s.setTab);
   const setActiveExecutionRun = useStore(s => s.setActiveExecutionRun);
@@ -248,7 +246,9 @@ export function ChannelsCenter() {
       externalRef: session.externalRef,
       title: session.title,
       participantLabel: session.participantLabel,
+      replyTargetId: session.replyTargetId,
       remoteUserId: session.remoteUserId,
+      remoteThreadId: session.remoteThreadId,
       accountLabel: session.accountLabel,
       text,
       retry: Boolean(options.retry),
@@ -266,7 +266,9 @@ export function ChannelsCenter() {
       externalRef: session.externalRef,
       title: session.title,
       participantLabel: session.participantLabel,
+      replyTargetId: session.replyTargetId,
       remoteUserId: session.remoteUserId,
+      remoteThreadId: session.remoteThreadId,
       accountLabel: session.accountLabel,
     });
     if (!sent) {
@@ -280,16 +282,7 @@ export function ChannelsCenter() {
   };
 
   const handoffChannelSessionToChat = (session: BusinessChannelSession) => {
-    const linkedRun = session.lastExecutionRunId
-      ? executionRuns.find(run => run.id === session.lastExecutionRunId) ?? null
-      : null;
-
-    setActiveChatSession(activeSessionId);
-    setCommandDraft(
-      linkedRun
-        ? `继续接管这条渠道会话，并先处理失败或待人工节点：\n${linkedRun.instruction}`
-        : `继续接管这条渠道会话，并先回复用户当前问题：\n会话标题：${session.title}\n会话摘要：${session.summary}\n最近消息：${session.lastMessagePreview ?? "无"}`,
-    );
+    openChannelSessionChat(session.id);
     setTab("tasks");
   };
 

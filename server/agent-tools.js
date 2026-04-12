@@ -10,6 +10,7 @@ import { join } from "node:path";
 
 import { getBrowser, getPage } from "./browser-manager.js";
 import { actDesktopCdpApp, openDesktopCdpApp, snapshotDesktopCdpApp } from "./cdp-app-manager.js";
+import { exportCustomerProfileWordDocument } from "./customer-profile-exporter.js";
 import { requestDesktopInputControl, requestDesktopInstalledApplications, requestDesktopLaunch, requestDesktopScreenshot } from "./desktop-bridge.js";
 import { exportExcelDocument, exportPresentationDocument, exportWordDocument } from "./document-exporter.js";
 
@@ -238,6 +239,32 @@ function isResearchDeliveryIntent(text) {
   const hasResearchIntent = /(?:查询|查一下|搜索|搜集|搜一下|检索|research|search|lookup|find|新闻|资讯|資料|资料|总结|總結|报告|報告|写一份|写个|撰写|整理)/i.test(normalized);
   const hasLocalDeliveryIntent = /(?:word|docx|文档|文件|报告|報告|总结|總結|保存|导出|輸出|发送|發送|发到|桌面|desktop|本地|附件)/i.test(normalized);
   return hasResearchIntent && hasLocalDeliveryIntent;
+}
+
+function isExplicitPhysicalDesktopRequest(text) {
+  const normalized = String(text || "").trim().toLowerCase();
+  if (!normalized) return false;
+  if (isExplicitExternalBrowserRequest(normalized)) return true;
+
+  return [
+    /(?:桌面|desktop|窗口|視窗|界面|介面|浏览器|瀏覽器|程序|應用|应用|播放器|视频页|影片頁|网页播放器|網頁播放器).{0,18}(?:点击|點擊|点开|點開|双击|雙擊|右键|右鍵|滚动|滾動|输入|輸入|按下|播放|操作)/i,
+    /(?:点击|點擊|点开|點開|双击|雙擊|右键|右鍵|滚动|滾動|输入|輸入|按下|播放|操作).{0,18}(?:桌面|desktop|窗口|視窗|界面|介面|浏览器|瀏覽器|程序|應用|应用|播放器|视频页|影片頁)/i,
+    /(?:打开|打開|启动|啟動|进入|進入|前往|跳转到|跳轉到|去到).{0,20}(?:chrome|edge|firefox|figma|notion|微信|企业微信|企業微信|飞书|飛書|qq|钉钉|釘釘|浏览器|瀏覽器|b\s*站|bilibili|you\s*tube|youtube|优酷|腾讯视频|爱奇艺|抖音|tiktok|快手|视频网站|視頻網站|播放器)/i,
+    /(?:chrome|edge|firefox|figma|notion|微信|企业微信|企業微信|飞书|飛書|qq|钉钉|釘釘|浏览器|瀏覽器|b\s*站|bilibili|you\s*tube|youtube|优酷|腾讯视频|爱奇艺|抖音|tiktok|快手|视频网站|視頻網站|播放器).{0,18}(?:打开|打開|启动|啟動|进入|進入|点击|點擊|点开|點開|播放|滚动|滾動|输入|輸入|操作)/i,
+    /(?:鼠标|鍵盤|键盘).{0,18}(?:点击|點擊|滚动|滾動|输入|輸入|操作|接管)/i,
+  ].some((pattern) => pattern.test(normalized));
+}
+
+function shouldBlockDesktopToolsForRemoteOps(context = {}) {
+  const executionSource = String(context.executionSource || context.source || "").trim().toLowerCase();
+  if (executionSource !== "remote-ops") return false;
+
+  const userInstruction = String(context.userInstruction || context.currentTaskDescription || "").trim();
+  return !isExplicitPhysicalDesktopRequest(userInstruction);
+}
+
+function getRemoteOpsDesktopBlockReason() {
+  return "当前是自治/监管值守链路，默认只允许生成或发送客户消息，并可使用内置 browser_* 联网检索；不要把它误当成桌面接管任务。";
 }
 
 function isBrowserLaunchTarget(target, args = []) {
@@ -653,6 +680,10 @@ class DesktopLaunchNativeApplicationTool extends ToolBase {
   async checkPermissions({ target, args = [] } = {}, context = {}) {
     const userInstruction = String(context.userInstruction || "").trim();
 
+    if (shouldBlockDesktopToolsForRemoteOps(context)) {
+      return { behavior: "deny", reason: getRemoteOpsDesktopBlockReason() };
+    }
+
     if (isWordProcessorLaunchTarget(target, args)) {
       if (isExplicitWordAppRequest(userInstruction)) {
         return { behavior: "allow" };
@@ -763,6 +794,74 @@ class DocumentWriteDocxTool extends ToolBase {
 
   async call(args = {}) {
     const result = await exportWordDocument(args);
+    return {
+      data: JSON.stringify({
+        success: true,
+        ...result,
+      }),
+    };
+  }
+}
+
+class DocumentWriteCustomerProfileDocxTool extends ToolBase {
+  name = "document_write_customer_profile_docx";
+  searchHint = "按 CRM 客户画像结构直接生成 Word 客户档案（.docx）。适用于客户画像、客户档案、客户信息导出、CRM 导出、活动推送前客户分析等任务，固定按“基本联络与个人资料 / 互动记录与沟通历史 / 购买纪录与交易数据 / 行为与偏好数据”四大章节输出。";
+
+  inputSchema() {
+    return {
+      type: "object",
+      properties: {
+        title: { type: "string", description: "可选。文档标题。" },
+        fileName: { type: "string", description: "可选。导出的文件名。" },
+        outputDir: {
+          type: "string",
+          enum: ["desktop", "documents", "downloads", "temp"],
+          description: "导出目录，默认 desktop。",
+        },
+        customer: {
+          type: "object",
+          description: "客户画像对象，支持 name / tier / primaryChannel / company / summary / tags / channelIdentities / crmProfile / campaignPreferences / lastCampaignAssessment 等字段。",
+          properties: {
+            name: { type: "string", description: "客户名称。" },
+            tier: { type: "string", description: "客户等级。" },
+            primaryChannel: { type: "string", description: "主沟通渠道。" },
+            company: { type: "string", description: "公司名称。" },
+            summary: { type: "string", description: "客户摘要。" },
+            profileCompletenessScore: { type: "number", description: "画像完整度分数。" },
+            tags: {
+              type: "array",
+              items: { type: "string" },
+            },
+            channelIdentities: {
+              type: "array",
+              items: {
+                type: "object",
+                additionalProperties: true,
+              },
+            },
+            crmProfile: {
+              type: "object",
+              additionalProperties: true,
+            },
+            campaignPreferences: {
+              type: "object",
+              additionalProperties: true,
+            },
+            lastCampaignAssessment: {
+              type: "object",
+              additionalProperties: true,
+            },
+          },
+          required: ["name"],
+          additionalProperties: true,
+        },
+      },
+      required: ["customer"],
+    };
+  }
+
+  async call(args = {}) {
+    const result = await exportCustomerProfileWordDocument(args);
     return {
       data: JSON.stringify({
         success: true,
@@ -914,6 +1013,9 @@ class DesktopOpenExternalBrowserTool extends ToolBase {
 
   async checkPermissions(_input, context = {}) {
     const userInstruction = String(context.userInstruction || "").trim();
+    if (shouldBlockDesktopToolsForRemoteOps(context)) {
+      return { behavior: "deny", reason: getRemoteOpsDesktopBlockReason() };
+    }
     if (!userInstruction) {
       return { behavior: "deny", reason: "缺少用户明确的浏览器打开指令，默认应使用内置 browser_* 工具。" };
     }
@@ -1048,6 +1150,13 @@ class DesktopListInstalledApplicationsTool extends ToolBase {
     return true;
   }
 
+  async checkPermissions(_input, context = {}) {
+    if (shouldBlockDesktopToolsForRemoteOps(context)) {
+      return { behavior: "deny", reason: getRemoteOpsDesktopBlockReason() };
+    }
+    return { behavior: "allow" };
+  }
+
   async call({ query = "", source = "all", limit = 20, forceRefresh = false }, context = {}) {
     const installedApps = await requestDesktopInstalledApplications({ forceRefresh }, {
       preferredWs: context.desktopClientWs,
@@ -1132,6 +1241,13 @@ class DesktopControlInputTool extends ToolBase {
     };
   }
 
+  async checkPermissions(_input, context = {}) {
+    if (shouldBlockDesktopToolsForRemoteOps(context)) {
+      return { behavior: "deny", reason: getRemoteOpsDesktopBlockReason() };
+    }
+    return { behavior: "allow" };
+  }
+
   async call(args = {}, context = {}) {
     const result = await requestDesktopInputControl(args, {
       preferredWs: context.desktopClientWs,
@@ -1203,6 +1319,13 @@ class DesktopCaptureScreenshotTool extends ToolBase {
       },
       required: [],
     };
+  }
+
+  async checkPermissions(_input, context = {}) {
+    if (shouldBlockDesktopToolsForRemoteOps(context)) {
+      return { behavior: "deny", reason: getRemoteOpsDesktopBlockReason() };
+    }
+    return { behavior: "allow" };
   }
 
   async call(args = {}, context = {}) {
@@ -1294,6 +1417,13 @@ class DesktopCdpOpenAppTool extends ToolBase {
     };
   }
 
+  async checkPermissions(_input, context = {}) {
+    if (shouldBlockDesktopToolsForRemoteOps(context)) {
+      return { behavior: "deny", reason: getRemoteOpsDesktopBlockReason() };
+    }
+    return { behavior: "allow" };
+  }
+
   async call(args = {}, context = {}) {
     const result = await openDesktopCdpApp(args, {
       desktopClientWs: context.desktopClientWs,
@@ -1353,6 +1483,13 @@ class DesktopCdpSnapshotTool extends ToolBase {
       },
       required: [],
     };
+  }
+
+  async checkPermissions(_input, context = {}) {
+    if (shouldBlockDesktopToolsForRemoteOps(context)) {
+      return { behavior: "deny", reason: getRemoteOpsDesktopBlockReason() };
+    }
+    return { behavior: "allow" };
   }
 
   async call(args = {}) {
@@ -1426,6 +1563,13 @@ class DesktopCdpActTool extends ToolBase {
     };
   }
 
+  async checkPermissions(_input, context = {}) {
+    if (shouldBlockDesktopToolsForRemoteOps(context)) {
+      return { behavior: "deny", reason: getRemoteOpsDesktopBlockReason() };
+    }
+    return { behavior: "allow" };
+  }
+
   async call(args = {}) {
     const result = await actDesktopCdpApp(args);
     return {
@@ -1468,6 +1612,7 @@ class DesktopCdpActTool extends ToolBase {
 
 /** 内置工具列表（通用，所有 Agent 可用） */
 const BUILT_IN_TOOLS = [
+  new DocumentWriteCustomerProfileDocxTool(),
   new DocumentWriteDocxTool(),
   new DocumentWriteXlsxTool(),
   new DocumentWritePptxTool(),

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
+import { useContextMentionComposer } from "@/hooks/useContextMentionComposer";
 import {
   buildDeskNoteSnippet,
   buildKnowledgeDocumentSnippet,
@@ -17,7 +18,11 @@ import { filterByProjectScope } from "@/lib/project-context";
 import { useStore } from "@/store";
 import { randomId } from "@/lib/utils";
 import { cancelExecutionRun, sendExecutionDispatch } from "@/lib/execution-dispatch";
+import { maybeLaunchCampaignDispatchFromChat } from "@/lib/campaign-dispatch";
+import { serializeAttachmentForDispatch, type DispatchAttachmentPayload } from "@/lib/attachment-payload";
 import { ConversationComposerShell } from "@/components/ConversationComposerShell";
+import { ContextMentionDropdown } from "@/components/ContextMentionDropdown";
+import { buildContextMentionCandidates } from "@/lib/context-mentions";
 
 type AttachmentKind = "image" | "document" | "audio" | "video" | "other";
 
@@ -117,11 +122,15 @@ export function CommandInput({
     workspaceDeskNotes,
     workspaceProjectMemories,
     semanticKnowledgeDocs,
+    meetingHistory,
+    businessChannelSessions,
     activeWorkspaceProjectMemoryId,
     chatSessions,
     activeSessionId,
+    commandContextMentions,
     appendCommandDraft,
     setCommandDraft,
+    setCommandContextMentions,
     clearCommandDraft,
     setDispatching,
     setLastInstruction,
@@ -145,6 +154,27 @@ export function CommandInput({
         .sort((left, right) => right.updatedAt - left.updatedAt)[0] ?? null,
     [activeSessionId, executionRuns],
   );
+
+  const mentionCandidates = useMemo(
+    () =>
+      buildContextMentionCandidates({
+        chatSessions,
+        activeSessionId,
+        meetingHistory,
+        channelSessions: businessChannelSessions,
+        scope: activeSession ?? {},
+      }),
+    [activeSession, activeSessionId, businessChannelSessions, chatSessions, meetingHistory],
+  );
+
+  const mentionComposer = useContextMentionComposer({
+    value: commandDraft,
+    candidates: mentionCandidates,
+    selectedMentions: commandContextMentions,
+    onValueChange: setCommandDraft,
+    onSelectedMentionsChange: setCommandContextMentions,
+    maxSuggestions: 12,
+  });
 
   useEffect(() => {
     if (cancellingRunId && (!activeChatExecutionRun || activeChatExecutionRun.id !== cancellingRunId)) {
@@ -288,33 +318,63 @@ export function CommandInput({
       return;
     }
 
-    const attachmentMetas = attachments.map(({ id, file, kind }) => ({
-      id,
-      name: file.name,
-      size: file.size,
-      type: file.type,
-      kind,
-      lastModified: file.lastModified,
-    }));
+    let serializedAttachments: DispatchAttachmentPayload[] = [];
+    try {
+      serializedAttachments = await Promise.all(
+        attachments.map(({ id, file, kind }) => serializeAttachmentForDispatch({ id, file, kind })),
+      );
+    } catch (error) {
+      setError(`附件读取失败：${error instanceof Error ? error.message : String(error)}`);
+      return;
+    }
 
-    const taskDescription = attachmentMetas.length
-      ? `${instruction}\n\nAttachments: ${attachmentMetas.map(item => item.name).join(", ")}`
+    const taskDescription = serializedAttachments.length
+      ? `${instruction}\n\nAttachments: ${serializedAttachments.map(item => item.name).join(", ")}`
       : instruction;
 
     setDispatching(true);
     setLastInstruction(instruction);
     setError("");
+    const selectedContextMentions = commandContextMentions;
     clearCommandDraft();
     setAttachments([]);
 
-    const { ok } = await sendExecutionDispatch({
+    const { ok, executionRunId } = await sendExecutionDispatch({
       instruction,
       source: "chat",
-      attachments: attachmentMetas,
+      attachments: serializedAttachments,
       includeUserMessage: true,
       taskDescription,
       includeActiveProjectMemory: includeProjectMemory || !activeProjectMemory,
+      contextMentions: selectedContextMentions,
     });
+
+    if (ok) {
+      const campaignReport = await maybeLaunchCampaignDispatchFromChat({
+        instruction,
+        sessionId: activeSessionId,
+        includeActiveProjectMemory: includeProjectMemory || !activeProjectMemory,
+      });
+
+      if (campaignReport && executionRunId) {
+        const timestamp = Date.now();
+        useStore.getState().updateExecutionRun({
+          id: executionRunId,
+          timestamp,
+          event: {
+            id: `evt-campaign-dispatch-${timestamp}`,
+            type: "system",
+            title: campaignReport.blocked
+              ? "活动外呼未自动启动"
+              : campaignReport.launched > 0
+                ? "活动外呼已启动"
+                : "活动外呼派发失败",
+            detail: campaignReport.summary,
+            timestamp,
+          },
+        });
+      }
+    }
 
     if (!ok) {
       setError("Failed to send. The WebSocket connection was lost.");
@@ -454,34 +514,83 @@ export function CommandInput({
         uploadTitle="添加附件"
         disabled={isDispatching}
         uploadActive={attachments.length > 0}
-        attachments={attachments.length > 0 ? (
-          <div className="attachment-list command-input__attachment-list">
-            {attachments.map(({ id, file, kind }) => (
-              <div key={id} className="attachment-chip">
-                <span className="attachment-chip__type">{getAttachmentBadge(kind)}</span>
-                <span className="attachment-chip__name">{file.name}</span>
-                <span className="attachment-chip__size">{formatFileSize(file.size)}</span>
-                <button
-                  type="button"
-                  className="attachment-chip__remove"
-                  onClick={() => removeAttachment(id)}
-                  aria-label={`移除 ${file.name}`}
-                  title={`移除 ${file.name}`}
-                >
-                  ×
-                </button>
+        attachments={commandContextMentions.length > 0 || attachments.length > 0 ? (
+          <>
+            {commandContextMentions.length > 0 ? (
+              <div className="context-mention-bar">
+                <div className="context-mention-bar__label">已 @ 的外部上下文</div>
+                <div className="context-mention-chip-list">
+                  {commandContextMentions.map((mention) => (
+                    <div key={`${mention.kind}:${mention.targetId}`} className={`context-mention-chip context-mention-chip--${mention.kind}`}>
+                      <span className="context-mention-chip__kind">{mention.kind === "chat-session" ? "聊天" : mention.kind === "meeting-record" ? "会议" : "客户"}</span>
+                      <span className="context-mention-chip__label">{mention.label}</span>
+                      {mention.description ? (
+                        <span className="context-mention-chip__description">{mention.description}</span>
+                      ) : null}
+                      <button
+                        type="button"
+                        className="context-mention-chip__remove"
+                        onClick={() => mentionComposer.removeMention(mention)}
+                        aria-label={`移除 ${mention.label}`}
+                        title={`移除 ${mention.label}`}
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ))}
+                </div>
               </div>
-            ))}
-          </div>
+            ) : null}
+            {attachments.length > 0 ? (
+              <div className="attachment-list command-input__attachment-list">
+                {attachments.map(({ id, file, kind }) => (
+                  <div key={id} className="attachment-chip">
+                    <span className="attachment-chip__type">{getAttachmentBadge(kind)}</span>
+                    <span className="attachment-chip__name">{file.name}</span>
+                    <span className="attachment-chip__size">{formatFileSize(file.size)}</span>
+                    <button
+                      type="button"
+                      className="attachment-chip__remove"
+                      onClick={() => removeAttachment(id)}
+                      aria-label={`移除 ${file.name}`}
+                      title={`移除 ${file.name}`}
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+          </>
         ) : null}
         field={(
-          <textarea
-            className="input command-input__field"
-            value={commandDraft}
-            onChange={(event) => setCommandDraft(event.target.value)}
-            placeholder="输入你的任务、问题、网页研究需求或桌面执行目标"
-            rows={2}
-          />
+          <div className="context-mention-field">
+            <textarea
+              ref={mentionComposer.textareaRef}
+              className="input command-input__field"
+              value={commandDraft}
+              onChange={(event) => mentionComposer.handleValueChange(event.target.value, event.target.selectionStart)}
+              onSelect={(event) => mentionComposer.handleSelectionChange(event.currentTarget.selectionStart)}
+              onClick={(event) => mentionComposer.handleSelectionChange(event.currentTarget.selectionStart)}
+              onKeyDown={mentionComposer.handleKeyDown}
+              onBlur={mentionComposer.handleBlur}
+              placeholder="输入你的任务、问题、网页研究需求或桌面执行目标，输入 @ 可引用聊天 / 会议 / 客户会话"
+              rows={2}
+            />
+            {mentionComposer.hasSuggestionsOpen ? (
+              <ContextMentionDropdown
+                menuLevel={mentionComposer.menuLevel}
+                highlightedIndex={mentionComposer.highlightedIndex}
+                suggestionGroups={mentionComposer.suggestionGroups}
+                activeGroup={mentionComposer.activeGroup}
+                visibleSuggestions={mentionComposer.visibleSuggestions}
+                handleDropdownMouseDown={mentionComposer.handleDropdownMouseDown}
+                enterGroup={mentionComposer.enterGroup}
+                backToGroups={mentionComposer.backToGroups}
+                selectSuggestion={mentionComposer.selectSuggestion}
+              />
+            ) : null}
+          </div>
         )}
         action={activeChatExecutionRun ? (
           <button
@@ -528,7 +637,9 @@ export function CommandInput({
                     ? `系统已找到相关 Desk Notes，可一键注入输入框作为语义上下文。`
                     : recommendedKnowledgeDocuments.length > 0
                       ? `系统已命中可复用知识文档，可直接注入输入框或在发送时自动参与召回。`
-                      : "Use the + button for attachments, or send file path/context from Desk with one click."}
+                      : commandContextMentions.length > 0
+                        ? `当前已显式引用 ${commandContextMentions.length} 段外部历史，上下文只会按这些 @ 记录注入。`
+                        : "Use the + button for attachments, or type @ to reference chat, meeting, or customer history on demand."}
           </div>
         ) : null}
       />

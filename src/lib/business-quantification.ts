@@ -5,6 +5,7 @@ import type {
   BusinessLead,
   BusinessTicket,
 } from "@/types/business-entities";
+import { scoreCustomerCampaignFit } from "@/lib/customer-profile-schema";
 
 export interface QuantDecision {
   score: number;
@@ -18,19 +19,30 @@ function clampScore(value: number) {
 }
 
 export function scoreCustomerHealth(customer: BusinessCustomer): QuantDecision {
-  let score = 40;
+  let score = 34;
   if (customer.tier === "active") score += 20;
   if (customer.tier === "vip") score += 32;
   if (customer.company) score += 8;
   if (customer.tags.length > 0) score += Math.min(12, customer.tags.length * 4);
   if (customer.summary.trim().length > 24) score += 8;
+  score += Math.round(customer.profileCompletenessScore * 0.28);
+  if (customer.channelIdentities.length > 1) score += 8;
+  if (customer.crmProfile.interaction.preferredContactMethods.length > 0) score += 5;
+  if (customer.crmProfile.interaction.refuseCommunication) score -= 24;
 
   const normalized = clampScore(score);
   return {
     score: normalized,
-    autoRunEligible: normalized >= 65,
-    humanApprovalRequired: customer.tier === "vip",
-    summary: normalized >= 75 ? "客户信息较完整，可支持自动化跟进。" : "客户画像仍偏薄，建议先补充资料。",
+    autoRunEligible: normalized >= 68 && !customer.crmProfile.interaction.refuseCommunication,
+    humanApprovalRequired: customer.tier === "vip" || customer.crmProfile.derived.pushSensitivity === "high",
+    summary:
+      customer.crmProfile.interaction.refuseCommunication
+        ? "客户当前存在拒绝沟通信号，后续触达需先人工确认。"
+        : normalized >= 78
+          ? "客户画像较完整，适合自动化跟进与活动筛选。"
+          : normalized >= 58
+            ? "客户画像已有基础，但仍建议继续补齐画像字段。"
+            : "客户画像仍偏薄，建议先补充资料。",
   };
 }
 
@@ -102,17 +114,33 @@ export function scoreContentTask(
   if (lead && lead.stage !== "lost") score += 8;
   if (task.channel === "x") score += 10;
 
+  const campaignAssessment = customer
+    ? scoreCustomerCampaignFit(customer, [task.title, task.goal, task.brief].filter(Boolean).join("\n"))
+    : null;
+  if (campaignAssessment?.decision === "recommended") score += 12;
+  if (campaignAssessment?.decision === "skip") score -= 22;
+
   const normalized = clampScore(score);
   return {
     score: normalized,
-    autoRunEligible: normalized >= 64 && task.status !== "published" && task.priority !== "urgent",
-    humanApprovalRequired: task.channel === "x" || task.priority === "urgent" || normalized < 60,
+    autoRunEligible:
+      normalized >= 64
+      && task.status !== "published"
+      && task.priority !== "urgent"
+      && campaignAssessment?.decision !== "skip",
+    humanApprovalRequired:
+      task.channel === "x"
+      || task.priority === "urgent"
+      || normalized < 60
+      || campaignAssessment?.decision === "watch",
     summary:
-      normalized >= 76
-        ? "内容准备度较高，可以自动推进到排期或发布前一步。"
-        : normalized >= 56
-          ? "内容任务可继续加工，但最好保留人工审核。"
-          : "内容信息不够完整，自动发布风险较高。",
+      campaignAssessment?.decision === "skip"
+        ? "当前客户画像显示该活动与客户不匹配，不建议直接推送。"
+        : normalized >= 76
+          ? "内容准备度较高，且与客户画像匹配，可以自动推进到排期或发布前一步。"
+          : normalized >= 56
+            ? "内容任务可继续加工，但最好保留人工审核。"
+            : "内容信息不够完整，自动发布风险较高。",
   };
 }
 
@@ -124,18 +152,28 @@ export function scoreChannelSession(session: BusinessChannelSession, customer?: 
   if (customer?.tier === "active") score += 8;
   if (customer?.tier === "vip") score += 14;
   if (session.summary.trim().length > 16) score += 8;
+  if (customer?.crmProfile.interaction.preferredContactMethods.includes(session.channel)) score += 6;
+  if (customer?.crmProfile.interaction.refuseCommunication) score -= 28;
 
   const normalized = clampScore(score);
   return {
     score: normalized,
-    autoRunEligible: normalized >= 62 && session.status !== "closed",
-    humanApprovalRequired: customer?.tier === "vip" || normalized >= 78,
+    autoRunEligible:
+      normalized >= 62
+      && session.status !== "closed"
+      && !customer?.crmProfile.interaction.refuseCommunication,
+    humanApprovalRequired:
+      customer?.tier === "vip"
+      || normalized >= 78
+      || Boolean(customer?.crmProfile.interaction.refuseCommunication),
     summary:
-      normalized >= 74
-        ? "会话活跃且上下文清晰，适合自动助手先接待。"
-        : normalized >= 58
-          ? "会话适合监督模式下自动回复。"
-          : "会话上下文不足，建议先人工介入。",
+      customer?.crmProfile.interaction.refuseCommunication
+        ? "客户存在拒绝沟通信号，建议先人工确认后再接待。"
+        : normalized >= 74
+          ? "会话活跃且上下文清晰，适合自动助手先接待。"
+          : normalized >= 58
+            ? "会话适合监督模式下自动回复。"
+            : "会话上下文不足，建议先人工介入。",
   };
 }
 

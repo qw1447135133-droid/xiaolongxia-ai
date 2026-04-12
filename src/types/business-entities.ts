@@ -3,7 +3,9 @@ import type { AgentId } from "@/store/types";
 export type BusinessPriority = "low" | "normal" | "high" | "urgent";
 export type BusinessEntityType = "customer" | "lead" | "ticket" | "contentTask" | "channelSession";
 export type BusinessContentFormat = "post" | "thread" | "article" | "script" | "campaign";
-export type BusinessContentChannel = "x" | "telegram" | "line" | "feishu" | "wecom" | "blog";
+export type BusinessContentChannel = "x" | "telegram" | "line" | "feishu" | "wecom" | "dingtalk" | "wechat_official" | "qq" | "web" | "blog";
+export type BusinessCustomerPrimaryChannel = "telegram" | "line" | "feishu" | "wecom" | "dingtalk" | "wechat_official" | "qq" | "email" | "web";
+export type BusinessCustomerCampaignDecision = "recommended" | "watch" | "skip";
 export type BusinessContentPublishTarget = {
   channel: BusinessContentChannel;
   accountLabel: string;
@@ -40,14 +42,156 @@ export interface BusinessScopedEntity {
   updatedAt: number;
 }
 
+export interface BusinessCustomerChannelIdentity {
+  channel: BusinessCustomerPrimaryChannel;
+  externalRef: string;
+  remoteUserId?: string;
+  participantLabel?: string;
+  accountLabel?: string;
+  sourceSessionId?: string;
+  lastMessageAt?: number;
+  lastInboundAt?: number;
+  lastOutboundAt?: number;
+  lastSeenAt: number;
+}
+
+export interface BusinessCustomerProfileBasicInfo {
+  contactName?: string;
+  englishName?: string;
+  gender?: string;
+  nationalId?: string;
+  birthDate?: string;
+  jobTitle?: string;
+  ownerName?: string;
+  companyName?: string;
+  companyFoundedAt?: string;
+  companyBackground?: string;
+  companyScale?: string;
+  companyAddress?: string;
+  companyPhone?: string;
+  companyFax?: string;
+  companyWebsite?: string;
+  companyEmail?: string;
+  officialLine?: string;
+  officialChannel?: string;
+  industry?: string;
+  salesProducts: string[];
+  marketScale?: string;
+  invoiceType?: string;
+  invoiceTitle?: string;
+  companyTaxId?: string;
+  phone?: string;
+  mobile?: string;
+  privateEmail?: string;
+  workEmail?: string;
+  registeredAddress?: string;
+  residentialAddress?: string;
+  workAddress?: string;
+  socialAccounts: string[];
+}
+
+export interface BusinessCustomerProfileInteraction {
+  emailOpenRate?: string;
+  emailClickRate?: string;
+  callRecords: string[];
+  smsRecords: string[];
+  meetingRecords: string[];
+  preSalesNeeds: string[];
+  supportCases: string[];
+  issueReports: string[];
+  afterSalesNeeds: string[];
+  inquiryHistory: string[];
+  inquiryTone?: string;
+  preferredContactMethods: string[];
+  preferredContactTime?: string;
+  refuseCommunication?: boolean;
+  refuseCommunicationReason?: string;
+  recentConversationSummary?: string;
+}
+
+export interface BusinessCustomerProfileTransaction {
+  purchaseSummary?: string;
+  recentPurchases: string[];
+  totalOrderCount?: number;
+  totalSpend?: number;
+  averageOrderValue?: number;
+  lastPurchaseAt?: string;
+  orderStatuses: string[];
+  returnAndRefundHistory: string[];
+  paymentMethods: string[];
+  billingAddress?: string;
+  shippingAddresses: string[];
+  logisticsMethods: string[];
+  seasonalPurchasePatterns: string[];
+  upsellSignals: string[];
+  crossSellSignals: string[];
+}
+
+export interface BusinessCustomerProfileBehavior {
+  websiteBehaviors: string[];
+  interests: string[];
+  favoriteItems: string[];
+  abandonedCartSignals: string[];
+  subscriptionTopics: string[];
+  campaignParticipations: string[];
+  surveyResponses: string[];
+  couponEngagement: string[];
+  membershipLevel?: string;
+  loyaltyPoints?: number;
+  rewardProgramStatus?: string;
+}
+
+export interface BusinessCustomerProfileDerived {
+  completenessScore: number;
+  fitKeywords: string[];
+  excludedKeywords: string[];
+  pushSensitivity: "low" | "medium" | "high";
+  campaignAffinitySummary?: string;
+  lastAssessedAt?: number;
+}
+
+export interface BusinessCustomerCrmProfile {
+  basic: BusinessCustomerProfileBasicInfo;
+  interaction: BusinessCustomerProfileInteraction;
+  transaction: BusinessCustomerProfileTransaction;
+  behavior: BusinessCustomerProfileBehavior;
+  derived: BusinessCustomerProfileDerived;
+}
+
+export interface BusinessCustomerCampaignPreferences {
+  preferredTopics: string[];
+  excludedTopics: string[];
+  preferredChannels: BusinessCustomerPrimaryChannel[];
+  preferredFormats: BusinessContentFormat[];
+  preferredContactWindow?: string;
+  notes?: string;
+}
+
+export interface BusinessCustomerCampaignAssessment {
+  campaignBrief: string;
+  score: number;
+  decision: BusinessCustomerCampaignDecision;
+  reasons: string[];
+  matchedSignals: string[];
+  blockedSignals: string[];
+  createdAt: number;
+}
+
 export interface BusinessCustomer extends BusinessScopedEntity {
   name: string;
   tier: "prospect" | "active" | "vip";
-  primaryChannel: "telegram" | "line" | "feishu" | "wecom" | "email" | "web";
+  primaryChannel: BusinessCustomerPrimaryChannel;
   company?: string;
   ownerAgentId?: AgentId;
   tags: string[];
   summary: string;
+  crmProfile: BusinessCustomerCrmProfile;
+  channelIdentities: BusinessCustomerChannelIdentity[];
+  linkedSessionIds: string[];
+  profileCompletenessScore: number;
+  profileLastUpdatedAt: number;
+  campaignPreferences: BusinessCustomerCampaignPreferences;
+  lastCampaignAssessment?: BusinessCustomerCampaignAssessment;
 }
 
 export interface BusinessLead extends BusinessScopedEntity {
@@ -99,11 +243,12 @@ export interface BusinessContentTask extends BusinessScopedEntity {
 export interface BusinessChannelSession extends BusinessScopedEntity {
   title: string;
   customerId: string | null;
-  channel: "telegram" | "line" | "feishu" | "wecom" | "email" | "web";
+  channel: "telegram" | "line" | "feishu" | "wecom" | "dingtalk" | "wechat_official" | "qq" | "email" | "web";
   externalRef: string;
   serviceMode?: "owner" | "customer_service";
   accountLabel?: string;
   participantLabel?: string;
+  replyTargetId?: string;
   remoteUserId?: string;
   remoteThreadId?: string;
   lastExternalMessageId?: string;

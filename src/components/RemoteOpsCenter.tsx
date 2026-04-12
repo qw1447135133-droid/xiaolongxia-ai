@@ -24,6 +24,7 @@ import {
 } from "@/lib/project-context";
 import { getTeamOperatingTemplate, TEAM_OPERATING_SURFACES, type AutomationMode, type ControlCenterSectionId, PLATFORM_DEFINITIONS } from "@/store/types";
 import type { BusinessChannelSession, BusinessOperationRecord } from "@/types/business-entities";
+import type { BusinessContentChannel } from "@/types/business-entities";
 import { LaunchReadinessPanel } from "./LaunchReadinessPanel";
 
 type AuditFocusRequest = {
@@ -58,6 +59,7 @@ export function RemoteOpsCenter() {
   const [dispatchingKey, setDispatchingKey] = useState<string | null>(null);
   const [highlightedAuditLogId, setHighlightedAuditLogId] = useState<string | null>(null);
   const [actionFeedback, setActionFeedback] = useState<ActionFeedback | null>(null);
+  const [remoteWorklistSort, setRemoteWorklistSort] = useState<"time" | "customer">("time");
   const [publishLinkDrafts, setPublishLinkDrafts] = useState<Record<string, string>>({});
   const [publishExternalIdDrafts, setPublishExternalIdDrafts] = useState<Record<string, string>>({});
   const [publishTargetDrafts, setPublishTargetDrafts] = useState<Record<string, string>>({});
@@ -100,8 +102,7 @@ export function RemoteOpsCenter() {
   const setActiveControlCenterSection = useStore(s => s.setActiveControlCenterSection);
   const focusBusinessContentTask = useStore(s => s.focusBusinessContentTask);
   const focusWorkflowRun = useStore(s => s.focusWorkflowRun);
-  const setActiveChatSession = useStore(s => s.setActiveChatSession);
-  const setCommandDraft = useStore(s => s.setCommandDraft);
+  const openChannelSessionChat = useStore(s => s.openChannelSessionChat);
   const wsStatus = useStore(s => s.wsStatus);
 
   const openControlCenterSection = (section: ControlCenterSectionId) => {
@@ -117,15 +118,7 @@ export function RemoteOpsCenter() {
   };
 
   const handoffChannelSessionToChat = (session: BusinessChannelSession) => {
-    const linkedRun = session.lastExecutionRunId
-      ? executionRuns.find(run => run.id === session.lastExecutionRunId) ?? null
-      : null;
-    setActiveChatSession(activeSessionId);
-    setCommandDraft(
-      linkedRun
-        ? `继续接管这条渠道会话，并先处理失败或待人工节点：\n${linkedRun.instruction}`
-        : `继续接管这条渠道会话，并先回复用户当前问题：\n会话标题：${session.title}\n会话摘要：${session.summary}\n最近消息：${session.lastMessagePreview ?? "无"}`,
-    );
+    openChannelSessionChat(session.id);
     setTab("tasks");
   };
 
@@ -179,7 +172,7 @@ export function RemoteOpsCenter() {
     [chatSessions, currentProjectKey, executionRuns],
   );
   const recentProjectRuns = useMemo(
-    () => [...projectRuns].sort((left, right) => right.updatedAt - left.updatedAt).slice(0, 8),
+    () => [...projectRuns].sort((left, right) => right.updatedAt - left.updatedAt),
     [projectRuns],
   );
   const scopedMemories = useMemo(
@@ -231,6 +224,25 @@ export function RemoteOpsCenter() {
     () => filterByProjectScope(businessChannelSessions, currentProjectScope),
     [businessChannelSessions, currentProjectScope],
   );
+  const customerNameByEntityKey = useMemo(() => {
+    const entries = new Map<string, string>();
+    for (const customer of scopedCustomers) {
+      entries.set(`customer:${customer.id}`, customer.name);
+    }
+    for (const lead of scopedLeads) {
+      entries.set(`lead:${lead.id}`, lead.customerId ? (scopedCustomers.find(customer => customer.id === lead.customerId)?.name ?? lead.title) : lead.title);
+    }
+    for (const ticket of scopedTickets) {
+      entries.set(`ticket:${ticket.id}`, ticket.customerId ? (scopedCustomers.find(customer => customer.id === ticket.customerId)?.name ?? ticket.subject) : ticket.subject);
+    }
+    for (const task of scopedContentTasks) {
+      entries.set(`contentTask:${task.id}`, task.customerId ? (scopedCustomers.find(customer => customer.id === task.customerId)?.name ?? task.title) : task.title);
+    }
+    for (const session of scopedChannelSessions) {
+      entries.set(`channelSession:${session.id}`, session.customerId ? (scopedCustomers.find(customer => customer.id === session.customerId)?.name ?? session.title) : session.title);
+    }
+    return entries;
+  }, [scopedChannelSessions, scopedContentTasks, scopedCustomers, scopedLeads, scopedTickets]);
   const channelSessionWatchQueue = useMemo(
     () =>
       [...scopedChannelSessions]
@@ -239,8 +251,7 @@ export function RemoteOpsCenter() {
           const rightPriority = right.lastDeliveryStatus === "failed" ? 3 : right.status === "waiting" ? 2 : right.requiresReply || (right.unreadCount ?? 0) > 0 ? 1 : 0;
           if (leftPriority !== rightPriority) return rightPriority - leftPriority;
           return right.lastMessageAt - left.lastMessageAt;
-        })
-        .slice(0, 6),
+        }),
     [scopedChannelSessions],
   );
   const workflowRunMap = useMemo(
@@ -301,7 +312,7 @@ export function RemoteOpsCenter() {
   }, [scopedOperationLogs]);
   const recentExecutionCards = useMemo(
     () =>
-      recentProjectRuns.slice(0, 6).map(run => {
+      recentProjectRuns.map(run => {
         const linkedWorkflowRun = run.workflowRunId ? workflowRunMap[run.workflowRunId] ?? null : null;
         const linkedContentTask = run.entityType === "contentTask" && run.entityId
           ? contentTaskMap[run.entityId] ?? null
@@ -328,6 +339,132 @@ export function RemoteOpsCenter() {
       }),
     [contentApprovalStateMap, contentTaskMap, latestApprovalLogByContentTask, recentProjectRuns, scopedOperationLogs, workflowRunMap],
   );
+  const unifiedRemoteWorklist = useMemo(() => {
+    const approvalItems = approvalQueue.map(item => {
+      const linkedContentTask = item.entityType === "contentTask" ? contentTaskMap[item.entityId] ?? null : null;
+      const shouldQueuePublishWorkflow = linkedContentTask?.status === "scheduled" || linkedContentTask?.status === "review";
+      const approvalAt = item.approval?.requestedAt
+        ?? (item.entityType === "contentTask" ? latestApprovalLogByContentTask.get(item.entityId)?.updatedAt : undefined)
+        ?? 0;
+      const customerName = customerNameByEntityKey.get(`${item.entityType}:${item.entityId}`) ?? item.title;
+      return {
+        key: `approval:${item.entityType}:${item.entityId}`,
+        kind: "approval" as const,
+        sortAt: approvalAt,
+        customerName,
+        title: item.title,
+        subtitle: item.subtitle,
+        badgeTone: "partial" as const,
+        badgeLabel: item.approvalState === "approved" ? "已批准" : item.approvalState === "rejected" ? "已驳回" : "待审批",
+        note: item.nextAction,
+        meta: [`客户 ${customerName}`, `审批对象 ${item.entityType}`],
+        primaryAction: item.entityType === "contentTask" ? (() => {
+          const outcome = applyContentTaskApprovalDecision({
+            contentTaskId: item.entityId,
+            decision: "approved",
+          });
+          if (!outcome) return;
+          setActionFeedback({
+            title: outcome.title,
+            detail: outcome.detail,
+            entitySection: shouldQueuePublishWorkflow ? "workflow" : "execution",
+          });
+        }) : null,
+        primaryLabel: shouldQueuePublishWorkflow ? "批准并继续" : "批准",
+        secondaryAction: item.entityType === "contentTask" ? (() => {
+          const outcome = applyContentTaskApprovalDecision({
+            contentTaskId: item.entityId,
+            decision: "rejected",
+          });
+          if (!outcome) return;
+          setActionFeedback({
+            title: outcome.title,
+            detail: outcome.detail,
+            entitySection: "entities",
+          });
+        }) : null,
+        secondaryLabel: "驳回",
+        tertiaryAction: null,
+        tertiaryLabel: null,
+      };
+    });
+
+    const sessionItems = channelSessionWatchQueue.map(session => {
+      const stateLabel = getChannelSessionStateLabel(session);
+      const nextAction = getChannelSessionNextAction(session);
+      const linkedRun = session.lastExecutionRunId
+        ? executionRuns.find(run => run.id === session.lastExecutionRunId) ?? null
+        : null;
+      const customerName = customerNameByEntityKey.get(`channelSession:${session.id}`) ?? session.title;
+      return {
+        key: `session:${session.id}`,
+        kind: "session" as const,
+        sortAt: session.lastMessageAt,
+        customerName,
+        title: session.title,
+        subtitle: `${session.channel} · ${session.accountLabel ?? "默认账号"}`,
+        badgeTone: (session.lastDeliveryStatus === "failed" ? "blocked" : stateLabel === "已处理" ? "ready" : "partial") as "ready" | "partial" | "blocked",
+        badgeLabel: stateLabel,
+        note: session.lastMessagePreview ?? session.summary,
+        meta: [`客户 ${customerName}`, `下一步 ${nextAction}`, formatRemoteTimestamp(session.lastMessageAt)],
+        primaryAction: () => handoffChannelSessionToChat(session),
+        primaryLabel: "聊天接管",
+        secondaryAction: linkedRun ? (() => focusExecutionRun(linkedRun.id)) : null,
+        secondaryLabel: linkedRun ? "查看执行" : null,
+        tertiaryAction: null,
+        tertiaryLabel: null,
+      };
+    });
+
+    const executionItems = recentExecutionCards.map(({ run, linkedWorkflowRun, linkedContentTask }) => {
+      const customerName = run.entityType && run.entityId
+        ? customerNameByEntityKey.get(`${run.entityType}:${run.entityId}`) ?? (linkedContentTask?.title ?? linkedWorkflowRun?.title ?? "未命名对象")
+        : (linkedContentTask?.title ?? linkedWorkflowRun?.title ?? "未命名对象");
+      return {
+        key: `execution:${run.id}`,
+        kind: "execution" as const,
+        sortAt: run.updatedAt,
+        customerName,
+        title: linkedContentTask?.title ?? linkedWorkflowRun?.title ?? (run.instruction.slice(0, 48) || run.id),
+        subtitle: `${run.source} · ${formatRemoteTimestamp(run.updatedAt)}`,
+        badgeTone: getExecutionRunTone(run.status),
+        badgeLabel: getExecutionRunLabel(run.status),
+        note: linkedContentTask ? `当前内容状态: ${linkedContentTask.status}` : run.instruction.slice(0, 110),
+        meta: [`客户 ${customerName}`, run.workflowRunId ? "含 Workflow" : "无 Workflow"],
+        primaryAction: () => focusExecutionRun(run.id),
+        primaryLabel: "查看执行",
+        secondaryAction: () => setTab("tasks"),
+        secondaryLabel: "聊天续跑",
+        tertiaryAction: run.workflowRunId ? (() => {
+          focusWorkflowRun(run.workflowRunId!);
+          openControlCenterSection("workflow");
+        }) : null,
+        tertiaryLabel: run.workflowRunId ? "Workflow" : null,
+      };
+    });
+
+    const items = [...approvalItems, ...sessionItems, ...executionItems];
+    return items.sort((left, right) => {
+      if (remoteWorklistSort === "customer") {
+        const nameOrder = left.customerName.localeCompare(right.customerName, "zh-CN");
+        if (nameOrder !== 0) return nameOrder;
+      }
+      return right.sortAt - left.sortAt;
+    });
+  }, [
+    approvalQueue,
+    applyContentTaskApprovalDecision,
+    channelSessionWatchQueue,
+    contentTaskMap,
+    customerNameByEntityKey,
+    executionRuns,
+    focusWorkflowRun,
+    latestApprovalLogByContentTask,
+    openControlCenterSection,
+    recentExecutionCards,
+    remoteWorklistSort,
+    setTab,
+  ]);
   const contentOpsSummary = useMemo(() => {
     const publishedTasks = scopedContentTasks.filter(task => task.status === "published").length;
     const publishSuccessCount = scopedContentTasks.reduce(
@@ -621,9 +758,6 @@ export function RemoteOpsCenter() {
       && autoDispatchScheduledTasks === remoteRecommendation.autoDispatchScheduledTasks
     : false;
 
-  const compactApprovalQueue = approvalQueue.slice(0, 3);
-  const compactSessionQueue = channelSessionWatchQueue.slice(0, 3);
-  const compactExecutionQueue = recentExecutionCards.slice(0, 3);
   const automationModePresets: Record<
     AutomationMode,
     {
@@ -785,187 +919,78 @@ export function RemoteOpsCenter() {
         </div>
       ) : null}
 
-      <div
-        className="control-center__columns"
-        style={{
-          gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
-          minHeight: 0,
-          alignItems: "stretch",
-        }}
-      >
-        <div className="control-center__panel" style={{ minHeight: 0, overflow: "hidden", display: "grid", gridTemplateRows: "auto minmax(0, 1fr)" }}>
-          <div>
-            <div className="control-center__panel-title">审批队列</div>
-            <div className="control-center__copy" style={{ marginTop: 4 }}>只保留最需要处理的审批对象。</div>
+      <div className="control-center__panel" style={{ minHeight: 0, overflow: "hidden", display: "grid", gridTemplateRows: "auto minmax(0, 1fr)" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+          <div style={{ display: "grid", gap: 4 }}>
+            <div className="control-center__panel-title">统一值守历史</div>
+            <div className="control-center__copy">审批、会话值守和最近执行全部合并到一条工作流中查看。</div>
           </div>
-          <div className="control-center__approval-list" style={{ minHeight: 0, overflow: "auto" }}>
-            {compactApprovalQueue.length === 0 ? (
-              <div className="control-center__copy">当前没有待处理审批。</div>
-            ) : (
-              compactApprovalQueue.map(item => {
-                const linkedContentTask = item.entityType === "contentTask" ? contentTaskMap[item.entityId] : undefined;
-                const shouldQueuePublishWorkflow = linkedContentTask?.status === "scheduled" || linkedContentTask?.status === "review";
-                return (
-                  <article key={`${item.entityType}-${item.entityId}`} className="control-center__approval-card">
-                    <div className="control-center__approval-head">
-                      <div>
-                        <div className="control-center__panel-title">{item.title}</div>
-                        <div className="control-center__copy">{item.subtitle}</div>
-                      </div>
-                      <span className="control-center__scenario-badge is-partial">待审批</span>
-                    </div>
-                    <div className="control-center__dispatch-note">{item.nextAction}</div>
-                    <div className="control-center__quick-actions" style={{ gap: 8 }}>
-                      <button
-                        type="button"
-                        className="btn-primary"
-                        onClick={() => {
-                          const outcome = applyContentTaskApprovalDecision({
-                            contentTaskId: item.entityId,
-                            decision: "approved",
-                          });
-                          if (!outcome) return;
-                          setActionFeedback({
-                            title: outcome.title,
-                            detail: outcome.detail,
-                            entitySection: shouldQueuePublishWorkflow ? "workflow" : "execution",
-                          });
-                        }}
-                      >
-                        {shouldQueuePublishWorkflow ? "批准并继续" : "批准"}
-                      </button>
-                      <button
-                        type="button"
-                        className="btn-ghost"
-                        onClick={() => {
-                          const outcome = applyContentTaskApprovalDecision({
-                            contentTaskId: item.entityId,
-                            decision: "rejected",
-                          });
-                          if (!outcome) return;
-                          setActionFeedback({
-                            title: outcome.title,
-                            detail: outcome.detail,
-                            entitySection: "entities",
-                          });
-                        }}
-                      >
-                        驳回
-                      </button>
-                    </div>
-                  </article>
-                );
-              })
-            )}
+          <div className="control-center__quick-actions" style={{ gap: 8 }}>
+            <button
+              type="button"
+              className={`control-center__mode-pill ${remoteWorklistSort === "time" ? "is-active" : ""}`}
+              onClick={() => setRemoteWorklistSort("time")}
+            >
+              按时间
+            </button>
+            <button
+              type="button"
+              className={`control-center__mode-pill ${remoteWorklistSort === "customer" ? "is-active" : ""}`}
+              onClick={() => setRemoteWorklistSort("customer")}
+            >
+              按客户
+            </button>
           </div>
         </div>
 
-        <div className="control-center__panel" style={{ minHeight: 0, overflow: "hidden", display: "grid", gridTemplateRows: "auto minmax(0, 1fr)" }}>
-          <div>
-            <div className="control-center__panel-title">会话值守</div>
-            <div className="control-center__copy" style={{ marginTop: 4 }}>优先关注待回复、失败和需要接管的会话。</div>
-          </div>
-          <div className="control-center__dispatch-list" style={{ minHeight: 0, overflow: "auto" }}>
-            {compactSessionQueue.length === 0 ? (
-              <div className="control-center__copy">当前没有需要值守的会话。</div>
-            ) : (
-              compactSessionQueue.map(session => {
-                const stateLabel = getChannelSessionStateLabel(session);
-                const nextAction = getChannelSessionNextAction(session);
-                const needsDesktopTakeover = shouldSuggestDesktopTakeover(session);
-                const linkedRun = session.lastExecutionRunId
-                  ? executionRuns.find(run => run.id === session.lastExecutionRunId) ?? null
-                  : null;
-
-                return (
-                  <article key={session.id} className="control-center__dispatch-card">
-                    <div className="control-center__approval-head">
-                      <div>
-                        <div className="control-center__panel-title">{session.title}</div>
-                        <div className="control-center__copy">{session.channel} · {session.accountLabel ?? "默认账号"}</div>
-                      </div>
-                      <span className={`control-center__scenario-badge is-${session.lastDeliveryStatus === "failed" ? "blocked" : stateLabel === "已处理" ? "ready" : "partial"}`}>
-                        {stateLabel}
+        <div className="control-center__dispatch-list" style={{ minHeight: 0, overflow: "auto", marginTop: 14 }}>
+          {unifiedRemoteWorklist.length === 0 ? (
+            <div className="control-center__copy">当前项目还没有可展示的远程值守记录。</div>
+          ) : (
+            unifiedRemoteWorklist.map(item => (
+              <article key={item.key} className="control-center__dispatch-card">
+                <div className="control-center__approval-head">
+                  <div style={{ display: "grid", gap: 6 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                      <span className="control-center__entity-pill">
+                        {item.kind === "approval" ? "审批" : item.kind === "session" ? "会话" : "执行"}
                       </span>
+                      <div className="control-center__panel-title">{item.title}</div>
                     </div>
-                    <div className="control-center__dispatch-note">{session.lastMessagePreview ?? session.summary}</div>
-                    <div className="control-center__dispatch-meta">
-                      <span>下一步: {nextAction}</span>
-                      <span>{formatRemoteTimestamp(session.lastMessageAt)}</span>
-                    </div>
-                    <div className="control-center__quick-actions" style={{ gap: 8 }}>
-                      <button type="button" className="btn-handoff" onClick={() => handoffChannelSessionToChat(session)}>
-                        聊天接管
-                      </button>
-                      {linkedRun ? (
-                        <button type="button" className="btn-ghost" onClick={() => focusExecutionRun(linkedRun.id)}>
-                          查看执行
-                        </button>
-                      ) : null}
-                      {needsDesktopTakeover ? (
-                        <button type="button" className="btn-ghost" onClick={() => openControlCenterSection("desktop")}>
-                          桌面接管
-                        </button>
-                      ) : null}
-                    </div>
-                  </article>
-                );
-              })
-            )}
-          </div>
-        </div>
-
-        <div className="control-center__panel" style={{ minHeight: 0, overflow: "hidden", display: "grid", gridTemplateRows: "auto minmax(0, 1fr)" }}>
-          <div>
-            <div className="control-center__panel-title">最近执行</div>
-            <div className="control-center__copy" style={{ marginTop: 4 }}>只看最近执行链路和恢复入口。</div>
-          </div>
-          <div className="control-center__dispatch-list" style={{ minHeight: 0, overflow: "auto" }}>
-            {compactExecutionQueue.length === 0 ? (
-              <div className="control-center__copy">当前项目还没有最近执行记录。</div>
-            ) : (
-              compactExecutionQueue.map(({ run, linkedWorkflowRun, linkedContentTask }) => (
-                <article key={run.id} className="control-center__dispatch-card">
-                  <div className="control-center__approval-head">
-                    <div>
-                      <div className="control-center__panel-title">
-                        {linkedContentTask?.title ?? linkedWorkflowRun?.title ?? (run.instruction.slice(0, 48) || run.id)}
-                      </div>
-                      <div className="control-center__copy">{formatRemoteTimestamp(run.updatedAt)} · {run.source}</div>
-                    </div>
-                    <span className={`control-center__scenario-badge is-${getExecutionRunTone(run.status)}`}>
-                      {getExecutionRunLabel(run.status)}
-                    </span>
+                    <div className="control-center__copy">{item.subtitle}</div>
                   </div>
-                  <div className="control-center__dispatch-note">
-                    {linkedContentTask
-                      ? `当前内容状态: ${linkedContentTask.status}`
-                      : run.instruction.slice(0, 110)}
-                  </div>
-                  <div className="control-center__quick-actions" style={{ gap: 8 }}>
-                    <button type="button" className="btn-primary" onClick={() => focusExecutionRun(run.id)}>
-                      查看执行
+                  <span className={`control-center__scenario-badge is-${item.badgeTone}`}>{item.badgeLabel}</span>
+                </div>
+                <div className="control-center__dispatch-note">{item.note}</div>
+                <div className="control-center__dispatch-meta">
+                  {item.meta.map(meta => (
+                    <span key={`${item.key}-${meta}`}>{meta}</span>
+                  ))}
+                </div>
+                <div className="control-center__quick-actions" style={{ gap: 8 }}>
+                  {item.primaryAction && item.primaryLabel ? (
+                    <button
+                      type="button"
+                      className={item.kind === "session" ? "btn-handoff" : "btn-primary"}
+                      onClick={item.primaryAction}
+                    >
+                      {item.primaryLabel}
                     </button>
-                    <button type="button" className="btn-ghost" onClick={() => setTab("tasks")}>
-                      聊天续跑
+                  ) : null}
+                  {item.secondaryAction && item.secondaryLabel ? (
+                    <button type="button" className="btn-ghost" onClick={item.secondaryAction}>
+                      {item.secondaryLabel}
                     </button>
-                    {run.workflowRunId ? (
-                      <button
-                        type="button"
-                        className="btn-ghost"
-                        onClick={() => {
-                          focusWorkflowRun(run.workflowRunId!);
-                          openControlCenterSection("workflow");
-                        }}
-                      >
-                        Workflow
-                      </button>
-                    ) : null}
-                  </div>
-                </article>
-              ))
-            )}
-          </div>
+                  ) : null}
+                  {item.tertiaryAction && item.tertiaryLabel ? (
+                    <button type="button" className="btn-ghost" onClick={item.tertiaryAction}>
+                      {item.tertiaryLabel}
+                    </button>
+                  ) : null}
+                </div>
+              </article>
+            ))
+          )}
         </div>
       </div>
     </div>
@@ -1098,7 +1123,7 @@ function splitPublishLinks(value: string | undefined) {
 }
 
 function resolvePublishTarget(
-  targets: Array<{ channel: "x" | "telegram" | "line" | "feishu" | "wecom" | "blog"; accountLabel: string }>,
+  targets: Array<{ channel: BusinessContentChannel; accountLabel: string }>,
   encodedTarget?: string,
 ) {
   if (!encodedTarget) return targets[0];

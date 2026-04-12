@@ -85,7 +85,7 @@ export function LaunchReadinessPanel({
       label: "连接器",
       ok: enabledPlatforms.length > 0 && operationalPlatforms.length > 0,
       detail: `${operationalPlatforms.length}/${enabledPlatforms.length} 已进入可运行状态`,
-      section: "channels" as const,
+      section: "entities" as const,
     },
     {
       id: "recovery",
@@ -113,7 +113,7 @@ export function LaunchReadinessPanel({
       label: "会话待办",
       ok: pendingReplySessions === 0,
       detail: pendingReplySessions === 0 ? "当前没有待回复会话" : `${pendingReplySessions} 个会话仍待回复或未读`,
-      section: "channels" as const,
+      section: "entities" as const,
     },
   ];
 
@@ -137,7 +137,7 @@ export function LaunchReadinessPanel({
         detail: enabledPlatforms.length === 0
           ? "当前还没有启用任何真实连接器。"
           : `${connectorBlockers.length} 个连接器仍处于异常、等待回调或未完成握手状态。`,
-        section: "channels" as const,
+        section: "entities" as const,
       }
       : null,
     recoveryRuns.length > 0
@@ -173,7 +173,7 @@ export function LaunchReadinessPanel({
         severity: "warning" as const,
         title: "渠道会话待回复",
         detail: `${pendingReplySessions} 个渠道会话仍有未读或待回复消息。`,
-        section: "channels" as const,
+        section: "entities" as const,
       }
       : null,
   ] as Array<RiskItem | null>).filter((item): item is RiskItem => item !== null);
@@ -662,7 +662,7 @@ function getLaunchAdvice(locale: ReturnType<typeof useStore.getState>["locale"],
             ja: "3. 模擬受信またはテスト送信で、会話がチャネル面に入ることを確認します。",
           }),
         ],
-        section: "channels" as const,
+        section: "entities" as const,
       };
     case "recovery":
     case "risk-recovery":
@@ -793,10 +793,10 @@ function getLaunchAdvice(locale: ReturnType<typeof useStore.getState>["locale"],
         }),
         steps: [
           pickLocaleText(locale, {
-            "zh-CN": "1. 先到渠道中心或远程值守里找出最优先的会话。",
-            "zh-TW": "1. 先到渠道中心或遠程值守裡找出最優先的會話。",
-            en: "1. Find the highest-priority sessions in channels or remote ops.",
-            ja: "1. チャネル面または遠隔運営で優先度の高い会話を見つけます。",
+            "zh-CN": "1. 先到业务实体或远程值守里找出最优先的客户会话。",
+            "zh-TW": "1. 先到業務實體或遠程值守裡找出最優先的客戶會話。",
+            en: "1. Find the highest-priority customer conversations in business entities or remote ops.",
+            ja: "1. 業務エンティティまたは遠隔運営で優先度の高い顧客会話を見つけます。",
           }),
           pickLocaleText(locale, {
             "zh-CN": "2. 能自动回复的继续自动化，低置信度的回聊天接管。",
@@ -811,7 +811,7 @@ function getLaunchAdvice(locale: ReturnType<typeof useStore.getState>["locale"],
             ja: "3. 未読と返信待ちが解消すると、この項目は正常に戻ります。",
           }),
         ],
-        section: "channels" as const,
+        section: "entities" as const,
       };
   }
 }

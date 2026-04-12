@@ -344,6 +344,21 @@ export interface AgentSkill {
 export const AGENT_SKILLS = SKILL_CATALOG as AgentSkill[];
 
 export type AgentSkillId = string;
+export type AgentToolAccess = "standard" | "meeting_only" | "no_desktop" | "full";
+export type AgentMemoryWriteScope = "none" | "execution_events" | "project_memory";
+export type AgentEscalationMode = "auto" | "manual_first";
+export type AgentResponseStyle = "neutral" | "assertive" | "combative";
+export type AgentMeetingRoleMode = "participant" | "judge";
+
+export interface AgentGovernance {
+  toolAccess: AgentToolAccess;
+  memoryWriteScope: AgentMemoryWriteScope;
+  escalationMode: AgentEscalationMode;
+  responseStyle: AgentResponseStyle;
+  meetingRoleMode: AgentMeetingRoleMode;
+  forbiddenTopics: string[];
+  stopConditions: string[];
+}
 
 export interface AgentConfig {
   id: AgentId;
@@ -353,6 +368,7 @@ export interface AgentConfig {
   model: string;
   providerId: string;
   skills: AgentSkillId[];
+  governance: AgentGovernance;
 }
 
 export type ModelPresetTier = "reasoning" | "balanced" | "budget";
@@ -413,6 +429,72 @@ export const AGENT_META: Record<AgentId, { name: string; emoji: string; badge: s
     avatarSrc: "/agents/greeter.webp",
   },
 };
+
+export const AGENT_GOVERNANCE_PRESETS: Record<AgentId, AgentGovernance> = {
+  orchestrator: {
+    toolAccess: "full",
+    memoryWriteScope: "project_memory",
+    escalationMode: "auto",
+    responseStyle: "neutral",
+    meetingRoleMode: "judge",
+    forbiddenTopics: [],
+    stopConditions: ["验证码", "OTP", "2FA", "高风险转账", "删除客户数据"],
+  },
+  explorer: {
+    toolAccess: "no_desktop",
+    memoryWriteScope: "execution_events",
+    escalationMode: "manual_first",
+    responseStyle: "assertive",
+    meetingRoleMode: "participant",
+    forbiddenTopics: [],
+    stopConditions: ["验证码", "OTP", "2FA"],
+  },
+  writer: {
+    toolAccess: "no_desktop",
+    memoryWriteScope: "execution_events",
+    escalationMode: "manual_first",
+    responseStyle: "combative",
+    meetingRoleMode: "participant",
+    forbiddenTopics: [],
+    stopConditions: ["验证码", "OTP", "2FA"],
+  },
+  designer: {
+    toolAccess: "no_desktop",
+    memoryWriteScope: "execution_events",
+    escalationMode: "manual_first",
+    responseStyle: "assertive",
+    meetingRoleMode: "participant",
+    forbiddenTopics: [],
+    stopConditions: ["验证码", "OTP", "2FA"],
+  },
+  performer: {
+    toolAccess: "no_desktop",
+    memoryWriteScope: "execution_events",
+    escalationMode: "manual_first",
+    responseStyle: "assertive",
+    meetingRoleMode: "participant",
+    forbiddenTopics: [],
+    stopConditions: ["验证码", "OTP", "2FA"],
+  },
+  greeter: {
+    toolAccess: "no_desktop",
+    memoryWriteScope: "execution_events",
+    escalationMode: "manual_first",
+    responseStyle: "assertive",
+    meetingRoleMode: "participant",
+    forbiddenTopics: [],
+    stopConditions: ["验证码", "OTP", "2FA"],
+  },
+};
+
+export function createDefaultAgentGovernance(agentId: AgentId): AgentGovernance {
+  const preset = AGENT_GOVERNANCE_PRESETS[agentId];
+  return {
+    ...preset,
+    forbiddenTopics: [...preset.forbiddenTopics],
+    stopConditions: [...preset.stopConditions],
+  };
+}
 
 export const PROVIDER_PRESETS: Omit<ModelProvider, "apiKey">[] = [
   { id: "anthropic", name: "Anthropic (Claude)", baseUrl: "https://api.anthropic.com" },
@@ -943,8 +1025,25 @@ export interface PlatformDef {
   name: string;
   emoji: string;
   description: string;
+  mode: PlatformConnectionMode;
   webhookBased: boolean;
+  capabilities: PlatformCapabilitySet;
   fields: PlatformFieldDef[];
+}
+
+export type PlatformConnectionMode = "webhook" | "long-poll" | "websocket" | "hybrid";
+
+export interface PlatformCapabilitySet {
+  supportsWebhook: boolean;
+  supportsPush: boolean;
+  supportsFileSend: boolean;
+  supportsMediaSend: boolean;
+  supportsGroupChat: boolean;
+  supportsDirectChat: boolean;
+  supportsThreadReply: boolean;
+  supportsOwnerConversation: boolean;
+  supportsSessionResume: boolean;
+  supportsProbe: boolean;
 }
 
 export interface PlatformConfig {
@@ -997,7 +1096,20 @@ export const PLATFORM_DEFINITIONS: PlatformDef[] = [
     name: "Telegram",
     emoji: "✈️",
     description: "通过 Telegram 机器人接收指令，智能体执行后自动回复。",
+    mode: "long-poll",
     webhookBased: false,
+    capabilities: {
+      supportsWebhook: false,
+      supportsPush: true,
+      supportsFileSend: true,
+      supportsMediaSend: true,
+      supportsGroupChat: true,
+      supportsDirectChat: true,
+      supportsThreadReply: true,
+      supportsOwnerConversation: true,
+      supportsSessionResume: false,
+      supportsProbe: true,
+    },
     fields: [
       {
         key: "botToken",
@@ -1036,7 +1148,20 @@ export const PLATFORM_DEFINITIONS: PlatformDef[] = [
     name: "LINE",
     emoji: "📱",
     description: "通过 LINE 官方账号 Webhook 接收消息并回复。",
+    mode: "webhook",
     webhookBased: true,
+    capabilities: {
+      supportsWebhook: true,
+      supportsPush: true,
+      supportsFileSend: false,
+      supportsMediaSend: false,
+      supportsGroupChat: true,
+      supportsDirectChat: true,
+      supportsThreadReply: false,
+      supportsOwnerConversation: true,
+      supportsSessionResume: false,
+      supportsProbe: true,
+    },
     fields: [
       {
         key: "channelAccessToken",
@@ -1074,7 +1199,20 @@ export const PLATFORM_DEFINITIONS: PlatformDef[] = [
     name: "飞书",
     emoji: "🪽",
     description: "通过飞书机器人 Webhook 接收消息并回复。",
+    mode: "webhook",
     webhookBased: true,
+    capabilities: {
+      supportsWebhook: true,
+      supportsPush: true,
+      supportsFileSend: true,
+      supportsMediaSend: true,
+      supportsGroupChat: true,
+      supportsDirectChat: true,
+      supportsThreadReply: true,
+      supportsOwnerConversation: true,
+      supportsSessionResume: false,
+      supportsProbe: true,
+    },
     fields: [
       {
         key: "appId",
@@ -1132,7 +1270,20 @@ export const PLATFORM_DEFINITIONS: PlatformDef[] = [
     name: "企业微信",
     emoji: "💼",
     description: "通过企业微信自建应用接收员工消息。",
+    mode: "webhook",
     webhookBased: true,
+    capabilities: {
+      supportsWebhook: true,
+      supportsPush: true,
+      supportsFileSend: false,
+      supportsMediaSend: false,
+      supportsGroupChat: false,
+      supportsDirectChat: true,
+      supportsThreadReply: false,
+      supportsOwnerConversation: true,
+      supportsSessionResume: false,
+      supportsProbe: true,
+    },
     fields: [
       {
         key: "corpId",
@@ -1180,6 +1331,305 @@ export const PLATFORM_DEFINITIONS: PlatformDef[] = [
         key: "ownerUserIds",
         label: "本人企业微信 UserID 列表",
         placeholder: "zhangsan, lisi",
+        required: false,
+        hint: "这些 ID 的对话不会走客服模式，可用逗号或换行分隔",
+      },
+    ],
+  },
+  {
+      id: "dingtalk",
+      name: "钉钉",
+      emoji: "📌",
+      description: "钉钉应用机器人统一接入位点，现已支持 Webhook 文本入站、SessionWebhook 回复与凭证健康探测。",
+    mode: "webhook",
+    webhookBased: true,
+    capabilities: {
+      supportsWebhook: true,
+      supportsPush: true,
+      supportsFileSend: false,
+      supportsMediaSend: false,
+      supportsGroupChat: true,
+      supportsDirectChat: true,
+      supportsThreadReply: false,
+      supportsOwnerConversation: true,
+      supportsSessionResume: false,
+      supportsProbe: true,
+    },
+    fields: [
+      {
+        key: "clientId",
+        label: "应用 Client ID / AppKey",
+        placeholder: "dingxxxxxxxxxxxxxxxx",
+        required: true,
+        hint: "钉钉开放平台应用凭证",
+      },
+      {
+        key: "clientSecret",
+        label: "应用 Client Secret / AppSecret",
+        placeholder: "应用密钥...",
+        required: true,
+        secret: true,
+      },
+      {
+        key: "token",
+        label: "回调令牌（Token）",
+        placeholder: "自定义回调 Token",
+        required: false,
+        secret: true,
+      },
+      {
+        key: "aesKey",
+        label: "消息加密 Key（AES Key）",
+        placeholder: "43 位字符...",
+        required: false,
+        secret: true,
+      },
+        {
+          key: "defaultOpenConversationId",
+          label: "默认会话 ID",
+          placeholder: "cidxxxxxxxx",
+          required: false,
+          hint: "用于联调时指定默认会话",
+        },
+        {
+          key: "defaultWebhookUrl",
+          label: "默认机器人 Webhook",
+          placeholder: "https://api.dingtalk.com/v1.0/robot/oToMessages/batchSend?... 或 sessionWebhook",
+          required: false,
+          secret: true,
+          hint: "推荐配置测试群/默认会话的 Webhook，便于主动联调与回放",
+        },
+        {
+          key: "defaultRobotCode",
+          label: "默认 RobotCode",
+          placeholder: "dingxxxxxxxxxxxxxxxx",
+          required: false,
+          hint: "用于 openConversationId 主动发群消息；若已收到真实群消息也会自动缓存 robotCode",
+        },
+        {
+          key: "webhookUrl",
+          label: "Webhook 回调地址",
+        placeholder: "https://your-domain.com/webhooks/dingtalk",
+        required: false,
+        hint: "用于标记已经配置公网回调地址",
+      },
+      {
+        key: "ownerUserIds",
+        label: "本人钉钉用户 ID 列表",
+        placeholder: "manager01, director02",
+        required: false,
+        hint: "这些 ID 的对话不会走客服模式，可用逗号或换行分隔",
+      },
+    ],
+  },
+  {
+      id: "wechat_official",
+      name: "微信公众号",
+      emoji: "🟢",
+      description: "微信公众号 / 服务号统一接入位点，现已支持明文 Webhook 文本入站、签名校验与客服文本外发。",
+    mode: "webhook",
+    webhookBased: true,
+    capabilities: {
+      supportsWebhook: true,
+      supportsPush: true,
+      supportsFileSend: false,
+      supportsMediaSend: false,
+      supportsGroupChat: true,
+      supportsDirectChat: true,
+      supportsThreadReply: false,
+      supportsOwnerConversation: true,
+      supportsSessionResume: false,
+      supportsProbe: true,
+    },
+    fields: [
+      {
+        key: "appId",
+        label: "公众号 App ID",
+        placeholder: "wx1234567890abcdef",
+        required: true,
+      },
+      {
+        key: "appSecret",
+        label: "公众号 App Secret",
+        placeholder: "公众号密钥...",
+        required: true,
+        secret: true,
+      },
+      {
+        key: "token",
+        label: "回调 Token",
+        placeholder: "自定义 Token",
+        required: true,
+        secret: true,
+      },
+      {
+        key: "encodingAESKey",
+        label: "消息加密密钥（EncodingAESKey）",
+        placeholder: "43 位字符...",
+        required: false,
+        secret: true,
+      },
+      {
+        key: "defaultOpenId",
+        label: "默认用户 OpenID",
+        placeholder: "oAbCdEfGhIjKlMnOpQrStUvWxYz",
+        required: false,
+        hint: "用于联调时指定默认会话",
+      },
+      {
+        key: "webhookUrl",
+        label: "Webhook 回调地址",
+        placeholder: "https://your-domain.com/webhooks/wechat-official",
+        required: false,
+        hint: "用于标记已经配置公网回调地址",
+      },
+      {
+        key: "ownerUserIds",
+        label: "本人 OpenID 列表",
+        placeholder: "oAbCdEfGhIjKlMnOpQrStUvWxYz",
+        required: false,
+        hint: "这些 ID 的对话不会走客服模式，可用逗号或换行分隔",
+      },
+    ],
+  },
+    {
+      id: "qq",
+      name: "QQ",
+      emoji: "🐧",
+      description: "QQ 本地桥接统一接入位点，现已支持桥接程序推送入站消息并拉取 AI 回复。",
+      mode: "webhook",
+      webhookBased: true,
+      capabilities: {
+        supportsWebhook: true,
+        supportsPush: true,
+        supportsFileSend: false,
+        supportsMediaSend: false,
+        supportsGroupChat: true,
+        supportsDirectChat: true,
+        supportsThreadReply: false,
+        supportsOwnerConversation: true,
+        supportsSessionResume: true,
+        supportsProbe: true,
+      },
+      fields: [
+        {
+          key: "bridgeName",
+          label: "桥接名称",
+          placeholder: "NapCat / LLOneBot / 自定义 QQ Bridge",
+          required: true,
+          hint: "仅用于标识当前接入的是哪条本地 QQ 桥接链路",
+        },
+        {
+          key: "bridgeSecret",
+          label: "桥接密钥（Bridge Secret）",
+          placeholder: "自定义桥接密钥...",
+          required: true,
+          secret: true,
+        },
+        {
+          key: "appId",
+          label: "预留 Bot App ID",
+          placeholder: "1024xxxxxx",
+          required: false,
+          hint: "为后续官方 QQ Bot 网关模式预留，当前桥接模式不强依赖",
+        },
+        {
+          key: "botToken",
+          label: "预留 Bot Token",
+          placeholder: "QQ Bot Token",
+          required: false,
+          secret: true,
+          hint: "为后续官方 QQ Bot 网关模式预留，当前桥接模式不强依赖",
+        },
+        {
+          key: "defaultOpenId",
+          label: "默认用户 / 群会话 ID",
+          placeholder: "12345678 / group_9988",
+          required: false,
+          hint: "用于联调时指定默认会话",
+        },
+        {
+          key: "webhookUrl",
+          label: "Bridge 入站地址",
+          placeholder: "https://your-domain.com/webhook/qq",
+          required: false,
+          hint: "给本地 QQ 桥接程序推送消息使用",
+        },
+        {
+          key: "ownerUserIds",
+        label: "本人 QQ 标识列表",
+        placeholder: "12345678, 87654321",
+        required: false,
+        hint: "这些 ID 的对话不会走客服模式，可用逗号或换行分隔",
+      },
+    ],
+  },
+  {
+    id: "web",
+      name: "网页会话",
+      emoji: "🌐",
+      description: "官网聊天框 / H5 客服窗口 / Web Widget 的统一接入位点，现已支持真实入站、AI 回消息拉取与轻量挂件嵌入。",
+    mode: "webhook",
+    webhookBased: true,
+    capabilities: {
+      supportsWebhook: true,
+      supportsPush: true,
+      supportsFileSend: false,
+      supportsMediaSend: false,
+      supportsGroupChat: false,
+      supportsDirectChat: true,
+      supportsThreadReply: false,
+      supportsOwnerConversation: true,
+      supportsSessionResume: true,
+      supportsProbe: true,
+    },
+    fields: [
+      {
+        key: "siteName",
+        label: "站点名称",
+        placeholder: "starcraw.com",
+        required: true,
+      },
+        {
+          key: "signingSecret",
+          label: "签名密钥（Signing Secret）",
+          placeholder: "自定义签名密钥...",
+          required: true,
+          secret: true,
+        },
+        {
+          key: "publicWidgetToken",
+          label: "公开挂件令牌（Widget Token）",
+          placeholder: "widget_live_xxx",
+          required: false,
+          secret: true,
+          hint: "给官网/H5 挂件使用，避免直接暴露 signingSecret",
+        },
+        {
+          key: "allowedOrigins",
+          label: "允许挂件来源域名",
+          placeholder: "https://www.starcraw.com, app.starcraw.com",
+          required: false,
+          hint: "多个来源可用逗号或换行分隔；支持完整 origin 或纯域名",
+        },
+        {
+          key: "defaultVisitorId",
+          label: "默认访客 ID",
+        placeholder: "visitor_demo_001",
+        required: false,
+        hint: "用于联调时指定默认访客",
+      },
+      {
+        key: "webhookUrl",
+        label: "Webhook 回调地址",
+        placeholder: "https://your-domain.com/webhooks/web",
+        required: false,
+        hint: "用于标记已经配置公网回调地址",
+      },
+      {
+        key: "ownerUserIds",
+        label: "本人访客 / 坐席 ID 列表",
+        placeholder: "owner_demo_001",
         required: false,
         hint: "这些 ID 的对话不会走客服模式，可用逗号或换行分隔",
       },

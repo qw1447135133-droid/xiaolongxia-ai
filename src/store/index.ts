@@ -3,6 +3,7 @@ import { persist } from "zustand/middleware";
 import type {
   AgentConfig,
   AgentId,
+  AgentGovernance,
   AgentState,
   AgentStatus,
   Activity,
@@ -36,7 +37,8 @@ import type {
   TeamOperatingTemplateId,
   UiLocale,
 } from "./types";
-import { AGENT_META, AGENT_SKILLS, PLATFORM_DEFINITIONS } from "./types";
+import { AGENT_META, AGENT_SKILLS, PLATFORM_DEFINITIONS, createDefaultAgentGovernance } from "./types";
+import type { ContextMentionRef } from "@/types/context-mentions";
 import {
   type ChatSession,
   DEFAULT_CHAT_TITLE,
@@ -54,6 +56,14 @@ import {
   getNextLeadStage,
   getNextTicketStatus,
 } from "@/lib/business-entities";
+import {
+  applyChannelSessionToCustomerProfile,
+  buildCustomerIdentityFromSession,
+  findCustomerByChannelSession,
+  inferCustomerDisplayNameFromSession,
+  normalizeBusinessCustomer,
+  scoreCustomerCampaignFit,
+} from "@/lib/customer-profile-schema";
 import {
   buildContentChannelGovernancePlan,
   getProjectContentChannelSummaries,
@@ -161,6 +171,7 @@ interface ChatSlice {
   chatSessions: ChatSession[];
   activeSessionId: string;
   createChatSession: (projectRoot?: string | null) => void;
+  openChannelSessionChat: (channelSessionId: string) => void;
   setActiveChatSession: (id: string) => void;
   deleteChatSession: (id: string) => void;
   renameChatSession: (id: string, title: string) => void;
@@ -179,6 +190,13 @@ interface TaskNavigationSlice {
   navigateToTask: (taskId: string) => void;
   finishPendingScroll: () => void;
   clearHighlightTask: () => void;
+}
+
+interface TaskSearchBridgeSlice {
+  pendingTaskSearchQuery: string;
+  pendingTaskSearchSessionId: string | null;
+  seedTaskSearch: (sessionId: string, query: string) => void;
+  clearTaskSearchSeed: () => void;
 }
 
 interface CostSlice {
@@ -200,19 +218,31 @@ export interface MeetingRecord {
   summary: string;
   speeches: MeetingSpeech[];
   finishedAt: number;
+  sessionId?: string | null;
+  projectId?: string | null;
+  rootPath?: string | null;
 }
 
 interface MeetingSlice {
   meetingSpeeches: MeetingSpeech[];
   meetingActive: boolean;
   meetingTopic: string;
+  meetingContextMentions: ContextMentionRef[];
   latestMeetingRecord: MeetingRecord | null;
   meetingHistory: MeetingRecord[];
   addMeetingSpeech: (s: MeetingSpeech) => void;
   clearMeeting: () => void;
   setMeetingActive: (v: boolean) => void;
   setMeetingTopic: (topic: string) => void;
-  finalizeMeeting: (payload: { topic: string; summary: string; finishedAt?: number }) => void;
+  setMeetingContextMentions: (mentions: ContextMentionRef[]) => void;
+  finalizeMeeting: (payload: {
+    topic: string;
+    summary: string;
+    finishedAt?: number;
+    sessionId?: string | null;
+    projectId?: string | null;
+    rootPath?: string | null;
+  }) => void;
 }
 
 interface SettingsSlice {
@@ -316,9 +346,11 @@ interface DispatchSlice {
   isDispatching: boolean;
   lastInstruction: string;
   commandDraft: string;
+  commandContextMentions: ContextMentionRef[];
   setDispatching: (v: boolean) => void;
   setLastInstruction: (v: string) => void;
   setCommandDraft: (value: string) => void;
+  setCommandContextMentions: (mentions: ContextMentionRef[]) => void;
   appendCommandDraft: (value: string) => void;
   clearCommandDraft: () => void;
 }
@@ -343,6 +375,9 @@ interface BusinessEntitiesSlice {
   businessContentTasks: BusinessContentTask[];
   businessChannelSessions: BusinessChannelSession[];
   createBusinessCustomer: (payload: Pick<BusinessCustomer, "name" | "tier" | "primaryChannel" | "company" | "summary">) => void;
+  updateBusinessCustomer: (id: string, updates: Partial<Omit<BusinessCustomer, "id" | "projectId" | "rootPath" | "createdAt">>) => void;
+  upsertBusinessCustomerFromChannelSession: (channelSessionId: string) => string | null;
+  assessBusinessCustomerCampaignFit: (payload: { customerId: string; campaignBrief: string }) => BusinessCustomer["lastCampaignAssessment"] | null;
   createBusinessLead: (payload: Pick<BusinessLead, "title" | "customerId" | "source" | "stage" | "score" | "nextAction">) => void;
   createBusinessTicket: (payload: Pick<BusinessTicket, "subject" | "customerId" | "channelSessionId" | "status" | "priority" | "summary">) => void;
   createBusinessContentTask: (
@@ -366,6 +401,12 @@ interface BusinessEntitiesSlice {
     trigger?: BusinessOperationRecord["trigger"];
     detail?: string;
     handledBy?: BusinessChannelSession["handledBy"];
+  }) => void;
+  setBusinessLeadStage: (payload: {
+    id: string;
+    stage: BusinessLead["stage"];
+    trigger?: BusinessOperationRecord["trigger"];
+    detail?: string;
   }) => void;
   advanceBusinessLeadStage: (id: string) => void;
   advanceBusinessTicketStatus: (id: string) => void;
@@ -584,6 +625,7 @@ type Store =
   & ChatSlice
   & ActivitySlice
   & TaskNavigationSlice
+  & TaskSearchBridgeSlice
   & CostSlice
   & SettingsSlice
   & UISlice
@@ -625,6 +667,7 @@ function initAgentConfigs(): Record<AgentId, AgentConfig> {
       model: "",
       providerId: "",
       skills: allSkillIds,
+      governance: createDefaultAgentGovernance(id),
     };
   }
   return result;
@@ -672,6 +715,61 @@ function shouldMigrateLegacyAgentPersonality(agentId: AgentId, value?: string) {
   return LEGACY_AGENT_PERSONALITIES[agentId]?.includes(value.trim()) ?? false;
 }
 
+function normalizeAgentGovernanceList(values: unknown, fallback: string[] = []) {
+  const source = Array.isArray(values) ? values : fallback;
+  return Array.from(
+    new Set(
+      source
+        .map(value => String(value ?? "").trim())
+        .filter(Boolean),
+    ),
+  );
+}
+
+function normalizeAgentGovernance(
+  agentId: AgentId,
+  currentGovernance?: Partial<AgentGovernance>,
+  persistedGovernance?: Partial<AgentGovernance>,
+): AgentGovernance {
+  const fallback = {
+    ...createDefaultAgentGovernance(agentId),
+    ...(currentGovernance ?? {}),
+  };
+  const incoming = persistedGovernance ?? {};
+
+  return {
+    toolAccess:
+      incoming.toolAccess === "standard"
+      || incoming.toolAccess === "meeting_only"
+      || incoming.toolAccess === "no_desktop"
+      || incoming.toolAccess === "full"
+        ? incoming.toolAccess
+        : fallback.toolAccess,
+    memoryWriteScope:
+      incoming.memoryWriteScope === "none"
+      || incoming.memoryWriteScope === "execution_events"
+      || incoming.memoryWriteScope === "project_memory"
+        ? incoming.memoryWriteScope
+        : fallback.memoryWriteScope,
+    escalationMode:
+      incoming.escalationMode === "auto" || incoming.escalationMode === "manual_first"
+        ? incoming.escalationMode
+        : fallback.escalationMode,
+    responseStyle:
+      incoming.responseStyle === "neutral"
+      || incoming.responseStyle === "assertive"
+      || incoming.responseStyle === "combative"
+        ? incoming.responseStyle
+        : fallback.responseStyle,
+    meetingRoleMode:
+      incoming.meetingRoleMode === "participant" || incoming.meetingRoleMode === "judge"
+        ? incoming.meetingRoleMode
+        : fallback.meetingRoleMode,
+    forbiddenTopics: normalizeAgentGovernanceList(incoming.forbiddenTopics, fallback.forbiddenTopics),
+    stopConditions: normalizeAgentGovernanceList(incoming.stopConditions, fallback.stopConditions),
+  };
+}
+
 function normalizeAgentConfigs(
   currentConfigs: Record<AgentId, AgentConfig>,
   persistedConfigs?: Partial<Record<AgentId, Partial<AgentConfig>>>
@@ -693,6 +791,7 @@ function normalizeAgentConfigs(
               ...allSkillIds,
               ...(Array.isArray(persisted?.skills) ? persisted.skills : fallback.skills),
             ])),
+            governance: normalizeAgentGovernance(id, fallback.governance, persisted?.governance),
           },
         ];
       })
@@ -1754,6 +1853,54 @@ export const useStore = create<Store>()(
             activeSessionId: newSess.id,
           });
         }),
+      openChannelSessionChat: (channelSessionId) =>
+        set(s => {
+          const linkedChannelSession = s.businessChannelSessions.find(item => item.id === channelSessionId) ?? null;
+          if (!linkedChannelSession) return {};
+
+          const resolvedRoot = linkedChannelSession.rootPath ?? s.workspaceRoot ?? null;
+          const project = buildProjectContext(resolvedRoot);
+          const existingSession = s.chatSessions.find(session => session.linkedChannelSessionId === channelSessionId) ?? null;
+          const resolvedTitle = existingSession?.title && existingSession.title !== DEFAULT_CHAT_TITLE
+            ? existingSession.title
+            : linkedChannelSession.title || DEFAULT_CHAT_TITLE;
+
+          if (existingSession) {
+            const nextSession: ChatSession = {
+              ...existingSession,
+              title: resolvedTitle,
+              projectId: linkedChannelSession.projectId ?? project.projectId,
+              projectName: project.projectName,
+              workspaceRoot: resolvedRoot,
+              linkedChannelSessionId: channelSessionId,
+              updatedAt: Date.now(),
+            };
+            const sessions = sortChatSessions(
+              s.chatSessions.map(session => (session.id === existingSession.id ? nextSession : session)),
+            );
+            return buildSessionActivationState(s, nextSession, {
+              chatSessions: sessions,
+              activeSessionId: nextSession.id,
+            });
+          }
+
+          const newSess: ChatSession = {
+            ...makeEmptySession({
+              projectId: linkedChannelSession.projectId ?? project.projectId,
+              projectName: project.projectName,
+              workspaceRoot: resolvedRoot,
+            }),
+            id: newSessionId(),
+            title: linkedChannelSession.title || DEFAULT_CHAT_TITLE,
+            linkedChannelSessionId: channelSessionId,
+            updatedAt: Date.now(),
+          };
+          const sessions = capSessions([newSess, ...s.chatSessions]);
+          return buildSessionActivationState(s, newSess, {
+            chatSessions: sessions,
+            activeSessionId: newSess.id,
+          });
+        }),
       setActiveChatSession: (id) =>
         set(s => {
           const session = s.chatSessions.find(x => x.id === id);
@@ -1858,6 +2005,18 @@ export const useStore = create<Store>()(
         }),
       finishPendingScroll: () => set({ pendingScrollTaskId: null }),
       clearHighlightTask: () => set({ highlightTaskId: null }),
+      pendingTaskSearchQuery: "",
+      pendingTaskSearchSessionId: null,
+      seedTaskSearch: (sessionId, query) =>
+        set({
+          pendingTaskSearchSessionId: sessionId,
+          pendingTaskSearchQuery: query.trim(),
+        }),
+      clearTaskSearchSeed: () =>
+        set({
+          pendingTaskSearchSessionId: null,
+          pendingTaskSearchQuery: "",
+        }),
 
       cost: { totalTokens: 0, totalCostUsd: 0, byAgent: {} as Record<AgentId, number> },
       addCost: (agentId, tokens) =>
@@ -1990,6 +2149,9 @@ export const useStore = create<Store>()(
               ...s.agentConfigs[id],
               ...updates,
               skills: Array.isArray(updates.skills) ? updates.skills : s.agentConfigs[id].skills,
+              governance: updates.governance
+                ? normalizeAgentGovernance(id, s.agentConfigs[id].governance, updates.governance)
+                : s.agentConfigs[id].governance,
             },
           },
           agents: updates.name || updates.emoji
@@ -2250,16 +2412,18 @@ export const useStore = create<Store>()(
       isDispatching: false,
       lastInstruction: "",
       commandDraft: "",
+      commandContextMentions: [],
       setDispatching: (isDispatching) => set({ isDispatching }),
       setLastInstruction: (lastInstruction) => set({ lastInstruction }),
       setCommandDraft: (commandDraft) => set({ commandDraft }),
+      setCommandContextMentions: (commandContextMentions) => set({ commandContextMentions }),
       appendCommandDraft: (value) =>
         set(s => ({
           commandDraft: s.commandDraft.trim()
             ? `${s.commandDraft.trim()}\n\n${value}`
             : value,
         })),
-      clearCommandDraft: () => set({ commandDraft: "" }),
+      clearCommandDraft: () => set({ commandDraft: "", commandContextMentions: [] }),
 
       workflowRuns: [],
       queueWorkflowRun: (payload) => {
@@ -2463,7 +2627,7 @@ export const useStore = create<Store>()(
           const scope = resolveBusinessScope(s);
           return {
             businessCustomers: [
-              {
+              normalizeBusinessCustomer({
                 id: `customer-${now}-${Math.random().toString(36).slice(2, 7)}`,
                 projectId: scope.projectId,
                 rootPath: scope.rootPath,
@@ -2472,11 +2636,98 @@ export const useStore = create<Store>()(
                 ownerAgentId: "greeter",
                 tags: [],
                 ...payload,
-              },
+              }),
               ...s.businessCustomers,
             ],
           };
         }),
+      updateBusinessCustomer: (id, updates) =>
+        set(s => ({
+          businessCustomers: s.businessCustomers.map(item =>
+            item.id === id
+              ? normalizeBusinessCustomer({
+                  ...item,
+                  ...updates,
+                  updatedAt: Date.now(),
+                  profileLastUpdatedAt:
+                    "crmProfile" in updates
+                    || "campaignPreferences" in updates
+                    || "channelIdentities" in updates
+                    || "linkedSessionIds" in updates
+                    || "lastCampaignAssessment" in updates
+                      ? Date.now()
+                      : item.profileLastUpdatedAt,
+                })
+              : item,
+          ),
+        })),
+      upsertBusinessCustomerFromChannelSession: (channelSessionId) => {
+        const state = get();
+        const now = Date.now();
+        const session = state.businessChannelSessions.find(item => item.id === channelSessionId);
+        if (!session) return null;
+
+        const existing = session.customerId
+          ? state.businessCustomers.find(item => item.id === session.customerId) ?? null
+          : findCustomerByChannelSession(state.businessCustomers, session);
+        const inferredName = inferCustomerDisplayNameFromSession(session) || `${session.channel} 客户`;
+        const nextIdentity = buildCustomerIdentityFromSession(session);
+        const nextCustomer = normalizeBusinessCustomer({
+          ...(existing ?? {}),
+          id: existing?.id ?? `customer-${now}-${Math.random().toString(36).slice(2, 7)}`,
+          projectId: existing?.projectId ?? session.projectId ?? null,
+          rootPath: existing?.rootPath ?? session.rootPath ?? null,
+          createdAt: existing?.createdAt ?? now,
+          updatedAt: now,
+          name: existing?.name ?? inferredName,
+          tier: existing?.tier ?? "prospect",
+          primaryChannel: existing?.primaryChannel ?? session.channel,
+          company: existing?.company,
+          ownerAgentId: existing?.ownerAgentId ?? "greeter",
+          tags: existing?.tags ?? [],
+          summary: session.summary || existing?.summary || "已根据渠道会话自动沉淀客户画像。",
+          crmProfile: applyChannelSessionToCustomerProfile(existing?.crmProfile, session, {
+            name: existing?.name ?? inferredName,
+            company: existing?.company,
+          }),
+          channelIdentities: [
+            nextIdentity,
+            ...(existing?.channelIdentities ?? []),
+          ],
+          linkedSessionIds: Array.from(new Set([channelSessionId, ...(existing?.linkedSessionIds ?? [])])),
+          profileLastUpdatedAt: now,
+          campaignPreferences: existing?.campaignPreferences,
+          lastCampaignAssessment: existing?.lastCampaignAssessment,
+        });
+
+        set(s => ({
+          businessCustomers: [
+            nextCustomer,
+            ...s.businessCustomers.filter(item => item.id !== nextCustomer.id),
+          ],
+          businessChannelSessions: s.businessChannelSessions.map(item =>
+            item.id === channelSessionId
+              ? {
+                  ...item,
+                  customerId: nextCustomer.id,
+                  updatedAt: now,
+                }
+              : item,
+          ),
+        }));
+
+        return nextCustomer.id;
+      },
+      assessBusinessCustomerCampaignFit: ({ customerId, campaignBrief }) => {
+        const state = get();
+        const customer = state.businessCustomers.find(item => item.id === customerId);
+        if (!customer) return null;
+        const assessment = scoreCustomerCampaignFit(customer, campaignBrief);
+        get().updateBusinessCustomer(customerId, {
+          lastCampaignAssessment: assessment,
+        });
+        return assessment;
+      },
       createBusinessLead: (payload) =>
         set(s => {
           const now = Date.now();
@@ -2588,7 +2839,12 @@ export const useStore = create<Store>()(
           (payload.id && item.id === payload.id)
           || (
             item.channel === payload.channel
-            && item.externalRef === payload.externalRef
+            && (
+              item.externalRef === payload.externalRef
+              || (payload.replyTargetId ? item.externalRef === payload.replyTargetId : false)
+              || (item.replyTargetId ? item.replyTargetId === payload.externalRef : false)
+              || (payload.replyTargetId && item.replyTargetId === payload.replyTargetId)
+            )
           ),
         );
         const nextId = payload.id ?? existing?.id ?? `channel-session-${now}-${Math.random().toString(36).slice(2, 7)}`;
@@ -2660,14 +2916,48 @@ export const useStore = create<Store>()(
           externalRef: session.externalRef,
         });
       },
-      advanceBusinessLeadStage: (id) =>
+      setBusinessLeadStage: ({
+        id,
+        stage,
+        trigger = "manual",
+        detail,
+      }) => {
+        const state = get();
+        const lead = state.businessLeads.find(item => item.id === id);
+        if (!lead || lead.stage === stage) return;
+
         set(s => ({
           businessLeads: s.businessLeads.map(item =>
             item.id === id
-              ? { ...item, stage: getNextLeadStage(item.stage), updatedAt: Date.now() }
+              ? { ...item, stage, updatedAt: Date.now() }
               : item,
           ),
-        })),
+        }));
+
+        get().recordBusinessOperation({
+          entityType: "lead",
+          entityId: id,
+          eventType: "workflow",
+          trigger,
+          status: "completed",
+          title: "线索阶段已更新",
+          detail: detail?.trim() || `线索阶段已切换为 ${stage}。`,
+        });
+      },
+      advanceBusinessLeadStage: (id) => {
+        const lead = get().businessLeads.find(item => item.id === id);
+        if (!lead) return;
+
+        const nextStage = getNextLeadStage(lead.stage);
+        if (nextStage === lead.stage) return;
+
+        get().setBusinessLeadStage({
+          id,
+          stage: nextStage,
+          trigger: "auto",
+          detail: `AI 自动将线索推进到 ${nextStage} 阶段。`,
+        });
+      },
       advanceBusinessTicketStatus: (id) =>
         set(s => ({
           businessTickets: s.businessTickets.map(item =>
@@ -4001,21 +4291,29 @@ export const useStore = create<Store>()(
       meetingSpeeches: [],
       meetingActive: false,
       meetingTopic: "",
+      meetingContextMentions: [],
       latestMeetingRecord: null,
       meetingHistory: [],
       addMeetingSpeech: (speech) => set(st => ({ meetingSpeeches: [...st.meetingSpeeches, speech] })),
-      clearMeeting: () => set({ meetingSpeeches: [], meetingActive: false, meetingTopic: "" }),
+      clearMeeting: () => set({ meetingSpeeches: [], meetingActive: false, meetingTopic: "", meetingContextMentions: [] }),
       setMeetingActive: (meetingActive) => set({ meetingActive }),
       setMeetingTopic: (meetingTopic) => set({ meetingTopic }),
-      finalizeMeeting: ({ topic, summary, finishedAt }) =>
+      setMeetingContextMentions: (meetingContextMentions) => set({ meetingContextMentions }),
+      finalizeMeeting: ({ topic, summary, finishedAt, sessionId, projectId, rootPath }) =>
         set(st => {
           const resolvedFinishedAt = finishedAt ?? Date.now();
+          const linkedSession = sessionId
+            ? st.chatSessions.find(session => session.id === sessionId) ?? null
+            : null;
           const record = {
             id: `meeting-${resolvedFinishedAt}`,
             topic,
             summary,
             speeches: st.meetingSpeeches,
             finishedAt: resolvedFinishedAt,
+            sessionId: sessionId ?? null,
+            projectId: projectId ?? linkedSession?.projectId ?? null,
+            rootPath: rootPath ?? linkedSession?.workspaceRoot ?? null,
           };
           return {
             meetingActive: false,
@@ -4060,8 +4358,10 @@ export const useStore = create<Store>()(
         executionRuns: s.executionRuns,
         activeExecutionRunId: s.activeExecutionRunId,
         workflowRuns: s.workflowRuns,
+        commandContextMentions: s.commandContextMentions,
         latestMeetingRecord: s.latestMeetingRecord,
         meetingHistory: s.meetingHistory,
+        meetingContextMentions: s.meetingContextMentions,
         workspacePinnedPreviews: s.workspacePinnedPreviews,
         workspaceSavedBundles: s.workspaceSavedBundles,
         workspaceProjectMemories: s.workspaceProjectMemories,
@@ -4140,6 +4440,11 @@ export const useStore = create<Store>()(
           desktopInputSession,
           desktopScreenshot,
           desktopEvidenceLog,
+          businessCustomers: Array.isArray(persistedStore.businessCustomers)
+            ? persistedStore.businessCustomers
+                .filter((item): item is BusinessCustomer => Boolean(item?.id && item?.name))
+                .map(item => normalizeBusinessCustomer(item))
+            : current.businessCustomers,
           semanticKnowledgeDocs: Array.isArray(persistedStore.semanticKnowledgeDocs)
             ? persistedStore.semanticKnowledgeDocs
             : current.semanticKnowledgeDocs,

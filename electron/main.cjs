@@ -32,6 +32,68 @@ function log(...args) {
   } catch {}
 }
 
+function applyEnvFile(envPath) {
+  if (!envPath || !safeExists(envPath)) return false;
+
+  const lines = fs.readFileSync(envPath, 'utf8').split(/\r?\n/);
+  for (const line of lines) {
+    const matched = line.trim().match(/^([A-Z_][A-Z0-9_]*)=(.*)$/);
+    if (!matched) continue;
+
+    const [, key, rawValue] = matched;
+    const trimmedValue = rawValue.trim();
+    if (trimmedValue === '') {
+      delete process.env[key];
+    } else {
+      process.env[key] = trimmedValue;
+    }
+  }
+
+  return true;
+}
+
+function getRuntimeEnvCandidates() {
+  const candidates = [];
+  const seen = new Set();
+  const push = (targetPath) => {
+    if (!targetPath) return;
+    const resolved = path.resolve(targetPath);
+    if (seen.has(resolved)) return;
+    seen.add(resolved);
+    candidates.push(resolved);
+  };
+
+  push(path.join(__dirname, '..', '.env.local'));
+  push(path.join(path.dirname(process.execPath), '.env.local'));
+
+  try {
+    push(path.join(app.getPath('userData'), '.env.local'));
+  } catch {}
+
+  return candidates;
+}
+
+function loadRuntimeEnvFiles() {
+  const loaded = [];
+  for (const envPath of getRuntimeEnvCandidates()) {
+    try {
+      if (applyEnvFile(envPath)) {
+        loaded.push(envPath);
+      }
+    } catch (error) {
+      log('[main] failed to load env file:', envPath, error);
+    }
+  }
+
+  if (loaded.length > 0) {
+    log('[main] loaded env files:', loaded.join(' | '));
+  } else {
+    log('[main] no external .env.local found, using current process env');
+  }
+
+  return loaded;
+}
+
 // 使用函数延迟访问 app.isPackaged，避免在 app 初始化前访问
 const isDev = () => process.env.NODE_ENV === 'development' || !app.isPackaged;
 const WS_PORT = Number(process.env.WS_PORT || 3001);
@@ -1988,6 +2050,7 @@ function relaunchDesktopApp() {
 // ── 应用启动 ──
 app.whenReady().then(async () => {
   log('[main] app.whenReady');
+  loadRuntimeEnvFiles();
   createSplashWindow();
   // ── IPC：前端获取 WS 端口与 Desk 工作区 ──
   ipcMain.handle('get-ws-port', () => WS_PORT);

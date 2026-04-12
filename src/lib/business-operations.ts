@@ -7,6 +7,10 @@ import {
   type QuantDecision,
 } from "@/lib/business-quantification";
 import { getProjectRiskyContentChannels } from "@/lib/content-governance";
+import {
+  buildCustomerProfileInstruction,
+  scoreCustomerCampaignFit,
+} from "@/lib/customer-profile-schema";
 import type { AutomationMode } from "@/store/types";
 import type {
   BusinessApprovalRecord,
@@ -22,6 +26,7 @@ import type {
 
 export type BusinessApprovalState = "not-required" | "pending" | "approved" | "rejected";
 export type BusinessAutomationState = "ready" | "approval" | "watch" | "blocked";
+export type BusinessDispatchPolicy = "system" | "user-command";
 export const BUSINESS_AUTO_DISPATCH_COOLDOWN_MS = 10 * 60 * 1000;
 
 export interface BusinessAutomationQueueItem {
@@ -41,6 +46,7 @@ export interface BusinessAutomationQueueItem {
   nextAction: string;
   requiresApproval: boolean;
   canAutoDispatch: boolean;
+  dispatchPolicy: BusinessDispatchPolicy;
 }
 
 export interface BusinessDispatchQueueItem extends BusinessAutomationQueueItem {
@@ -96,6 +102,7 @@ export function buildBusinessAutomationQueue({
         decision,
         approval: findApprovalRecord(approvals, "customer", customer.id),
         instruction: buildCustomerInstruction(customer),
+        dispatchPolicy: "user-command",
       }),
     );
   }
@@ -112,6 +119,7 @@ export function buildBusinessAutomationQueue({
         decision,
         approval: findApprovalRecord(approvals, "lead", lead.id),
         instruction: buildLeadInstruction(lead, customer),
+        dispatchPolicy: "user-command",
       }),
     );
   }
@@ -150,6 +158,7 @@ export function buildBusinessAutomationQueue({
         nextAction: contentPlan.nextAction,
         requiresApproval: contentPlan.requiresApproval,
         canAutoDispatch: contentPlan.canAutoDispatch,
+        dispatchPolicy: "system",
       }),
     );
   }
@@ -166,6 +175,7 @@ export function buildBusinessAutomationQueue({
         decision,
         approval: findApprovalRecord(approvals, "channelSession", channelSession.id),
         instruction: buildChannelSessionInstruction(channelSession, customer),
+        dispatchPolicy: "system",
       }),
     );
   }
@@ -196,9 +206,11 @@ export function decorateBusinessDispatchQueue(
             ? "当前为人工模式，自动派发已关闭"
             : !remoteSupervisorEnabled
               ? "远程值守已关闭，自动派发暂时停用"
+              : item.dispatchPolicy === "user-command"
+                ? "该对象属于主动客户触达，需先在聊天中向鹦鹉螺明确下达活动外呼指令"
               : !item.canAutoDispatch
                 ? `当前阶段不建议直接派发。建议动作：${item.nextAction}`
-              : item.blockedReason;
+                : item.blockedReason;
 
     return {
       ...item,
@@ -239,6 +251,7 @@ function buildQueueItem({
   nextAction,
   requiresApproval,
   canAutoDispatch,
+  dispatchPolicy = "system",
 }: {
   entityType: BusinessEntityType;
   entityId: string;
@@ -250,6 +263,7 @@ function buildQueueItem({
   nextAction?: string;
   requiresApproval?: boolean;
   canAutoDispatch?: boolean;
+  dispatchPolicy?: BusinessDispatchPolicy;
 }): BusinessAutomationQueueItem {
   const resolvedRequiresApproval = requiresApproval ?? decision.humanApprovalRequired;
   const approvalState: BusinessApprovalState = resolvedRequiresApproval
@@ -257,7 +271,10 @@ function buildQueueItem({
     : "not-required";
 
   const blockedReason = getEntityBlockedReason(decision, approvalState, resolvedRequiresApproval);
-  const resolvedCanAutoDispatch = (canAutoDispatch ?? decision.autoRunEligible) && !blockedReason;
+  const resolvedCanAutoDispatch =
+    dispatchPolicy === "system" &&
+    (canAutoDispatch ?? decision.autoRunEligible) &&
+    !blockedReason;
   const automationState: BusinessAutomationState = blockedReason
     ? approvalState === "pending"
       ? "approval"
@@ -285,6 +302,7 @@ function buildQueueItem({
     nextAction: nextAction ?? buildDefaultNextAction(entityType, approvalState, blockedReason),
     requiresApproval: resolvedRequiresApproval,
     canAutoDispatch: resolvedCanAutoDispatch,
+    dispatchPolicy,
   };
 }
 
@@ -440,6 +458,7 @@ function buildCustomerInstruction(customer: BusinessCustomer) {
     `公司: ${customer.company || "未填写"}`,
     `标签: ${customer.tags.join("、") || "无"}`,
     `客户摘要: ${customer.summary}`,
+    `客户画像:\n${buildCustomerProfileInstruction(customer)}`,
     "",
     "请输出:",
     "1. 当前客户经营判断和风险点",
@@ -496,6 +515,9 @@ function buildContentTaskInstruction(
   lead: BusinessLead | null,
   projectRiskyChannels: Set<BusinessContentChannel>,
 ) {
+  const campaignAssessment = customer
+    ? scoreCustomerCampaignFit(customer, [task.title, task.goal, task.brief].filter(Boolean).join("\n"))
+    : null;
   const publishTargets = task.publishTargets.length > 0
     ? task.publishTargets.map(target => `${target.channel}:${target.accountLabel}`).join("、")
     : "未设置";
@@ -533,6 +555,10 @@ function buildContentTaskInstruction(
     `关联客户: ${customer?.name ?? "未关联"}`,
     `关联线索: ${lead?.title ?? "未关联"}`,
     lead ? `线索阶段: ${lead.stage}` : "线索阶段: 无",
+    customer ? `客户画像摘要:\n${buildCustomerProfileInstruction(customer)}` : "客户画像摘要: 无",
+    campaignAssessment
+      ? `活动适配判断: ${campaignAssessment.decision} (${campaignAssessment.score}) · ${campaignAssessment.reasons.join("；") || "暂无"}`
+      : "活动适配判断: 无",
     "",
     "请输出:",
     "1. 任务推进建议",
@@ -543,7 +569,7 @@ function buildContentTaskInstruction(
 
 function buildChannelSessionInstruction(session: BusinessChannelSession, customer: BusinessCustomer | null) {
   return [
-    "请作为渠道接待数字员工，接管以下会话。",
+    "请作为渠道接待数字员工，处理以下客户会话。",
     `会话标题: ${session.title}`,
     `渠道: ${session.channel}`,
     `会话状态: ${session.status}`,
@@ -551,11 +577,12 @@ function buildChannelSessionInstruction(session: BusinessChannelSession, custome
     `最后消息时间: ${new Date(session.lastMessageAt).toLocaleString("zh-CN", { hour12: false })}`,
     `会话摘要: ${session.summary}`,
     `关联客户: ${customer?.name ?? "未关联"}`,
-    customer ? `客户摘要: ${customer.summary}` : "客户摘要: 无",
+    customer ? `客户画像摘要:\n${buildCustomerProfileInstruction(customer)}` : "客户画像摘要: 无",
     "",
-    "请输出:",
-    "1. 当前会话判断",
-    "2. 下一条最合适的回复草稿",
-    "3. 是否需要人工接管及原因",
+    "执行要求:",
+    "1. 先完成内部判断，再决定是否继续自动回复。",
+    "2. 如果可以自动回复，最终只输出一段可直接发送给客户的消息正文，不要附加分析、编号、标题、解释或引号。",
+    "3. 如果必须转人工，最终只输出 [NEED_HUMAN] 后接一句原因，不要输出其它内容。",
+    "4. 如需联网核实最新信息，可直接检索，但不要把这类会话误当成桌面接管任务。",
   ].join("\n");
 }

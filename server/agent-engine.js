@@ -143,6 +143,34 @@ function extractToolResultImageParts(content) {
     .filter(Boolean);
 }
 
+function mapUserContentBlocksToOpenAi(content) {
+  if (!Array.isArray(content)) return [];
+
+  return content
+    .map((block) => {
+      if (block?.type === "text" && typeof block.text === "string" && block.text.trim()) {
+        return { type: "text", text: block.text };
+      }
+
+      if (block?.type === "image" && block?.source?.type === "base64") {
+        const mediaType = typeof block?.source?.media_type === "string" ? block.source.media_type : "image/jpeg";
+        const data = typeof block?.source?.data === "string" ? block.source.data : "";
+        if (!data) return null;
+
+        return {
+          type: "image_url",
+          image_url: {
+            url: `data:${mediaType};base64,${data}`,
+            detail: "low",
+          },
+        };
+      }
+
+      return null;
+    })
+    .filter(Boolean);
+}
+
 function findRecentToolResultImageKeys(messages) {
   const keys = [];
 
@@ -192,7 +220,7 @@ function hasToolNamed(tools, toolName) {
   return Array.isArray(tools) && tools.some((tool) => tool?.name === toolName);
 }
 
-function shouldForceDesktopToolRetry(task, tools) {
+function shouldForceDesktopToolRetry(task, tools, executionSource = "") {
   if (
     !hasToolNamed(tools, "desktop_control_input")
     || !hasToolNamed(tools, "desktop_capture_screenshot")
@@ -200,15 +228,19 @@ function shouldForceDesktopToolRetry(task, tools) {
     return false;
   }
 
+  if (String(executionSource || "").trim().toLowerCase() === "remote-ops") {
+    return false;
+  }
+
   const text = String(task || "").trim().toLowerCase();
   if (!text) return false;
 
   const likelyDesktopIntent = [
-    /(?:鼠标|鍵盤|键盘|接管|点开|點開|点击|點擊|双击|雙擊|右键|右鍵|滚动|滾動|输入|輸入|播放)/i,
-    /(?:桌面|desktop).{0,12}(?:点击|點擊|操作|接管|程序|應用|应用|窗口|視窗|弹窗|彈窗)/i,
-    /(?:点击|點擊|操作|接管|启动|啟動).{0,12}(?:桌面|desktop)/i,
-    /(?:打开|打開|进入|進入|前往|跳转到|跳轉到|去到).{0,20}(?:b\s*站|bilibili|you\s*tube|youtube|优酷|腾讯视频|爱奇艺|抖音|tiktok|快手|视频站|視頻站|视频网站|視頻網站|播放器)/i,
-    /(?:b\s*站|bilibili|you\s*tube|youtube|优酷|腾讯视频|爱奇艺|抖音|tiktok|快手|视频站|視頻站|视频网站|視頻網站|播放器).{0,18}(?:打开|打開|点击|點擊|点开|點開|播放|进入|進入)/i,
+    /(?:桌面|desktop|窗口|視窗|界面|介面|浏览器|瀏覽器|程序|應用|应用|播放器|视频页|影片頁|网页播放器|網頁播放器).{0,18}(?:点击|點擊|点开|點開|双击|雙擊|右键|右鍵|滚动|滾動|输入|輸入|按下|播放|操作)/i,
+    /(?:点击|點擊|点开|點開|双击|雙擊|右键|右鍵|滚动|滾動|输入|輸入|按下|播放|操作).{0,18}(?:桌面|desktop|窗口|視窗|界面|介面|浏览器|瀏覽器|程序|應用|应用|播放器|视频页|影片頁)/i,
+    /(?:打开|打開|启动|啟動|进入|進入|前往|跳转到|跳轉到|去到).{0,20}(?:chrome|edge|firefox|figma|notion|微信|企业微信|企業微信|飞书|飛書|qq|钉钉|釘釘|浏览器|瀏覽器|b\s*站|bilibili|you\s*tube|youtube|优酷|腾讯视频|愛奇藝|爱奇艺|抖音|tiktok|快手|视频网站|視頻網站|播放器)/i,
+    /(?:chrome|edge|firefox|figma|notion|微信|企业微信|企業微信|飞书|飛書|qq|钉钉|釘釘|浏览器|瀏覽器|b\s*站|bilibili|you\s*tube|youtube|优酷|腾讯视频|愛奇藝|爱奇艺|抖音|tiktok|快手|视频网站|視頻網站|播放器).{0,18}(?:打开|打開|启动|啟動|进入|進入|点击|點擊|点开|點開|播放|滚动|滾動|输入|輸入|操作)/i,
+    /(?:鼠标|鍵盤|键盘).{0,18}(?:点击|點擊|滚动|滾動|输入|輸入|操作|接管)/i,
   ];
 
   return likelyDesktopIntent.some((pattern) => pattern.test(text));
@@ -253,6 +285,19 @@ function mapSessionMessagesToOpenAiMessages(messages, systemPrompt) {
     }
 
     if (message.role === "user" && Array.isArray(message.content)) {
+      const hasToolResult = message.content.some((block) => block?.type === "tool_result");
+      if (!hasToolResult) {
+        const mappedContent = mapUserContentBlocksToOpenAi(message.content);
+        if (mappedContent.length === 0) continue;
+
+        if (mappedContent.length === 1 && mappedContent[0]?.type === "text") {
+          mapped.push({ role: "user", content: mappedContent[0].text });
+        } else {
+          mapped.push({ role: "user", content: mappedContent });
+        }
+        continue;
+      }
+
       for (const [blockIndex, block] of message.content.entries()) {
         if (block?.type !== "tool_result") continue;
         const textContent = extractToolResultTextContent(block.content);
@@ -417,6 +462,7 @@ export async function queryAgent({
   agentId,
   sessionId,
   task,
+  userMessageContent,
   systemPrompt,
   tools = [],
   maxTokens,
@@ -431,7 +477,7 @@ export async function queryAgent({
 }) {
   throwIfAborted(signal);
   // 1. 追加用户消息到会话历史
-  appendToSession(agentId, sessionId, { role: "user", content: task });
+  appendToSession(agentId, sessionId, { role: "user", content: userMessageContent ?? task });
 
   let inputTokensTotal = 0;
   let outputTokensTotal = 0;
@@ -817,7 +863,7 @@ export async function queryAgent({
 
     if (
       !forcedDesktopToolRetry
-      && shouldForceDesktopToolRetry(task, tools)
+      && shouldForceDesktopToolRetry(task, tools, toolContext?.executionSource)
       && !assistantContent.some((block) => block.type === "tool_use")
     ) {
       forcedDesktopToolRetry = true;

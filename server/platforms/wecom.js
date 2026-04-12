@@ -35,7 +35,6 @@ export default class WecomAdapter {
     this.encodingAESKey = encodingAESKey;
     this.onMessage = onMessage;
 
-    globalThis.__wecomAdapter = this;
     console.log('[wecom] Adapter ready. Webhook path: GET|POST /webhook/wecom');
   }
 
@@ -75,17 +74,28 @@ export default class WecomAdapter {
         platformId: "wecom",
         externalMessageId,
         inboundMessageKey: `wecom:${externalMessageId}`,
+        conversationRef: `user:${fromUser}`,
+        replyTargetId: `user:${fromUser}`,
+        participantLabel: fromUser,
+        title: `wecom · ${fromUser}`,
+        remoteUserId: fromUser,
       });
     }
     return 'success';
   }
 
   async stop() {
-    globalThis.__wecomAdapter = null;
     this.accessToken = null;
   }
 
   async sendMessage(userId, text) {
+    const normalizedTarget = String(userId || "").trim();
+    const actualTargetId = normalizedTarget.startsWith("user:")
+      ? normalizedTarget.slice("user:".length)
+      : normalizedTarget;
+    if (!actualTargetId) {
+      throw new Error("企业微信目标用户不能为空");
+    }
     const token = await this.getAccessToken();
     const chunks = splitText(text, 2048);
     for (const chunk of chunks) {
@@ -93,13 +103,65 @@ export default class WecomAdapter {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          touser: userId,
+          touser: actualTargetId,
           msgtype: 'text',
           agentid: parseInt(this.agentId),
           text: { content: chunk },
         }),
       });
     }
+  }
+
+  async probe() {
+    const token = await this.getAccessToken();
+    return {
+      ok: Boolean(token),
+      status: "connected",
+      message: `企业微信应用凭证校验通过${this.agentId ? `：agent ${this.agentId}` : ""}`,
+      checkedAt: Date.now(),
+    };
+  }
+
+  async handleWebhookRequest({ method, query, body }) {
+    if (method === "GET") {
+      const echostr = query?.echostr ?? "";
+      if (this.verifySignature({ ...query, echostr })) {
+        return {
+          ok: true,
+          statusCode: 200,
+          responseType: "text",
+          responseBody: echostr,
+          statusDetail: "企业微信回调校验通过。",
+        };
+      }
+
+      return {
+        ok: false,
+        statusCode: 403,
+        responseType: "empty",
+        statusDetail: "企业微信回调签名校验失败。",
+        healthScore: 35,
+      };
+    }
+
+    if (method === "POST") {
+      const result = await this.handleWebhookMessage(body, query);
+      return {
+        ok: true,
+        statusCode: 200,
+        responseType: "text",
+        responseBody: result,
+        statusDetail: "已收到企业微信 Webhook 消息。",
+      };
+    }
+
+    return {
+      ok: false,
+      statusCode: 405,
+      responseType: "empty",
+      statusDetail: "企业微信 Webhook 暂不支持该请求方法。",
+      healthScore: 30,
+    };
   }
 }
 

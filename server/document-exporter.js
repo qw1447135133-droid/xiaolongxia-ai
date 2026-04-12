@@ -26,8 +26,12 @@ function sanitizeFileName(input) {
 
 function resolveOutputDirectory(outputDir) {
   const homeDir = os.homedir();
-  const normalized = String(outputDir || "desktop").trim().toLowerCase();
+  const rawValue = String(outputDir || "desktop").trim();
+  const normalized = rawValue.toLowerCase();
 
+  if (!rawValue || normalized === "desktop") {
+    return path.join(homeDir, "Desktop");
+  }
   if (normalized === "documents" || normalized === "document") {
     return path.join(homeDir, "Documents");
   }
@@ -37,7 +41,7 @@ function resolveOutputDirectory(outputDir) {
   if (normalized === "temp" || normalized === "tmp") {
     return TEMP_EXPORT_DIR;
   }
-  return path.join(homeDir, "Desktop");
+  return path.resolve(rawValue);
 }
 
 async function ensureOutputDirectory(outputDir) {

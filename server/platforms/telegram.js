@@ -45,27 +45,39 @@ export default class TelegramAdapter {
     this.bot = new TelegramBot(botToken, options);
 
     this.bot.on("message", async (msg) => {
-      const userId = String(msg.chat.id);
+      const chatId = String(msg.chat.id);
+      const senderId = String(msg.from?.id ?? chatId);
       const text = msg.text?.trim();
       if (!text) return;
 
       if (text === "/start") {
-        this.bot.sendMessage(userId, "STARCRAW 已就位，直接发指令即可。");
+        this.bot.sendMessage(chatId, "STARCRAW 已就位，直接发指令即可。");
         return;
       }
 
       if (text === "/help") {
-        this.bot.sendMessage(userId, "示例：分析竞品、输出文案、召开会议并导出结论。");
+        this.bot.sendMessage(chatId, "示例：分析竞品、输出文案、召开会议并导出结论。");
         return;
       }
 
-      const externalMessageId = String(msg.message_id ?? `${userId}:${msg.date ?? Date.now()}`);
+      const externalMessageId = String(msg.message_id ?? `${chatId}:${msg.date ?? Date.now()}`);
+      const participantLabel =
+        msg.chat.title
+        || [msg.chat.first_name, msg.chat.last_name].filter(Boolean).join(" ").trim()
+        || msg.chat.username
+        || chatId;
       onMessage({
-        userId,
+        userId: chatId,
         text,
         platformId: "telegram",
         externalMessageId,
-        inboundMessageKey: `telegram:${userId}:${externalMessageId}`,
+        inboundMessageKey: `telegram:${chatId}:${externalMessageId}`,
+        conversationRef: `chat:${chatId}`,
+        replyTargetId: `chat:${chatId}`,
+        participantLabel,
+        title: `telegram · ${participantLabel}`,
+        remoteUserId: senderId,
+        remoteThreadId: msg.message_thread_id ? String(msg.message_thread_id) : undefined,
       });
     });
 
@@ -82,7 +94,10 @@ export default class TelegramAdapter {
   }
 
   resolveTarget(userId) {
-    const targetId = userId || this.defaultChatId;
+    const normalized = String(userId || "").trim();
+    const targetId = normalized.startsWith("chat:")
+      ? normalized.slice("chat:".length)
+      : (normalized || this.defaultChatId);
     if (!targetId) {
       throw new Error("Telegram 默认 Chat ID 未配置");
     }
@@ -106,6 +121,26 @@ export default class TelegramAdapter {
     await this.bot.sendDocument(targetId, payload.filePath, {
       caption: payload.caption?.slice(0, 900),
     });
+  }
+
+  async probe() {
+    if (!this.bot) {
+      return {
+        ok: false,
+        status: "idle",
+        message: "Telegram 适配器尚未启动",
+        checkedAt: Date.now(),
+      };
+    }
+
+    const me = await this.bot.getMe();
+    return {
+      ok: true,
+      status: "connected",
+      message: `Telegram Bot 在线：@${me?.username || me?.first_name || "unknown"}`,
+      checkedAt: Date.now(),
+      raw: me,
+    };
   }
 }
 

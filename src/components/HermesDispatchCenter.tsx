@@ -582,6 +582,10 @@ export function HermesDispatchCenter({ compact = false }: { compact?: boolean } 
         <div style={{ marginTop: 10, fontSize: 11, color: "var(--text-muted)", wordBreak: "break-all" }}>
           Prototype: {prototypePath || "loading..."}
         </div>
+        <div style={{ marginTop: 12, display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <a href="/hermes-architecture" style={heroLinkStyle("dark")}>查看 Hermes 架构清单</a>
+          <a href="/channel-debug" style={heroLinkStyle("light")}>打开渠道联调页</a>
+        </div>
       </section>
 
       <div style={{ display: "grid", gridTemplateColumns: "minmax(320px, 1.2fr) minmax(300px, 0.8fr)", gap: 16 }}>
@@ -1006,6 +1010,29 @@ export function HermesDispatchCenter({ compact = false }: { compact?: boolean } 
       </section>
     </div>
   );
+}
+
+function heroLinkStyle(tone: "dark" | "light"): CSSProperties {
+  return tone === "dark"
+    ? {
+        textDecoration: "none",
+        borderRadius: 999,
+        padding: "8px 12px",
+        background: "#0f172a",
+        color: "#fff",
+        fontSize: 12,
+        fontWeight: 700,
+      }
+    : {
+        textDecoration: "none",
+        borderRadius: 999,
+        padding: "8px 12px",
+        background: "rgba(255,255,255,0.82)",
+        border: "1px solid rgba(148,163,184,0.22)",
+        color: "var(--text)",
+        fontSize: 12,
+        fontWeight: 700,
+      };
 }
 
 function createProfileDraft(profile: HermesPlannerProfile): HermesPlannerProfileDraft {

@@ -29,13 +29,18 @@ if (existsSync(envPath)) {
   }
 }
 import { randomUUID } from "crypto";
-import { startPlatform, stopPlatform, sendToPlatform, sendFileToPlatform, isPlatformRunning } from "./platforms/platform-manager.js";
+import { startPlatform, stopPlatform, sendToPlatform, sendFileToPlatform, isPlatformRunning, getPlatformRuntime, probePlatformRuntime } from "./platforms/platform-manager.js";
+import { PLATFORM_WEBHOOK_PATHS, createPlatformWebhookRouter } from "./platforms/webhook-router.js";
 import { exportMeetingDocument, saveMeetingDocumentToLocalLibrary } from "./meeting-exporter.js";
 import { buildMeetingExportCaption, normalizeMeetingExportBrief } from "./meeting-export-brief.js";
 import { queryAgent, clearAllSessions } from "./agent-engine.js";
 import { getAgentTools, getMeetingTools } from "./agent-tools.js";
+import { buildAttachmentUserContentBlocks } from "./attachment-context.js";
 import { checkSemanticMemoryStore, querySemanticMemoryStore } from "./semantic-memory-store.js";
 import { autoProvisionAgentSkills, buildAgentSkillPrompt, syncAgentSkillDocuments } from "./skill-provisioner.js";
+import { createPlatformConversationHelpers } from "./channel/platform-conversation.js";
+import { createPlatformMessageOrchestrator } from "./channel/platform-message-orchestrator.js";
+import { buildHermesDiagnostics } from "./hermes-diagnostics.js";
 import {
   cleanupClientLaunchRequests,
   getDesktopRuntimeSummary,
@@ -135,16 +140,15 @@ const hermesDispatchRuns = new Map();
 const hermesDispatchRuntime = new Map();
 const activeExecutionControllers = new Map();
 const platformResultListeners = new Map();
-const PLATFORM_WEBHOOK_PATHS = {
-  line: "/webhook/line",
-  feishu: "/webhook/feishu",
-  wecom: "/webhook/wecom",
-};
 const PLATFORM_FIELD_REQUIREMENTS = {
   telegram: ["botToken"],
   line: ["channelAccessToken", "channelSecret"],
   feishu: ["appId", "appSecret", "verifyToken"],
   wecom: ["corpId", "agentId", "secret", "token", "encodingAESKey"],
+  dingtalk: ["clientId", "clientSecret"],
+  wechat_official: ["appId", "appSecret", "token"],
+  qq: ["appId", "botToken"],
+  web: ["siteName", "signingSecret"],
 };
 const PLATFORM_RUNTIME_KEYS = [
   "status",
@@ -497,6 +501,18 @@ function summarizePlatformAccount(platformId, fields = {}) {
       return fields.defaultOpenId?.trim() ? `open:${fields.defaultOpenId.trim()}` : "Feishu App";
     case "wecom":
       return fields.agentId?.trim() ? `agent:${fields.agentId.trim()}` : "WeCom App";
+    case "dingtalk":
+      if (fields.defaultWebhookUrl?.trim()) return "webhook:configured";
+      return fields.defaultOpenConversationId?.trim() ? `cid:${fields.defaultOpenConversationId.trim()}` : "DingTalk App";
+    case "wechat_official":
+      return fields.defaultOpenId?.trim() ? `openid:${fields.defaultOpenId.trim()}` : "WeChat Official Account";
+    case "qq":
+      if (fields.bridgeName?.trim()) {
+        return fields.defaultOpenId?.trim() ? `${fields.bridgeName.trim()} · ${fields.defaultOpenId.trim()}` : fields.bridgeName.trim();
+      }
+      return fields.defaultOpenId?.trim() ? `qq:${fields.defaultOpenId.trim()}` : "QQ Bridge";
+    case "web":
+      return fields.siteName?.trim() ? `site:${fields.siteName.trim()}` : "Web Chat";
     default:
       return platformId;
   }
@@ -543,7 +559,7 @@ const ROUTING_RULES = [
 
 const BREVITY = "\n\n【输出要求】言简意赅、直入主题；先结论后补充；避免冗长寒暄与套话；除必须条目外尽量控制在300字内。";
 const DOCUMENT_EXPORT_PROMPT =
-  "\n\n【本地文档交付】当任务要求生成 Word / Excel / PPT 文档、报告、总结、表格、简报、纪要，并保存到桌面、本地目录或下载目录时，应优先使用文档导出工具：document_write_docx、document_write_xlsx、document_write_pptx。除非用户明确要求打开 Microsoft Word / Excel / PowerPoint 程序，否则不要为了交付文档去启动 Office 桌面应用。";
+  "\n\n【本地文档交付】当任务要求生成 Word / Excel / PPT 文档、报告、总结、表格、简报、纪要，并保存到桌面、本地目录或下载目录时，应优先使用文档导出工具：document_write_customer_profile_docx、document_write_docx、document_write_xlsx、document_write_pptx。若任务是客户画像、客户档案、客户信息归档、客户画像 Word 导出，优先使用 document_write_customer_profile_docx，输出只保留结果，不要额外写过程说明。除非用户明确要求打开 Microsoft Word / Excel / PowerPoint 程序，否则不要为了交付文档去启动 Office 桌面应用。";
 const DESKTOP_AUTOMATION_PROMPT =
   "\n\n【桌面执行能力】当任务要求真实打开本机程序、外部浏览器、网站页面，或通过鼠标键盘在桌面界面中点击、点开、播放、输入、滚动时，你可以使用桌面工具链：desktop_list_installed_applications、desktop_open_external_browser、desktop_launch_native_application、desktop_cdp_open_app、desktop_cdp_snapshot、desktop_cdp_act、desktop_capture_screenshot、desktop_control_input。对 Chrome、Edge、飞书、Figma、Notion 这类 Chromium / Electron 应用，优先进入 CDP App Mode，再读取结构化快照并基于 ref 操作；只有在结构化控制不可用时，才退回“先截图定位 → 再点击/输入 → 再截图验证”的物理桌面闭环。若第一次验证失败，优先参考 retrySuggestions 做一次偏移重试。只有验证码、人机验证、OTP/2FA 等验证场景必须转人工接管，不要口头假设自己没有鼠标键盘能力。若用户要求真实打开视频网站、视频页、播放器并点开/播放视频，不要先空口解释限制，必须先实际尝试桌面工具链。对于物理桌面操作请求，除验证场景外，不要只给文字建议而不动手。";
 
@@ -682,7 +698,185 @@ const AGENT_DISPLAY = {
   greeter: "招潮蟹",
 };
 
+const AGENT_GOVERNANCE_PRESETS = {
+  orchestrator: {
+    toolAccess: "full",
+    memoryWriteScope: "project_memory",
+    escalationMode: "auto",
+    responseStyle: "neutral",
+    meetingRoleMode: "judge",
+    forbiddenTopics: [],
+    stopConditions: ["验证码", "OTP", "2FA", "高风险转账", "删除客户数据"],
+  },
+  explorer: {
+    toolAccess: "no_desktop",
+    memoryWriteScope: "execution_events",
+    escalationMode: "manual_first",
+    responseStyle: "assertive",
+    meetingRoleMode: "participant",
+    forbiddenTopics: [],
+    stopConditions: ["验证码", "OTP", "2FA"],
+  },
+  writer: {
+    toolAccess: "no_desktop",
+    memoryWriteScope: "execution_events",
+    escalationMode: "manual_first",
+    responseStyle: "combative",
+    meetingRoleMode: "participant",
+    forbiddenTopics: [],
+    stopConditions: ["验证码", "OTP", "2FA"],
+  },
+  designer: {
+    toolAccess: "no_desktop",
+    memoryWriteScope: "execution_events",
+    escalationMode: "manual_first",
+    responseStyle: "assertive",
+    meetingRoleMode: "participant",
+    forbiddenTopics: [],
+    stopConditions: ["验证码", "OTP", "2FA"],
+  },
+  performer: {
+    toolAccess: "no_desktop",
+    memoryWriteScope: "execution_events",
+    escalationMode: "manual_first",
+    responseStyle: "assertive",
+    meetingRoleMode: "participant",
+    forbiddenTopics: [],
+    stopConditions: ["验证码", "OTP", "2FA"],
+  },
+  greeter: {
+    toolAccess: "no_desktop",
+    memoryWriteScope: "execution_events",
+    escalationMode: "manual_first",
+    responseStyle: "assertive",
+    meetingRoleMode: "participant",
+    forbiddenTopics: [],
+    stopConditions: ["验证码", "OTP", "2FA"],
+  },
+};
+
+function createDefaultAgentGovernance(agentId) {
+  const preset = AGENT_GOVERNANCE_PRESETS[agentId] ?? AGENT_GOVERNANCE_PRESETS.orchestrator;
+  return {
+    ...preset,
+    forbiddenTopics: [...(preset.forbiddenTopics ?? [])],
+    stopConditions: [...(preset.stopConditions ?? [])],
+  };
+}
+
+function normalizeAgentGovernanceList(values, fallback = []) {
+  const source = Array.isArray(values) ? values : fallback;
+  return Array.from(
+    new Set(
+      source
+        .map((value) => String(value ?? "").trim())
+        .filter(Boolean),
+    ),
+  );
+}
+
+function normalizeAgentGovernance(agentId, currentGovernance = {}, incomingGovernance = {}) {
+  const fallback = {
+    ...createDefaultAgentGovernance(agentId),
+    ...(currentGovernance ?? {}),
+  };
+
+  return {
+    toolAccess:
+      incomingGovernance?.toolAccess === "standard"
+      || incomingGovernance?.toolAccess === "meeting_only"
+      || incomingGovernance?.toolAccess === "no_desktop"
+      || incomingGovernance?.toolAccess === "full"
+        ? incomingGovernance.toolAccess
+        : fallback.toolAccess,
+    memoryWriteScope:
+      incomingGovernance?.memoryWriteScope === "none"
+      || incomingGovernance?.memoryWriteScope === "execution_events"
+      || incomingGovernance?.memoryWriteScope === "project_memory"
+        ? incomingGovernance.memoryWriteScope
+        : fallback.memoryWriteScope,
+    escalationMode:
+      incomingGovernance?.escalationMode === "auto" || incomingGovernance?.escalationMode === "manual_first"
+        ? incomingGovernance.escalationMode
+        : fallback.escalationMode,
+    responseStyle:
+      incomingGovernance?.responseStyle === "neutral"
+      || incomingGovernance?.responseStyle === "assertive"
+      || incomingGovernance?.responseStyle === "combative"
+        ? incomingGovernance.responseStyle
+        : fallback.responseStyle,
+    meetingRoleMode:
+      incomingGovernance?.meetingRoleMode === "participant" || incomingGovernance?.meetingRoleMode === "judge"
+        ? incomingGovernance.meetingRoleMode
+        : fallback.meetingRoleMode,
+    forbiddenTopics: normalizeAgentGovernanceList(incomingGovernance?.forbiddenTopics, fallback.forbiddenTopics),
+    stopConditions: normalizeAgentGovernanceList(incomingGovernance?.stopConditions, fallback.stopConditions),
+  };
+}
+
+function getAgentGovernance(agentId) {
+  return normalizeAgentGovernance(
+    agentId,
+    createDefaultAgentGovernance(agentId),
+    settings.agentConfigs?.[agentId]?.governance,
+  );
+}
+
+function buildGovernancePolicyPrompt(agentId, mode = "chat") {
+  const governance = getAgentGovernance(agentId);
+  const lines = ["【角色治理合同】", "若与其他系统提示发生冲突，以本治理合同为准。"];
+
+  if (mode === "meeting") {
+    lines.push(
+      governance.meetingRoleMode === "judge"
+        ? "你当前是会议裁判位：保持中立，不替任何业务角色站队。"
+        : "你当前是会议辩手位：必须代表自己的岗位利益明确表态，不要端水。",
+    );
+    lines.push("会议阶段禁止把话题转成桌面执行、程序启动或等待用户补充操作目标。");
+  } else if (governance.toolAccess === "meeting_only") {
+    lines.push("你在普通聊天/执行模式下只做分析与建议，不主动调用执行型工具；会议模式再进入强辩论状态。");
+  } else if (governance.toolAccess === "no_desktop") {
+    lines.push("禁止调用桌面程序、外部浏览器、鼠标键盘和本机应用启动能力；优先只做文本判断与网页级证据整理。");
+  } else if (governance.toolAccess === "standard") {
+    lines.push("只在确有必要时调用常规网页或文档工具，不主动扩大到桌面接管。");
+  } else if (governance.toolAccess === "full") {
+    lines.push("你具备完整执行权限，但仍需先判断是否真的需要动用桌面或外部程序。");
+  }
+
+  if (governance.memoryWriteScope === "none") {
+    lines.push("默认不要回写长期记忆，只输出当前轮结果。");
+  } else if (governance.memoryWriteScope === "execution_events") {
+    lines.push("只允许把关键结论沉淀为执行事件，不要擅自扩写长期项目记忆。");
+  } else if (governance.memoryWriteScope === "project_memory") {
+    lines.push("允许把稳定事实、裁决结果和后续动作沉淀进项目级记忆。");
+  }
+
+  lines.push(
+    governance.escalationMode === "manual_first"
+      ? "遇到高风险、不确定或权限边界模糊的动作时，优先停在人工确认或裁判拍板，而不是自己扩大执行。"
+      : "遇到可控问题时先自行收敛并推进，只有触发停止条件时才升级给人工或裁判。",
+  );
+
+  lines.push(
+    governance.responseStyle === "combative"
+      ? "表达风格允许更锋利、更有攻击性，但仍需保持专业，不要低俗辱骂。"
+      : governance.responseStyle === "assertive"
+        ? "表达风格要明确、强势、有取舍，避免圆滑和模板化。"
+        : "表达风格保持克制、冷静、判断清晰。",
+  );
+
+  if (governance.forbiddenTopics.length > 0) {
+    lines.push(`不要主动展开这些禁区：${governance.forbiddenTopics.join("、")}。`);
+  }
+  if (governance.stopConditions.length > 0) {
+    lines.push(`一旦触发这些停止条件，立即停止自动推进并明确说明需要人工介入：${governance.stopConditions.join("、")}。`);
+  }
+
+  return lines.join("\n");
+}
+
 function buildMeetingAgentSystemPrompt(agentId) {
+  const governance = getAgentGovernance(agentId);
   const stance = MEETING_ROLE_STANCES[agentId] ?? {
     title: "参会成员",
     brief: "站在自己的专业岗位上给出明确观点。",
@@ -730,7 +924,7 @@ function buildMeetingAgentSystemPrompt(agentId) {
     "不要每轮都机械地用“1. 2. 3.”模板回答；优先像真人抢话、回嘴、补刀和拍板。",
   ];
 
-  if (agentId === "orchestrator") {
+  if (governance.meetingRoleMode === "judge") {
     return [
       ...basePrompt.slice(0, 6),
       "你是这场会的中立主持与裁判，不代表任何方案，不替任何业务角色说话。",
@@ -924,6 +1118,7 @@ function buildDefaultAgentConfig(agentId, currentConfig = {}) {
     model: currentConfig?.model || "",
     providerId: currentConfig?.providerId || "",
     skills: normalizeAgentSkillIds(currentConfig?.skills),
+    governance: normalizeAgentGovernance(agentId, createDefaultAgentGovernance(agentId), currentConfig?.governance),
   };
 }
 
@@ -954,6 +1149,7 @@ function normalizeAgentConfigs(nextConfigs = {}, currentConfigs = settings.agent
         Object.prototype.hasOwnProperty.call(incoming, "skills") ? incoming.skills : fallback.skills,
         fallback.skills,
       ),
+      governance: normalizeAgentGovernance(agentId, fallback.governance, incoming?.governance),
     };
   }
 
@@ -965,9 +1161,18 @@ function writeJson(res, status, payload) {
     "Content-Type": "application/json; charset=utf-8",
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type",
+        "Access-Control-Allow-Headers": "Content-Type, X-STARCRAW-SECRET, X-STARCRAW-SIGNATURE, X-STARCRAW-TIMESTAMP, X-STARCRAW-WIDGET-TOKEN",
   });
   res.end(JSON.stringify(payload));
+}
+
+function readBodyText(req) {
+  return new Promise((resolve, reject) => {
+    let body = "";
+    req.on("data", (d) => { body += d; });
+    req.on("end", () => resolve(body));
+    req.on("error", reject);
+  });
 }
 
 function pickPlatformRuntimeFields(config = {}) {
@@ -1991,11 +2196,64 @@ function rememberPlatformDebug(platformId, entry, payload = {}) {
 }
 
 function mapPlatformToChannel(platformId) {
-  if (platformId === "telegram" || platformId === "line" || platformId === "feishu" || platformId === "wecom") {
+  if (
+    platformId === "telegram"
+    || platformId === "line"
+    || platformId === "feishu"
+    || platformId === "wecom"
+    || platformId === "dingtalk"
+    || platformId === "wechat_official"
+    || platformId === "qq"
+    || platformId === "web"
+  ) {
     return platformId;
   }
   return "web";
 }
+
+const getPlatformFields = (platformId) => settings.platformConfigs?.[platformId]?.fields ?? {};
+
+const {
+  normalizePlatformInboundMessage,
+  isOwnerPlatformConversation,
+  buildPlatformConversationIdentity,
+  buildPlatformConversationDispatchInstruction,
+  buildChannelSessionSnapshot,
+} = createPlatformConversationHelpers({
+  mapPlatformToChannel,
+  summarizePlatformAccount,
+  getPlatformFields,
+});
+
+const handlePlatformMessage = createPlatformMessageOrchestrator({
+  randomUUID,
+  dispatch,
+  platformResultListeners,
+  normalizePlatformInboundMessage,
+  isOwnerPlatformConversation,
+  buildPlatformConversationIdentity,
+  buildPlatformConversationDispatchInstruction,
+  buildChannelSessionSnapshot,
+  hasProcessedInboundMessage,
+  markInboundMessageProcessed,
+  broadcastPlatformStatus,
+  broadcastChannelEvent,
+  sendPlatformMessageWithRetry,
+  resolveOutboundFailurePresentation,
+  summarizePlatformAccount,
+  getPlatformFields,
+});
+
+function getActivePlatformAdapter(platformId) {
+  return getPlatformRuntime(platformId)?.adapter ?? null;
+}
+
+const { handlePlatformWebhookHttpRequest, probePlatformWebhook } = createPlatformWebhookRouter({
+  port: PORT,
+  getPlatformAdapter: getActivePlatformAdapter,
+  broadcastPlatformStatus,
+  writeJson,
+});
 
 function deriveInboundTargetFromMessageKey(platformId, inboundMessageKey) {
   const normalizedKey = String(inboundMessageKey || "").trim();
@@ -2029,6 +2287,15 @@ function resolvePlatformDebugTarget(platformId, targetId) {
   if (platformId === "feishu") {
     return String(fields.defaultOpenId || "").trim();
   }
+  if (platformId === "dingtalk") {
+    return String(fields.defaultOpenConversationId || "").trim();
+  }
+  if (platformId === "wechat_official" || platformId === "qq") {
+    return String(fields.defaultOpenId || "").trim();
+  }
+  if (platformId === "web") {
+    return String(fields.defaultVisitorId || "").trim();
+  }
   return "";
 }
 
@@ -2050,7 +2317,7 @@ function humanizePlatformDebugFailure(platformId, message, targetId) {
 
 async function executePlatformDebugAction({ action, platformId, targetId, text }) {
   if (action === "diagnose") {
-    const report = buildPlatformDiagnosis(platformId);
+    const report = await buildPlatformDiagnosis(platformId);
     const debugAt = Date.now();
     rememberPlatformDebug(
       platformId,
@@ -2077,7 +2344,10 @@ async function executePlatformDebugAction({ action, platformId, targetId, text }
   }
 
   if (action === "probe_webhook") {
-    const probe = await probePlatformWebhook(platformId);
+    const probe = await probePlatformWebhook(
+      platformId,
+      String(settings.platformConfigs?.[platformId]?.fields?.webhookUrl || "").trim(),
+    );
     const probeOk = probe.localReachable && probe.adapterReady && (!probe.configuredPublicUrl || probe.pathMatches);
     const probeAt = Date.now();
     rememberPlatformDebug(
@@ -2261,7 +2531,9 @@ function buildChannelSessionPayload({
   externalMessageId,
   title,
   participantLabel,
+  replyTargetId,
   remoteUserId,
+  remoteThreadId,
   accountLabel,
   serviceMode,
 }) {
@@ -2271,7 +2543,9 @@ function buildChannelSessionPayload({
     externalRef: String(externalRef),
     title: title || `${platformId}:${externalRef}`,
     participantLabel: participantLabel || String(externalRef),
-    remoteUserId: remoteUserId || String(externalRef),
+    replyTargetId: replyTargetId || String(externalRef),
+    remoteUserId: remoteUserId || replyTargetId || String(externalRef),
+    ...(remoteThreadId ? { remoteThreadId } : {}),
     accountLabel: accountLabel || summarizePlatformAccount(platformId, settings.platformConfigs?.[platformId]?.fields ?? {}),
     ...(serviceMode ? { serviceMode } : {}),
     lastMessageDirection: direction,
@@ -2495,51 +2769,7 @@ function finalizeCancelledExecution({
   });
 }
 
-function buildChannelSessionSnapshot({
-  platformId,
-  targetId,
-  direction,
-  text,
-  deliveryStatus,
-  requiresReply,
-  status,
-  summary,
-  timestamp,
-  deliveryError,
-  externalMessageId,
-  title,
-  participantLabel,
-  remoteUserId,
-  accountLabel,
-  serviceMode,
-}) {
-  const channel = mapPlatformToChannel(platformId);
-  return {
-    channel,
-    externalRef: String(targetId),
-    title: title || `${platformId}:${targetId}`,
-    participantLabel: participantLabel || String(targetId),
-    remoteUserId: remoteUserId || String(targetId),
-    ...(serviceMode ? { serviceMode } : {}),
-    lastMessageDirection: direction,
-    lastDeliveryStatus: deliveryStatus,
-    lastDeliveryError: deliveryError,
-    lastMessagePreview: String(text || "").slice(0, 140),
-    unreadCount: direction === "inbound" ? 1 : 0,
-    requiresReply,
-    status,
-    summary,
-    lastMessageAt: timestamp,
-    lastExternalMessageId: externalMessageId ? String(externalMessageId) : undefined,
-    lastInboundAt: direction === "inbound" ? timestamp : undefined,
-    lastOutboundAt: direction === "outbound" ? timestamp : undefined,
-    lastOutboundText: direction === "outbound" ? String(text || "") : undefined,
-    lastFailedOutboundText: deliveryStatus === "failed" ? String(text || "") : undefined,
-    accountLabel: accountLabel || summarizePlatformAccount(platformId, settings.platformConfigs?.[platformId]?.fields ?? {}),
-  };
-}
-
-function buildPlatformDiagnosis(platformId) {
+async function buildPlatformDiagnosis(platformId) {
   const platformConfig = settings.platformConfigs?.[platformId] ?? { enabled: false, fields: {} };
   const fields = platformConfig.fields ?? {};
   const requiredKeys = PLATFORM_FIELD_REQUIREMENTS[platformId] ?? [];
@@ -2548,6 +2778,14 @@ function buildPlatformDiagnosis(platformId) {
   const defaultTarget = resolvePlatformDebugTarget(platformId, "");
   const webhookRoute = PLATFORM_WEBHOOK_PATHS[platformId] ?? "";
   const running = isPlatformRunning(platformId);
+  const runtimeProbe = running
+    ? await probePlatformRuntime(platformId).catch((error) => ({
+        ok: false,
+        status: "error",
+        message: error instanceof Error ? error.message : String(error),
+        checkedAt: Date.now(),
+      }))
+    : null;
 
   const checks = [
     {
@@ -2572,6 +2810,15 @@ function buildPlatformDiagnosis(platformId) {
     },
   ];
 
+  if (runtimeProbe) {
+    checks.push({
+      id: "runtimeProbe",
+      label: "连接探活",
+      status: runtimeProbe.ok ? "pass" : "fail",
+      detail: runtimeProbe.message || "探活未返回诊断消息。",
+    });
+  }
+
   if (webhookRoute) {
     checks.push({
       id: "webhook",
@@ -2583,7 +2830,14 @@ function buildPlatformDiagnosis(platformId) {
     });
   }
 
-  if (platformId === "telegram" || platformId === "feishu") {
+  if (
+    platformId === "telegram"
+    || platformId === "feishu"
+    || platformId === "dingtalk"
+    || platformId === "wechat_official"
+    || platformId === "qq"
+    || platformId === "web"
+  ) {
     checks.push({
       id: "defaultTarget",
       label: "默认联调目标",
@@ -2625,43 +2879,8 @@ function buildPlatformDiagnosis(platformId) {
     status: platformConfig.status ?? "idle",
     detail: platformConfig.detail ?? "",
     accountLabel: summarizePlatformAccount(platformId, fields),
+    runtimeProbe,
     checkedAt: Date.now(),
-  };
-}
-
-async function probePlatformWebhook(platformId) {
-  const webhookRoute = PLATFORM_WEBHOOK_PATHS[platformId];
-  if (!webhookRoute) {
-    throw new Error("当前平台不是 Webhook 型接入，无需探测。");
-  }
-
-  const configuredPublicUrl = String(settings.platformConfigs?.[platformId]?.fields?.webhookUrl || "").trim();
-  const localProbeUrl = `http://127.0.0.1:${PORT}${webhookRoute}?probe=1`;
-  const response = await fetch(localProbeUrl, { method: "GET" });
-  const payload = await response.json().catch(() => ({}));
-  const adapterReady = Boolean(payload?.adapterReady);
-  const localReachable = response.ok;
-  const pathMatches = configuredPublicUrl ? configuredPublicUrl.endsWith(webhookRoute) : false;
-  const summary = localReachable
-    ? adapterReady
-      ? (configuredPublicUrl
-          ? (pathMatches
-              ? "Webhook 本机路由可达，适配器已挂载，公网地址路径也匹配。"
-              : "Webhook 本机路由可达，适配器已挂载，但公网地址路径与预期不一致。")
-          : "Webhook 本机路由可达，适配器已挂载，但还没填写公网地址标记。")
-      : "Webhook 路由可达，但适配器尚未挂载，通常说明平台未成功启用。"
-    : "Webhook 本机路由探测失败。";
-
-  return {
-    platformId,
-    webhookRoute,
-    localProbeUrl,
-    configuredPublicUrl,
-    localReachable,
-    adapterReady,
-    pathMatches,
-    probeStatus: response.status,
-    summary,
   };
 }
 
@@ -3406,29 +3625,19 @@ function shouldPreferOrchestratorForWebResearch(text) {
   ].some(keyword => t.includes(keyword));
 }
 
-function shouldPreferOrchestratorForDesktopControl(text) {
+function shouldPreferOrchestratorForDesktopControl(text, source = "chat") {
   const t = String(text || "").trim().toLowerCase();
   if (!t) return false;
-
-  if (shouldExplicitlyOpenExternalBrowser(t)) {
-    return true;
-  }
 
   if (isDesktopFileDestinationRequest(t)) {
     return false;
   }
 
-  const directDesktopPatterns = [
-    /(?:鼠标|鍵盤|键盘|截图|截圖|接管|点开|點開|点击|點擊|双击|雙擊|右键|右鍵|滚动|滾動|输入|輸入|按下|播放)/i,
-    /(?:桌面|desktop).{0,12}(?:点击|點擊|操作|接管|程序|應用|应用|窗口|視窗|弹窗|彈窗)/i,
-    /(?:点击|點擊|操作|接管|启动|啟動).{0,12}(?:桌面|desktop)/i,
-    /(?:打开|打開|进入|進入|前往|跳转到|跳轉到|去到).{0,18}(?:视频|影片|视频页|影片頁|直播|网页播放器|網頁播放器)/i,
-    /(?:网页|網頁|网站|網站|浏览器|瀏覽器).{0,18}(?:点击|點擊|点开|點開|播放|输入|輸入|滚动|滾動|操作)/i,
-    /(?:打开|打開|进入|進入|前往|跳转到|跳轉到|去到).{0,20}(?:b\s*站|bilibili|you\s*tube|youtube|优酷|腾讯视频|爱奇艺|抖音|tiktok|快手|视频站|視頻站|视频网站|視頻網站|播放器)/i,
-    /(?:b\s*站|bilibili|you\s*tube|youtube|优酷|腾讯视频|爱奇艺|抖音|tiktok|快手|视频站|視頻站|视频网站|視頻網站|播放器).{0,18}(?:打开|打開|点击|點擊|点开|點開|播放|滚动|滾動|输入|輸入|进入|進入)/i,
-  ];
+  if (String(source || "").trim().toLowerCase() === "remote-ops" && !isLikelyPhysicalDesktopTask(t)) {
+    return false;
+  }
 
-  return directDesktopPatterns.some(pattern => pattern.test(t));
+  return isLikelyPhysicalDesktopTask(t);
 }
 
 function shouldExplicitlyOpenExternalBrowser(text) {
@@ -3464,6 +3673,23 @@ function isDesktopFileDestinationRequest(text) {
   ].some(pattern => pattern.test(t));
 }
 
+function isLikelyPhysicalDesktopTask(text) {
+  const t = String(text || "").trim().toLowerCase();
+  if (!t) return false;
+
+  if (shouldExplicitlyOpenExternalBrowser(t)) {
+    return true;
+  }
+
+  return [
+    /(?:桌面|desktop|窗口|視窗|界面|介面|浏览器|瀏覽器|程序|應用|应用|播放器|视频页|影片頁|网页播放器|網頁播放器).{0,18}(?:点击|點擊|点开|點開|双击|雙擊|右键|右鍵|滚动|滾動|输入|輸入|按下|播放|操作)/i,
+    /(?:点击|點擊|点开|點開|双击|雙擊|右键|右鍵|滚动|滾動|输入|輸入|按下|播放|操作).{0,18}(?:桌面|desktop|窗口|視窗|界面|介面|浏览器|瀏覽器|程序|應用|应用|播放器|视频页|影片頁)/i,
+    /(?:打开|打開|启动|啟動|进入|進入|前往|跳转到|跳轉到|去到).{0,20}(?:chrome|edge|firefox|figma|notion|微信|企业微信|企業微信|飞书|飛書|qq|钉钉|釘釘|浏览器|瀏覽器|b\s*站|bilibili|you\s*tube|youtube|优酷|腾讯视频|爱奇艺|抖音|tiktok|快手|视频网站|視頻網站|播放器)/i,
+    /(?:chrome|edge|firefox|figma|notion|微信|企业微信|企業微信|飞书|飛書|qq|钉钉|釘釘|浏览器|瀏覽器|b\s*站|bilibili|you\s*tube|youtube|优酷|腾讯视频|爱奇艺|抖音|tiktok|快手|视频网站|視頻網站|播放器).{0,18}(?:打开|打開|启动|啟動|进入|進入|点击|點擊|点开|點開|播放|滚动|滾動|输入|輸入|操作)/i,
+    /(?:鼠标|鍵盤|键盘).{0,18}(?:点击|點擊|滚动|滾動|输入|輸入|操作|接管)/i,
+  ].some(pattern => pattern.test(t));
+}
+
 function buildBrowserExecutionGuardrail(text) {
   if (shouldExplicitlyOpenExternalBrowser(text)) {
     return [
@@ -3481,6 +3707,21 @@ function buildBrowserExecutionGuardrail(text) {
     "- 只有当用户明确要求“打开浏览器”，或明确要求“打开/访问某个网站、链接、URL”，才允许使用 desktop_open_external_browser 或 desktop_launch_native_application。",
     "- 如果任务是“先查资料，再生成 Word / 文档 / 总结 / 附件，并保存到桌面或本地目录”，检索阶段仍然只用内置 browser_*；保存到桌面不等于打开桌面浏览器。",
     "- “发到桌面 / 保存到桌面 / 导出到桌面” 只是本地交付目标，不属于外部浏览器打开指令。",
+  ].join("\n");
+}
+
+function buildRemoteOpsExecutionGuardrail(source) {
+  if (String(source || "").trim().toLowerCase() !== "remote-ops") {
+    return "";
+  }
+
+  return [
+    "【远程值守边界】",
+    "- 当前任务来自自治/监管值守链路，目标是主动处理客户沟通、生成对客消息或辅助完成渠道触达。",
+    "- 这类任务默认不是桌面接管任务，不要主动调用 desktop_*、鼠标、键盘、截图或外部程序链路。",
+    "- 如需最新资料、网页证据、新闻、公告或站点信息，应优先使用内置 browser_* 工具联网检索。",
+    "- 只有当指令明确要求真实打开某个桌面程序、浏览器、网站页面并操作界面时，才允许改走桌面工具链。",
+    "- 监管模式不会禁止回复客户或联网搜索；区别只在是否自动发起外呼，不在于能否正常检索信息。",
   ].join("\n");
 }
 
@@ -3544,12 +3785,12 @@ function nextTaskTimestamp() {
   return Date.now() + timeSeq;
 }
 
-function routeTask(instruction) {
+function routeTask(instruction, source = "chat") {
   const lower = String(instruction || "").toLowerCase();
   if (isUserProfileOnboardingInstruction(lower)) {
     return { agent: "orchestrator", complexity: "low" };
   }
-  if (shouldPreferOrchestratorForDesktopControl(lower)) {
+  if (shouldPreferOrchestratorForDesktopControl(lower, source)) {
     return { agent: "orchestrator", complexity: "high" };
   }
   if (shouldPreferOrchestratorForWebResearch(lower)) {
@@ -3586,9 +3827,10 @@ function buildClient(agentId, injectedSkillPrompt = "", options = {}) {
     ? `\n\n个性补充：${config.personality}`
     : "";
   const skillPrompt = options.includeSkillPrompt === false ? "" : String(injectedSkillPrompt || "").trim();
+  const governancePrompt = buildGovernancePolicyPrompt(agentId, options.meetingMode ? "meeting" : "chat");
   const systemPrompt = options.systemPromptOverride
-    ? `${String(options.systemPromptOverride).trim()}${personality}`
-    : `${SYSTEM_PROMPTS[agentId]}${personality}${skillPrompt ? `\n\n${skillPrompt}` : ""}`;
+    ? `${String(options.systemPromptOverride).trim()}${governancePrompt ? `\n\n${governancePrompt}` : ""}${personality}`
+    : `${SYSTEM_PROMPTS[agentId]}${governancePrompt ? `\n\n${governancePrompt}` : ""}${personality}${skillPrompt ? `\n\n${skillPrompt}` : ""}`;
   const providerId = provider?.id || config?.providerId || "";
   const useAnthropic =
     providerId.startsWith("anthropic")
@@ -3616,6 +3858,7 @@ async function callMeetingAgent(agentId, task, complexity, maxTokensOverride, se
     systemPromptOverride: buildMeetingAgentSystemPrompt(agentId),
     includePersonality: true,
     includeSkillPrompt: false,
+    meetingMode: true,
   });
   const hasCustomModel = !!settings.agentConfigs?.[agentId]?.model;
   const actualModel = hasCustomModel ? model : getModelForComplexity(complexity);
@@ -3741,6 +3984,9 @@ async function callAgent(agentId, task, complexity, maxTokensOverride, sessionId
   const hasCustomModel = !!settings.agentConfigs?.[agentId]?.model;
   const actualModel = hasCustomModel ? model : getModelForComplexity(complexity);
   const defaultMax = complexity === "high" ? 1024 : complexity === "medium" ? 600 : 400;
+  const userMessageContent = Array.isArray(executionMeta.userContentBlocks) && executionMeta.userContentBlocks.length > 0
+    ? [{ type: "text", text: String(task || "") }, ...executionMeta.userContentBlocks]
+    : task;
   const streamReporter = executionMeta.executionRunId && executionMeta.taskId
     ? createAssistantStreamReporter({
         executionRunId: executionMeta.executionRunId,
@@ -3783,6 +4029,7 @@ async function callAgent(agentId, task, complexity, maxTokensOverride, sessionId
     agentId,
     sessionId,
     task,
+    userMessageContent,
     systemPrompt,
     tools: getAgentTools(agentId),
     maxTokens: maxTokensOverride ?? defaultMax,
@@ -3807,6 +4054,7 @@ async function callAgent(agentId, task, complexity, maxTokensOverride, sessionId
           taskId: executionMeta.taskId,
           sessionId,
           signal: executionMeta.signal,
+          executionSource: executionMeta.source,
           userInstruction: executionMeta.userInstruction,
           currentTaskDescription: executionMeta.currentTaskDescription,
         }
@@ -3822,6 +4070,7 @@ async function dispatch(
   requesterWs = null,
   userInstruction = instruction,
   options = {},
+  attachments = [],
 ) {
   const runId = executionRunId || randomUUID();
   const createdAt = Date.now();
@@ -3842,6 +4091,13 @@ async function dispatch(
   let totalTasksForCancellation = 0;
   let completedTasksForCancellation = 0;
   let failedTasksForCancellation = 0;
+  const attachmentBlocks = await buildAttachmentUserContentBlocks(attachments);
+  const hasAttachmentContext = attachmentBlocks.length > 0;
+  const browserExecutionGuardrail = buildBrowserExecutionGuardrail(userInstruction);
+  const remoteOpsExecutionGuardrail = buildRemoteOpsExecutionGuardrail(source);
+  const executionGuardrails = [browserExecutionGuardrail, remoteOpsExecutionGuardrail]
+    .filter(Boolean)
+    .join("\n\n");
 
   try {
     broadcastExecutionUpdate({
@@ -3862,7 +4118,7 @@ async function dispatch(
     idleAllExcept("orchestrator");
     broadcast({ type: "agent_status", agentId: "orchestrator", status: "running", currentTask: "理解指令中...", executionRunId: runId });
 
-    if (!disableDirectReply && shouldReplyDirectlyByOrchestrator(userInstruction)) {
+    if (!disableDirectReply && !hasAttachmentContext && shouldReplyDirectlyByOrchestrator(userInstruction)) {
       totalTasksForCancellation = 1;
       let taskId = randomUUID();
       try {
@@ -3906,13 +4162,15 @@ async function dispatch(
             220,
             sessionId,
             {
-              executionRunId: runId,
-              requesterWs,
-              taskId,
-              signal: controller.signal,
-              userInstruction,
-              currentTaskDescription: userInstruction,
-            },
+            executionRunId: runId,
+            requesterWs,
+            taskId,
+            signal: controller.signal,
+            source,
+            userInstruction,
+            currentTaskDescription: userInstruction,
+            userContentBlocks: attachmentBlocks,
+          },
           );
           throwIfExecutionCancelled(runId);
           text = response.text;
@@ -4036,11 +4294,10 @@ async function dispatch(
     });
 
     let tasks = [];
-    const browserExecutionGuardrail = buildBrowserExecutionGuardrail(userInstruction);
     const forcedRoute = forcedAgentId
       ? {
           agent: forcedAgentId,
-          complexity: forcedComplexity ?? routeTask(userInstruction).complexity,
+          complexity: forcedComplexity ?? routeTask(userInstruction, source).complexity,
         }
       : null;
 
@@ -4050,24 +4307,24 @@ async function dispatch(
         userInstruction,
       ];
       tasks = candidateTasks.map((desc) => {
-        const routed = forcedRoute ?? routeTask(desc);
+        const routed = forcedRoute ?? routeTask(desc, source);
         const isPrimaryInstruction = desc === userInstruction;
         return {
           id: randomUUID(),
           description: isPrimaryInstruction ? userInstruction : `围绕“${userInstruction}”：${desc}`,
           prompt: isPrimaryInstruction
-            ? `${instruction}\n\n${browserExecutionGuardrail}`
-            : `用户原始需求：${userInstruction}\n\n完整上下文：\n${instruction}\n\n${browserExecutionGuardrail}\n\n当前子任务：${desc}`,
+            ? `${instruction}\n\n${executionGuardrails}`
+            : `用户原始需求：${userInstruction}\n\n完整上下文：\n${instruction}\n\n${executionGuardrails}\n\n当前子任务：${desc}`,
           assignedTo: routed.agent,
           complexity: routed.complexity,
         };
       });
     } else {
-      const routed = forcedRoute ?? routeTask(userInstruction);
+      const routed = forcedRoute ?? routeTask(userInstruction, source);
       tasks = [{
         id: randomUUID(),
         description: userInstruction,
-        prompt: `${instruction}\n\n${browserExecutionGuardrail}`,
+        prompt: `${instruction}\n\n${executionGuardrails}`,
         assignedTo: routed.agent,
         complexity: routed.complexity,
       }];
@@ -4144,8 +4401,10 @@ async function dispatch(
             taskId: task.id,
             requesterWs,
             signal: controller.signal,
+            source,
             userInstruction,
             currentTaskDescription: task.description,
+            userContentBlocks: attachmentBlocks,
           },
         );
         throwIfExecutionCancelled(runId);
@@ -4296,6 +4555,15 @@ function resolveMeetingDeliveryTarget(platformId) {
   }
   if (platformId === "feishu") {
     return String(fields.defaultOpenId || lastInboundTarget).trim();
+  }
+  if (platformId === "dingtalk") {
+    return String(fields.defaultOpenConversationId || lastInboundTarget).trim();
+  }
+  if (platformId === "wechat_official" || platformId === "qq") {
+    return String(fields.defaultOpenId || lastInboundTarget).trim();
+  }
+  if (platformId === "web") {
+    return String(fields.defaultVisitorId || lastInboundTarget).trim();
   }
 
   return "";
@@ -4637,6 +4905,7 @@ async function meeting(
 ) {
   const meetingId = options.meetingId ?? randomUUID();
   const signal = options.signal;
+  const externalContext = String(options.context || "").trim();
   const evidenceWindow = getMeetingRecentEvidenceWindow(Date.now(), 15);
   const defaultParticipants = MEETING_DEBATE_PARTICIPANTS;
   const activeParticipants = Array.from(
@@ -4668,6 +4937,7 @@ async function meeting(
   ].join("\n");
   let context = [
     `会议主题：${topic}`,
+    externalContext ? `会前聊天上下文：\n${externalContext}` : "",
     "主持与裁判：鹦鹉螺（中立，不参与站队，只负责追问、归纳和裁决）",
     "参会角色与立场：",
     participantStanceList,
@@ -4815,262 +5085,6 @@ async function meeting(
   }
 }
 
-function normalizePlatformInboundMessage(messageOrUserId, text, platformId) {
-  const payload = messageOrUserId && typeof messageOrUserId === "object" && !Array.isArray(messageOrUserId)
-    ? messageOrUserId
-    : {
-        userId: messageOrUserId,
-        text,
-        platformId,
-      };
-
-  return {
-    userId: String(payload?.userId || "").trim(),
-    text: String(payload?.text || "").trim(),
-    platformId: String(payload?.platformId || platformId || "").trim(),
-    inboundMessageKey: String(payload?.inboundMessageKey || "").trim() || undefined,
-    externalMessageId: String(payload?.externalMessageId || "").trim() || undefined,
-  };
-}
-
-function normalizePlatformIdentityList(value) {
-  return String(value || "")
-    .split(/[\n,，;；]/)
-    .map(item => item.trim())
-    .filter(Boolean);
-}
-
-function getPlatformOwnerIdentifiers(platformId) {
-  const fields = settings.platformConfigs?.[platformId]?.fields ?? {};
-  const ownerIds = normalizePlatformIdentityList(fields.ownerUserIds);
-
-  if (platformId === "telegram" && fields.defaultChatId) {
-    ownerIds.push(String(fields.defaultChatId).trim());
-  }
-  if (platformId === "feishu" && fields.defaultOpenId) {
-    ownerIds.push(String(fields.defaultOpenId).trim());
-  }
-
-  return [...new Set(ownerIds.filter(Boolean))];
-}
-
-function isOwnerPlatformConversation(platformId, userId) {
-  const normalizedUserId = String(userId || "").trim();
-  if (!normalizedUserId) return false;
-  return getPlatformOwnerIdentifiers(platformId).includes(normalizedUserId);
-}
-
-function buildPlatformConversationIdentity(platformId, userId, serviceMode = "customer_service") {
-  const normalizedUserId = String(userId || "").trim();
-  const accountLabel = summarizePlatformAccount(platformId, settings.platformConfigs?.[platformId]?.fields ?? {});
-  return {
-    title: serviceMode === "owner" ? `${platformId} · 我的会话` : `${platformId} · ${normalizedUserId}`,
-    participantLabel: serviceMode === "owner" ? "我" : normalizedUserId,
-    remoteUserId: normalizedUserId,
-    accountLabel,
-    serviceMode,
-  };
-}
-
-function buildPlatformConversationDispatchInstruction({
-  platformId,
-  userId,
-  inboundText,
-  serviceMode,
-}) {
-  if (serviceMode === "owner") {
-    return String(inboundText || "").trim();
-  }
-
-  const channel = mapPlatformToChannel(platformId);
-  const accountLabel = summarizePlatformAccount(platformId, settings.platformConfigs?.[platformId]?.fields ?? {});
-  return [
-    "这是来自外部消息平台的一段真实客户会话，请直接以客服/售前/售后支持身份回复。",
-    "回复要求：",
-    "- 不要暴露内部 agent、系统、任务拆解、工具调用、工作流或任何软件后台信息。",
-    "- 直接站在当前软件用户的业务视角回复，把对方当成客户或潜在客户来服务。",
-    "- 语气专业、自然、简洁，先解决问题，再推进下一步。",
-    "- 如果信息不足，只追问最关键的一两个澄清点，不要像问卷一样连续盘问。",
-    "- 直接输出要发给对方的话，不要附加解释。",
-    `平台：${platformId}`,
-    `渠道：${channel}`,
-    `账号：${accountLabel || "默认账号"}`,
-    `会话对象：${userId}`,
-    `客户消息：${String(inboundText || "").trim()}`,
-  ].join("\n");
-}
-
-async function handlePlatformMessage(messageOrUserId, text, platformId) {
-  const taskAgentMap = {};
-  const inboundMessage = normalizePlatformInboundMessage(messageOrUserId, text, platformId);
-  if (!inboundMessage.userId || !inboundMessage.text || !inboundMessage.platformId) {
-    return;
-  }
-
-  const { userId, text: inboundText, platformId: inboundPlatformId, inboundMessageKey, externalMessageId } = inboundMessage;
-  const inboundTimestamp = Date.now();
-  const ownerConversation = isOwnerPlatformConversation(inboundPlatformId, userId);
-  const serviceMode = ownerConversation ? "owner" : "customer_service";
-  const sessionIdentity = buildPlatformConversationIdentity(inboundPlatformId, userId, serviceMode);
-  const dispatchSessionId = `${serviceMode === "owner" ? "platform-owner" : "platform-support"}:${inboundPlatformId}:${userId}`;
-  const channelExecutionRunId = `platform-run:${randomUUID()}`;
-
-  if (inboundMessageKey && hasProcessedInboundMessage(inboundPlatformId, inboundMessageKey, inboundTimestamp)) {
-    broadcastPlatformStatus(inboundPlatformId, {
-      status: "connected",
-      detail: "检测到重复入站消息，已自动去重忽略。",
-      healthScore: 100,
-      lastEventAt: inboundTimestamp,
-      lastInboundAt: inboundTimestamp,
-      lastInboundMessageKey: inboundMessageKey,
-      lastInboundTarget: userId,
-      accountLabel: summarizePlatformAccount(inboundPlatformId, settings.platformConfigs?.[inboundPlatformId]?.fields ?? {}),
-    });
-    return;
-  }
-
-  if (inboundMessageKey) {
-    markInboundMessageProcessed(inboundPlatformId, inboundMessageKey, inboundTimestamp);
-  }
-
-  broadcastPlatformStatus(inboundPlatformId, {
-    status: "connected",
-    detail: "已收到最新入站消息，连接器在线。",
-    healthScore: 100,
-    pendingEvents: 1,
-    lastEventAt: inboundTimestamp,
-    lastInboundAt: inboundTimestamp,
-    lastInboundMessageKey: inboundMessageKey,
-    lastInboundTarget: userId,
-    accountLabel: summarizePlatformAccount(inboundPlatformId, settings.platformConfigs?.[inboundPlatformId]?.fields ?? {}),
-  });
-  broadcastChannelEvent({
-    session: buildChannelSessionSnapshot({
-      platformId: inboundPlatformId,
-      targetId: userId,
-      direction: "inbound",
-      text: inboundText,
-      deliveryStatus: "delivered",
-      requiresReply: true,
-      status: "active",
-      summary: `最近收到入站消息：${inboundText.slice(0, 80)}`,
-      timestamp: inboundTimestamp,
-      externalMessageId,
-      ...sessionIdentity,
-    }),
-    title: "收到入站消息",
-    detail: inboundText.slice(0, 500),
-    status: "completed",
-    eventType: "message",
-    externalRef: String(userId),
-  });
-
-  const deliverPlatformReply = (agentId, resultText) => {
-    const normalizedResult = String(resultText || "").trim();
-    if (!normalizedResult) return;
-
-    sendPlatformMessageWithRetry({
-      platformId: inboundPlatformId,
-      targetId: userId,
-      text: normalizedResult,
-      trigger: "auto",
-      successDetail: "最近一条出站回复已成功送达。",
-      failureDetailPrefix: "最近一条出站回复发送失败",
-    })
-      .then(({ sentAt: outboundTimestamp }) => {
-        broadcastChannelEvent({
-          session: buildChannelSessionSnapshot({
-            platformId: inboundPlatformId,
-            targetId: userId,
-            direction: "outbound",
-            text: normalizedResult,
-            deliveryStatus: "sent",
-            requiresReply: false,
-            status: "active",
-            summary: `最近回复已发出：${normalizedResult.slice(0, 80)}`,
-            timestamp: outboundTimestamp,
-            ...sessionIdentity,
-          }),
-          title: "发送平台回复",
-          detail: normalizedResult.slice(0, 500),
-          status: "sent",
-          eventType: "message",
-          externalRef: String(userId),
-        });
-      })
-      .catch((error) => {
-        const failure = resolveOutboundFailurePresentation(error, {
-          approvalSummary: "自动回复等待人工批准",
-          cooldownSummary: "连接器冷却中，等待人工重试",
-          failureSummary: "最近回复发送失败",
-        });
-        const failureAt = Date.now();
-        broadcastChannelEvent({
-          session: buildChannelSessionSnapshot({
-            platformId: inboundPlatformId,
-            targetId: userId,
-            direction: "outbound",
-            text: normalizedResult,
-            deliveryStatus: failure.operationStatus === "failed" ? "failed" : "pending",
-            requiresReply: true,
-            status: failure.channelStatus,
-            summary: failure.summary,
-            timestamp: failureAt,
-            deliveryError: failure.detail,
-            ...sessionIdentity,
-          }),
-          title: failure.operationStatus === "blocked" ? "平台回复等待人工" : "平台回复发送失败",
-          detail: failure.detail,
-          status: failure.operationStatus,
-          eventType: failure.eventType,
-          failureReason: failure.failureReason,
-          externalRef: String(userId),
-        });
-      });
-  };
-
-  const listenerId = randomUUID();
-  platformResultListeners.set(listenerId, (msg) => {
-    if (msg.executionRunId !== channelExecutionRunId) {
-      return;
-    }
-    if (msg.type === "task_add" && msg.task) {
-      taskAgentMap[msg.task.id] = msg.task.assignedTo;
-      if (msg.task.status === "done" && msg.task.result) {
-        deliverPlatformReply(msg.task.assignedTo, msg.task.result);
-      }
-    }
-    if (msg.type === "task_update" && msg.updates?.status === "done" && msg.updates?.result) {
-      const agentId = taskAgentMap[msg.taskId];
-      deliverPlatformReply(agentId, msg.updates.result);
-    }
-  });
-
-  try {
-    await dispatch(
-      buildPlatformConversationDispatchInstruction({
-        platformId: inboundPlatformId,
-        userId,
-        inboundText,
-        serviceMode,
-      }),
-      dispatchSessionId,
-      channelExecutionRunId,
-      "chat",
-      null,
-      inboundText,
-      {
-        disableDirectReply: serviceMode !== "owner",
-        forcedAgentId: serviceMode === "owner" ? undefined : "greeter",
-        forcedComplexity: serviceMode === "owner" ? undefined : "low",
-      },
-    );
-    await new Promise((resolve) => setTimeout(resolve, 1500));
-  } finally {
-    platformResultListeners.delete(listenerId);
-  }
-}
-
 const httpServer = createServer(async (req, res) => {
   const url = new URL(req.url, "http://localhost");
 
@@ -5078,7 +5092,7 @@ const httpServer = createServer(async (req, res) => {
     res.writeHead(204, {
       "Access-Control-Allow-Origin": "*",
       "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
-      "Access-Control-Allow-Headers": "Content-Type",
+      "Access-Control-Allow-Headers": "Content-Type, X-STARCRAW-SECRET, X-STARCRAW-SIGNATURE, X-STARCRAW-TIMESTAMP, X-STARCRAW-WIDGET-TOKEN",
     });
     res.end();
     return;
@@ -5109,6 +5123,41 @@ const httpServer = createServer(async (req, res) => {
       hermesDispatchSettings: getNormalizedHermesDispatchSettings(),
       prototypePath: hermesDispatchPrototypePath,
     });
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/hermes-diagnostics") {
+    try {
+      const [availability, runs, semanticMemoryHealth] = await Promise.all([
+        getHermesDispatchAvailability(),
+        listHermesDispatchRuns(),
+        (async () => {
+          const pgvector = settings.semanticMemoryConfig?.pgvector;
+          const connectionString = String(pgvector?.connectionString || "").trim();
+          if (!pgvector?.enabled || !connectionString) return null;
+          return checkSemanticMemoryStore({
+            connectionString,
+            config: settings.semanticMemoryConfig,
+            embedding: {},
+          });
+        })(),
+      ]);
+
+      writeJson(res, 200, buildHermesDiagnostics({
+        availability,
+        runs,
+        hermesDispatchSettings: getNormalizedHermesDispatchSettings(),
+        semanticMemoryConfig: settings.semanticMemoryConfig,
+        platformConfigs: settings.platformConfigs,
+        agentConfigs: normalizeAgentConfigs(settings.agentConfigs, settings.agentConfigs),
+        semanticMemoryHealth,
+      }));
+    } catch (error) {
+      writeJson(res, 500, {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
     return;
   }
 
@@ -5292,6 +5341,46 @@ const httpServer = createServer(async (req, res) => {
     }
     return;
   }
+
+    if (req.method === "POST" && url.pathname === "/api/web-channel/pull") {
+      try {
+        const adapter = getActivePlatformAdapter("web");
+        if (!adapter || typeof adapter.pullOutboundMessages !== "function") {
+          writeJson(res, 404, { ok: false, error: "网页会话通道未启用，无法拉取回复。" });
+        return;
+      }
+
+      const rawBody = await readBodyText(req);
+      const result = await adapter.pullOutboundMessages({
+        headers: req.headers,
+        body: rawBody,
+      });
+      writeJson(res, 200, result);
+    } catch (error) {
+      writeJson(res, 401, { ok: false, error: error instanceof Error ? error.message : String(error) });
+      }
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/qq-bridge/pull") {
+      try {
+        const adapter = getActivePlatformAdapter("qq");
+        if (!adapter || typeof adapter.pullOutboundMessages !== "function") {
+          writeJson(res, 404, { ok: false, error: "QQ Bridge 通道未启用，无法拉取回复。" });
+          return;
+        }
+
+        const rawBody = await readBodyText(req);
+        const result = await adapter.pullOutboundMessages({
+          headers: req.headers,
+          body: rawBody,
+        });
+        writeJson(res, 200, result);
+      } catch (error) {
+        writeJson(res, 401, { ok: false, error: error instanceof Error ? error.message : String(error) });
+      }
+      return;
+    }
 
   if (req.method === "POST" && url.pathname === "/api/settings") {
     try {
@@ -5501,172 +5590,8 @@ const httpServer = createServer(async (req, res) => {
     return;
   }
 
-  if (req.method === "GET" && url.pathname === "/webhook/line" && url.searchParams.get("probe") === "1") {
-    const adapter = globalThis.__lineAdapter;
-    writeJson(res, 200, {
-      ok: true,
-      platformId: "line",
-      route: "/webhook/line",
-      adapterReady: Boolean(adapter),
-      accepts: ["POST"],
-      message: adapter ? "LINE Webhook 路由可达，适配器已挂载。" : "LINE Webhook 路由可达，但适配器尚未挂载。",
-    });
+  if (await handlePlatformWebhookHttpRequest(req, res, url)) {
     return;
-  }
-
-  if (req.method === "POST" && url.pathname === "/webhook/line") {
-    let body = "";
-    req.on("data", (d) => { body += d; });
-    req.on("end", async () => {
-      const adapter = globalThis.__lineAdapter;
-      if (!adapter) { res.writeHead(404); res.end(); return; }
-      try {
-        const events = JSON.parse(body).events ?? [];
-        await adapter.handleWebhookEvents(events);
-        broadcastPlatformStatus("line", {
-          status: "connected",
-          detail: "已收到 LINE Webhook 回调。",
-          healthScore: 100,
-          webhookUrl: PLATFORM_WEBHOOK_PATHS.line,
-          lastEventAt: Date.now(),
-        });
-        res.writeHead(200);
-        res.end("OK");
-      } catch {
-        broadcastPlatformStatus("line", {
-          status: "webhook_unreachable",
-          detail: "LINE Webhook 回调处理失败。",
-          errorMsg: "LINE Webhook 回调处理失败",
-          healthScore: 45,
-          webhookUrl: PLATFORM_WEBHOOK_PATHS.line,
-          lastEventAt: Date.now(),
-        });
-        res.writeHead(500);
-        res.end();
-      }
-    });
-    return;
-  }
-
-  if ((req.method === "POST" || req.method === "GET") && url.pathname === "/webhook/feishu") {
-    if (req.method === "GET" && url.searchParams.get("probe") === "1") {
-      const adapter = globalThis.__feishuAdapter;
-      writeJson(res, 200, {
-        ok: true,
-        platformId: "feishu",
-        route: "/webhook/feishu",
-        adapterReady: Boolean(adapter),
-        accepts: ["GET", "POST"],
-        message: adapter ? "飞书 Webhook 路由可达，适配器已挂载。" : "飞书 Webhook 路由可达，但适配器尚未挂载。",
-      });
-      return;
-    }
-    let body = "";
-    req.on("data", (d) => { body += d; });
-    req.on("end", async () => {
-      const adapter = globalThis.__feishuAdapter;
-      if (!adapter) { res.writeHead(404); res.end(); return; }
-      try {
-        const parsed = body ? JSON.parse(body) : {};
-        const result = await adapter.handleWebhookEvent(parsed);
-        broadcastPlatformStatus("feishu", {
-          status: "connected",
-          detail: "已收到飞书 Webhook 回调。",
-          healthScore: 100,
-          webhookUrl: PLATFORM_WEBHOOK_PATHS.feishu,
-          lastEventAt: Date.now(),
-        });
-        res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify(result));
-      } catch {
-        broadcastPlatformStatus("feishu", {
-          status: "webhook_unreachable",
-          detail: "飞书 Webhook 回调处理失败。",
-          errorMsg: "飞书 Webhook 回调处理失败",
-          healthScore: 45,
-          webhookUrl: PLATFORM_WEBHOOK_PATHS.feishu,
-          lastEventAt: Date.now(),
-        });
-        res.writeHead(500);
-        res.end();
-      }
-    });
-    return;
-  }
-
-  if (url.pathname === "/webhook/wecom") {
-    const adapter = globalThis.__wecomAdapter;
-    if (req.method === "GET") {
-      if (url.searchParams.get("probe") === "1") {
-        writeJson(res, 200, {
-          ok: true,
-          platformId: "wecom",
-          route: "/webhook/wecom",
-          adapterReady: Boolean(adapter),
-          accepts: ["GET", "POST"],
-          message: adapter ? "企业微信 Webhook 路由可达，适配器已挂载。" : "企业微信 Webhook 路由可达，但适配器尚未挂载。",
-        });
-        return;
-      }
-      if (!adapter) { res.writeHead(404); res.end(); return; }
-      const echostr = url.searchParams.get("echostr") ?? "";
-      const query = Object.fromEntries(url.searchParams);
-      if (adapter.verifySignature({ ...query, echostr })) {
-        broadcastPlatformStatus("wecom", {
-          status: "connected",
-          detail: "企业微信回调校验通过。",
-          healthScore: 100,
-          webhookUrl: PLATFORM_WEBHOOK_PATHS.wecom,
-          lastEventAt: Date.now(),
-        });
-        res.writeHead(200);
-        res.end(echostr);
-      } else {
-        broadcastPlatformStatus("wecom", {
-          status: "webhook_unreachable",
-          detail: "企业微信回调签名校验失败。",
-          errorMsg: "企业微信回调签名校验失败",
-          healthScore: 35,
-          webhookUrl: PLATFORM_WEBHOOK_PATHS.wecom,
-          lastEventAt: Date.now(),
-        });
-        res.writeHead(403);
-        res.end();
-      }
-      return;
-    }
-    if (req.method === "POST") {
-      if (!adapter) { res.writeHead(404); res.end(); return; }
-      let body = "";
-      req.on("data", (d) => { body += d; });
-      req.on("end", async () => {
-        const query = Object.fromEntries(url.searchParams);
-        try {
-          const result = await adapter.handleWebhookMessage(body, query);
-          broadcastPlatformStatus("wecom", {
-            status: "connected",
-            detail: "已收到企业微信 Webhook 消息。",
-            healthScore: 100,
-            webhookUrl: PLATFORM_WEBHOOK_PATHS.wecom,
-            lastEventAt: Date.now(),
-          });
-          res.writeHead(200);
-          res.end(result);
-        } catch {
-          broadcastPlatformStatus("wecom", {
-            status: "webhook_unreachable",
-            detail: "企业微信 Webhook 消息处理失败。",
-            errorMsg: "企业微信 Webhook 消息处理失败",
-            healthScore: 45,
-            webhookUrl: PLATFORM_WEBHOOK_PATHS.wecom,
-            lastEventAt: Date.now(),
-          });
-          res.writeHead(500);
-          res.end();
-        }
-      });
-      return;
-    }
   }
 
   res.writeHead(404);
@@ -5786,18 +5711,20 @@ wss.on("connection", (ws) => {
         if (msg.action === "send_reply") {
           const platformId = String(msg.platformId || "").trim();
           const externalRef = String(msg.externalRef || "").trim();
+          const replyTargetId = String(msg.replyTargetId || msg.remoteUserId || externalRef).trim();
           const replyText = String(msg.text || "").trim();
-          if (!platformId || !externalRef || !replyText) {
+          const actionTrigger = msg.trigger === "auto" ? "auto" : "manual";
+          if (!platformId || !externalRef || !replyTargetId || !replyText) {
             break;
           }
 
           try {
             const { sentAt } = await sendPlatformMessageWithRetry({
               platformId,
-              targetId: externalRef,
+              targetId: replyTargetId,
               text: replyText,
-              trigger: "manual",
-              bypassCooldown: true,
+              trigger: actionTrigger,
+              bypassCooldown: actionTrigger !== "auto",
               successDetail: msg.retry ? "失败消息已重试并发出。" : "渠道会话回复已发出。",
               failureDetailPrefix: msg.retry ? "重试平台回复失败" : "渠道会话回复失败",
             });
@@ -5815,7 +5742,9 @@ wss.on("connection", (ws) => {
                 externalRef,
                 title: msg.title || `${platformId}:${externalRef}`,
                 participantLabel: msg.participantLabel || externalRef,
+                replyTargetId,
                 remoteUserId: msg.remoteUserId || externalRef,
+                remoteThreadId: msg.remoteThreadId,
                 accountLabel: msg.accountLabel || summarizePlatformAccount(platformId, settings.platformConfigs?.[platformId]?.fields ?? {}),
                 lastMessageDirection: "outbound",
                 lastDeliveryStatus: "sent",
@@ -5828,13 +5757,13 @@ wss.on("connection", (ws) => {
                 lastOutboundAt: sentAt,
                 lastOutboundText: replyText,
                 lastHandledAt: sentAt,
-                handledBy: "manual",
+                handledBy: actionTrigger === "auto" ? "greeter" : "manual",
               },
               title: msg.retry ? "重试平台回复" : "发送平台回复",
               detail: replyText.slice(0, 500),
               status: "sent",
               eventType: "message",
-              trigger: "manual",
+              trigger: actionTrigger,
               externalRef,
             });
           } catch (error) {
@@ -5861,7 +5790,9 @@ wss.on("connection", (ws) => {
                 externalRef,
                 title: msg.title || `${platformId}:${externalRef}`,
                 participantLabel: msg.participantLabel || externalRef,
+                replyTargetId,
                 remoteUserId: msg.remoteUserId || externalRef,
+                remoteThreadId: msg.remoteThreadId,
                 accountLabel: msg.accountLabel || summarizePlatformAccount(platformId, settings.platformConfigs?.[platformId]?.fields ?? {}),
                 lastMessageDirection: "outbound",
                 lastDeliveryStatus: failure.operationStatus === "failed" ? "failed" : "pending",
@@ -5882,7 +5813,7 @@ wss.on("connection", (ws) => {
               detail: failure.detail,
               status: failure.operationStatus,
               eventType: failure.eventType,
-              trigger: "manual",
+              trigger: actionTrigger,
               failureReason: failure.failureReason,
               externalRef,
             });
@@ -5945,6 +5876,8 @@ wss.on("connection", (ws) => {
             msg.source || "chat",
             ws,
             msg.userInstruction || msg.instruction,
+            {},
+            msg.attachments || [],
           ).catch((err) => console.error("[dispatch] error:", err?.message || err));
         }
         break;
@@ -5976,19 +5909,33 @@ wss.on("connection", (ws) => {
             controller,
             ownerWs: ws,
             topic: msg.topic,
+            sessionId: msg.sessionId ?? null,
+            projectId: msg.projectId ?? null,
+            workspaceRoot: msg.workspaceRoot ?? null,
             startedAt: Date.now(),
           };
 
           meeting(msg.topic, msg.participants, {
             meetingId,
             signal: controller.signal,
+            context: msg.context,
           }).then((result) => {
-            ws.send(JSON.stringify({ type: "meeting_result", topic: msg.topic, result }));
+            ws.send(JSON.stringify({
+              type: "meeting_result",
+              topic: msg.topic,
+              result,
+              sessionId: msg.sessionId ?? null,
+              projectId: msg.projectId ?? null,
+              rootPath: msg.workspaceRoot ?? null,
+            }));
           }).catch((err) => {
             ws.send(JSON.stringify({
               type: "meeting_result",
               topic: msg.topic,
               error: err instanceof Error ? err.message : String(err),
+              sessionId: msg.sessionId ?? null,
+              projectId: msg.projectId ?? null,
+              rootPath: msg.workspaceRoot ?? null,
             }));
           }).finally(() => {
             if (activeMeetingRun?.meetingId === meetingId) {

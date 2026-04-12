@@ -24,7 +24,7 @@ export async function getBrowser() {
   initPromise = (async () => {
     const apiKey = process.env.ANTHROPIC_API_KEY;
     if (!apiKey) {
-      throw new Error("ANTHROPIC_API_KEY 未设置，无法初始化浏览器");
+      throw new Error("ANTHROPIC_API_KEY 未设置，无法初始化浏览器。请在 .env 中补充 Anthropic 兼容接口配置后再使用网页访问能力。");
     }
     const baseURL = process.env.ANTHROPIC_BASE_URL;
 

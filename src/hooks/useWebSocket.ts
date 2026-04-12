@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 import { useStore } from "@/store";
 import { randomId } from "@/lib/utils";
+import { canDirectReplySession } from "@/lib/channel-session-presentation";
 import type {
   AgentId,
   AgentStatus,
@@ -134,7 +135,15 @@ type WsMessage =
       timestamp?: number;
       event?: ExecutionEvent;
     }
-  | { type: "meeting_result"; topic?: string; result?: string; error?: string }
+  | {
+      type: "meeting_result";
+      topic?: string;
+      result?: string;
+      error?: string;
+      sessionId?: string | null;
+      projectId?: string | null;
+      rootPath?: string | null;
+    }
   | { type: "meeting_speech"; agentId: string; role: string; text: string; timestamp: number; meetingId?: string };
 
 let _ws: WebSocket | null = null;
@@ -145,6 +154,8 @@ let _isConnecting = false;
 let _heartbeatTimer: number | null = null;
 let _pongTimeoutTimer: number | null = null;
 let _connectTimeoutTimer: number | null = null;
+const _remoteOpsChannelDrafts = new Map<string, string>();
+const _remoteOpsHandledRuns = new Set<string>();
 
 const WS_RETRY_MAX = 30000;
 const WS_HEARTBEAT_INTERVAL = 15000;
@@ -153,6 +164,94 @@ const WS_CONNECT_TIMEOUT = 8000;
 
 function getStore() {
   return useStore.getState();
+}
+
+function rememberRemoteOpsChannelDraft(executionRunId?: string, text?: string) {
+  const normalizedRunId = String(executionRunId || "").trim();
+  const normalizedText = String(text || "").trim();
+  if (!normalizedRunId || !normalizedText) return;
+  _remoteOpsChannelDrafts.set(normalizedRunId, normalizedText);
+}
+
+function parseRemoteOpsChannelOutcome(text?: string) {
+  const normalized = String(text || "").trim();
+  if (!normalized) return { kind: "empty" as const };
+  if (/^\[NEED_HUMAN\]/i.test(normalized)) {
+    return {
+      kind: "human" as const,
+      reason: normalized.replace(/^\[NEED_HUMAN\]\s*/i, "").trim() || "AI 判断当前会话需要转人工处理。",
+    };
+  }
+  return { kind: "reply" as const, text: normalized };
+}
+
+function maybeAutoHandleRemoteOpsChannelRun(executionRunId?: string) {
+  const normalizedRunId = String(executionRunId || "").trim();
+  if (!normalizedRunId || _remoteOpsHandledRuns.has(normalizedRunId)) return;
+
+  const store = getStore();
+  const run = store.executionRuns.find(item => item.id === normalizedRunId) ?? null;
+  if (!run || run.source !== "remote-ops" || run.entityType !== "channelSession" || !run.entityId) {
+    return;
+  }
+
+  const session = store.businessChannelSessions.find(item => item.id === run.entityId) ?? null;
+  if (!session) return;
+
+  const outcome = parseRemoteOpsChannelOutcome(_remoteOpsChannelDrafts.get(normalizedRunId));
+  if (outcome.kind === "empty") return;
+
+  _remoteOpsHandledRuns.add(normalizedRunId);
+
+  if (outcome.kind === "human") {
+    store.updateBusinessChannelSession(run.entityId, {
+      status: "waiting",
+      requiresReply: true,
+      summary: outcome.reason,
+      lastExecutionRunId: run.id,
+    });
+    store.recordBusinessOperation({
+      entityType: "channelSession",
+      entityId: run.entityId,
+      eventType: "message",
+      trigger: "auto",
+      status: "blocked",
+      title: "自动值守转人工",
+      detail: outcome.reason,
+      executionRunId: run.id,
+      workflowRunId: run.workflowRunId,
+      externalRef: session.externalRef,
+      failureReason: "manual-handoff-required",
+    });
+    return;
+  }
+
+  if (!canDirectReplySession(session)) {
+    return;
+  }
+
+  const requestId = `channel-action-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+  const sent = sendWs({
+    requestId,
+    type: "channel_session_action",
+    action: "send_reply",
+    trigger: "auto",
+    sessionId: session.id,
+    platformId: session.channel,
+    externalRef: session.externalRef,
+    title: session.title,
+    participantLabel: session.participantLabel,
+    replyTargetId: session.replyTargetId,
+    remoteUserId: session.remoteUserId,
+    remoteThreadId: session.remoteThreadId,
+    accountLabel: session.accountLabel,
+    text: outcome.text,
+    retry: false,
+  });
+
+  if (!sent) {
+    _remoteOpsHandledRuns.delete(normalizedRunId);
+  }
 }
 
 function syncSettingsToSocket() {
@@ -812,6 +911,8 @@ function handleMessage(msg: WsMessage) {
     updatePlatformConfig,
     reconcilePlatformConfig,
     upsertBusinessChannelSession,
+    upsertBusinessCustomerFromChannelSession,
+    updateBusinessChannelSession,
     recordBusinessOperation,
     setChannelActionResult,
     upsertAssistantReasoning,
@@ -823,9 +924,15 @@ function handleMessage(msg: WsMessage) {
       break;
     case "task_add":
       addTask(msg.task);
+      if (msg.task.status === "done") {
+        rememberRemoteOpsChannelDraft(msg.executionRunId, msg.task.result);
+      }
       break;
     case "task_update":
       updateTask(msg.taskId, msg.updates);
+      if (msg.updates.status === "done") {
+        rememberRemoteOpsChannelDraft(msg.executionRunId, msg.updates.result);
+      }
       break;
     case "task_stream_delta":
       appendTaskResult(msg.taskId, msg.delta);
@@ -874,6 +981,9 @@ function handleMessage(msg: WsMessage) {
             : undefined,
         event: msg.event,
       });
+      if (msg.status === "completed") {
+        maybeAutoHandleRemoteOpsChannelRun(msg.executionRunId);
+      }
       break;
     case "cost":
       addCost(msg.agentId, msg.tokens);
@@ -912,12 +1022,15 @@ function handleMessage(msg: WsMessage) {
       }
       break;
     case "channel_session_sync":
-      upsertBusinessChannelSession(msg.session);
+      upsertBusinessCustomerFromChannelSession(upsertBusinessChannelSession(msg.session));
       break;
     case "channel_event": {
       const sessionId = msg.session
         ? upsertBusinessChannelSession(msg.session)
         : msg.sessionId;
+      if (sessionId) {
+        upsertBusinessCustomerFromChannelSession(sessionId);
+      }
       if (sessionId) {
         recordBusinessOperation({
           entityType: "channelSession",
@@ -969,6 +1082,9 @@ function handleMessage(msg: WsMessage) {
           topic: msg.topic ?? meetingTopic,
           summary: msg.result,
           finishedAt: Date.now(),
+          sessionId: msg.sessionId,
+          projectId: msg.projectId,
+          rootPath: msg.rootPath,
         });
       }
       break;

@@ -7,6 +7,7 @@ export interface ChatSession {
   projectId?: string | null;
   projectName?: string | null;
   workspaceRoot?: string | null;
+  linkedChannelSessionId?: string | null;
   updatedAt: number;
   tasks: Task[];
 }
@@ -40,6 +41,7 @@ export function makeEmptySession(project?: {
     projectId: project?.projectId ?? null,
     projectName: project?.projectName ?? null,
     workspaceRoot: project?.workspaceRoot ?? null,
+    linkedChannelSessionId: null,
     updatedAt: Date.now(),
     tasks: [],
   };
@@ -69,6 +71,7 @@ export function ensureChatHydration<T extends {
     projectId: session.projectId ?? null,
     projectName: session.projectName ?? null,
     workspaceRoot: session.workspaceRoot ?? null,
+    linkedChannelSessionId: session.linkedChannelSessionId ?? null,
   }));
 
   let activeSessionId = state.activeSessionId ?? "";

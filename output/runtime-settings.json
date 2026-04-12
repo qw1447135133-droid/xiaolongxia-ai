@@ -350,7 +350,7 @@
           "at": 1775686778605
         }
       ],
-      "lastCheckedAt": 1775741040160,
+      "lastCheckedAt": 1775909246773,
       "pendingEvents": 0,
       "lastEventAt": 1775686778628,
       "lastInboundAt": 1775686774966,
@@ -402,7 +402,7 @@
           "retryCount": 1
         }
       ],
-      "lastSyncedAt": 1775741040160,
+      "lastSyncedAt": 1775909246773,
       "requireOutboundApproval": false,
       "lastOutboundSuccessAt": 1775686778628,
       "lastInboundTarget": "6470391105"

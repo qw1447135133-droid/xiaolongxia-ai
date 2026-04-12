@@ -3,7 +3,7 @@ import { pickLocaleText } from "@/lib/ui-locale";
 import type { UiLocale } from "@/store/types";
 
 export function canDirectReplySession(session: BusinessChannelSession) {
-  return ["telegram", "line", "feishu", "wecom"].includes(session.channel);
+  return ["telegram", "line", "feishu", "wecom", "web"].includes(session.channel);
 }
 
 export function shouldSuggestDesktopTakeover(session: BusinessChannelSession) {

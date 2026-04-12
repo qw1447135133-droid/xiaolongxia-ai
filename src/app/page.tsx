@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ChangeEvent, type ReactNode, type SVGProps } from "react";
+import { useContextMentionComposer } from "@/hooks/useContextMentionComposer";
 import { useWebSocket, sendWs } from "@/hooks/useWebSocket";
 import { useStore } from "@/store";
 import {
@@ -18,6 +19,7 @@ import { checkAndExecuteTasks } from "@/lib/scheduled-tasks";
 import { TaskPipeline } from "@/components/TaskPipeline";
 import { ActivityPanel } from "@/components/ActivityPanel";
 import { CommandInput } from "@/components/CommandInput";
+import { ContextMentionDropdown } from "@/components/ContextMentionDropdown";
 import { ConversationComposerShell } from "@/components/ConversationComposerShell";
 import { ScheduledTasksPanel } from "@/components/ScheduledTasksPanel";
 import { AgentGrid } from "@/components/AgentGrid";
@@ -55,6 +57,8 @@ import {
 import { DEFAULT_CHAT_TITLE, sortChatSessions } from "@/lib/chat-sessions";
 import { AgentIcon, getAgentIconColor } from "@/components/AgentIcon";
 import { deliverMeetingExport, type MeetingExportFormat } from "@/lib/meeting-exports";
+import { buildContextMentionCandidates, buildExplicitMentionContext } from "@/lib/context-mentions";
+import type { BusinessChannelSession, BusinessOperationRecord } from "@/types/business-entities";
 
 function detectElectronRuntime() {
   if (typeof window === "undefined") return false;
@@ -94,6 +98,174 @@ function getMeetingExportLabel(format: MeetingExportFormat) {
   if (format === "xlsx") return "Excel";
   if (format === "pptx") return "PPT";
   return "Word";
+}
+
+function getMappedChannelLabel(channel: BusinessChannelSession["channel"]) {
+  switch (channel) {
+    case "wecom":
+      return "企业微信";
+    case "feishu":
+      return "飞书";
+    case "telegram":
+      return "Telegram";
+    case "line":
+      return "LINE";
+    case "dingtalk":
+      return "钉钉";
+    case "wechat_official":
+      return "微信公众号";
+    case "qq":
+      return "QQ";
+    case "email":
+      return "Email";
+    default:
+      return "Web";
+  }
+}
+
+function formatLinkedChannelTimestamp(timestamp: number, locale: UiLocale) {
+  return new Intl.DateTimeFormat(locale, {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(timestamp);
+}
+
+function resolveLinkedChannelMessageTone(log: BusinessOperationRecord) {
+  const signal = `${log.title} ${log.detail}`;
+  if (/收到|入站|inbound|客户|客戶|用户消息|用戶消息/u.test(signal)) return "customer" as const;
+  if (/已处理|已處理|连接器|連接器|connector|同步|webhook|拦截|攔截|审批|審批|失败|失敗/u.test(signal)) {
+    return "system" as const;
+  }
+  if (log.trigger === "manual") return "manual" as const;
+  return "ai" as const;
+}
+
+function getLinkedChannelSpeakerLabel(log: BusinessOperationRecord, locale: UiLocale) {
+  const tone = resolveLinkedChannelMessageTone(log);
+  switch (tone) {
+    case "customer":
+      return pickLocaleText(locale, { "zh-CN": "客户", "zh-TW": "客戶", en: "Customer", ja: "顧客" });
+    case "manual":
+      return pickLocaleText(locale, { "zh-CN": "人工回复", "zh-TW": "人工回覆", en: "Manual Reply", ja: "手動返信" });
+    case "system":
+      return pickLocaleText(locale, { "zh-CN": "系统记录", "zh-TW": "系統記錄", en: "System Log", ja: "システム記録" });
+    default:
+      return pickLocaleText(locale, { "zh-CN": "AI值守", "zh-TW": "AI 值守", en: "AI Watch", ja: "AI 応対" });
+  }
+}
+
+function LinkedChannelTranscript({
+  locale,
+  session,
+  history,
+  fillAvailable = false,
+  canResumeAiWatch = false,
+  onResumeAiWatch,
+}: {
+  locale: UiLocale;
+  session: BusinessChannelSession;
+  history: BusinessOperationRecord[];
+  fillAvailable?: boolean;
+  canResumeAiWatch?: boolean;
+  onResumeAiWatch?: () => void;
+}) {
+  const transcriptCopy = pickLocaleText(locale, {
+    "zh-CN": "这里展示的是从业务实体客户档案映射过来的客户会话记录，原始历史仍保留在客户档案里。",
+    "zh-TW": "這裡展示的是從業務實體客戶檔案映射過來的客戶會話記錄，原始歷史仍保留在客戶檔案裡。",
+    en: "This is a mapped view of the customer conversation. The source history remains in the customer record under business entities.",
+    ja: "ここには業務エンティティ内の顧客記録からマップされた会話のみを表示し、元の履歴は顧客記録側に保持されます。",
+  });
+  const emptyCopy = pickLocaleText(locale, {
+    "zh-CN": "这条渠道会话已经关联到当前聊天窗，但客户档案里还没有可映射的消息日志。",
+    "zh-TW": "這條渠道會話已關聯到目前聊天窗，但客戶檔案裡還沒有可映射的消息日誌。",
+    en: "This channel session is linked, but there are no mapped message logs in the customer record yet.",
+    ja: "このチャネル会話は関連付け済みですが、顧客記録側にまだ表示できるメッセージログがありません。",
+  });
+  const fillCopy = pickLocaleText(locale, {
+    "zh-CN": "当前聊天窗口还没有 AI 会话记录，你现在看到的是客户在业务实体档案里的历史消息映射。",
+    "zh-TW": "目前聊天視窗還沒有 AI 會話記錄，你現在看到的是客戶在業務實體檔案裡的歷史消息映射。",
+    en: "There are no AI chat records in this window yet. What you see here is the mapped customer history from business entities.",
+    ja: "このウィンドウにはまだ AI 会話記録がありません。表示中なのは業務エンティティ由来の顧客履歴です。",
+  });
+  const modeLabel = session.serviceMode === "customer_service"
+    ? pickLocaleText(locale, { "zh-CN": "客服模式", "zh-TW": "客服模式", en: "Service", ja: "サポート" })
+    : pickLocaleText(locale, { "zh-CN": "私域模式", "zh-TW": "私域模式", en: "Owner", ja: "オーナー" });
+
+  return (
+    <section className={`linked-channel-transcript ${fillAvailable ? "linked-channel-transcript--fill" : ""}`}>
+      <div className="linked-channel-transcript__head">
+        <div className="linked-channel-transcript__head-main">
+          <div className="linked-channel-transcript__eyebrow">
+            {pickLocaleText(locale, {
+              "zh-CN": "渠道映射",
+              "zh-TW": "渠道映射",
+              en: "Channel Mapping",
+              ja: "チャネルマッピング",
+            })}
+          </div>
+          <div className="linked-channel-transcript__title">{session.title}</div>
+          <div className="linked-channel-transcript__copy">{transcriptCopy}</div>
+        </div>
+        <div className="linked-channel-transcript__meta">
+          <span className="linked-channel-transcript__pill">{getMappedChannelLabel(session.channel)}</span>
+          <span className="linked-channel-transcript__pill">{modeLabel}</span>
+          {canResumeAiWatch && onResumeAiWatch ? (
+            <button
+              type="button"
+              className="linked-channel-transcript__pill linked-channel-transcript__pill--action"
+              onClick={onResumeAiWatch}
+            >
+              {pickLocaleText(locale, {
+                "zh-CN": "AI值守",
+                "zh-TW": "AI 值守",
+                en: "AI Watch",
+                ja: "AI 応対",
+              })}
+            </button>
+          ) : null}
+          {session.participantLabel || session.accountLabel ? (
+            <span className="linked-channel-transcript__pill is-soft">
+              {session.participantLabel || session.accountLabel}
+            </span>
+          ) : null}
+        </div>
+      </div>
+
+      {session.summary ? (
+        <div className="linked-channel-transcript__summary">{session.summary}</div>
+      ) : null}
+
+      <div className="linked-channel-transcript__list">
+        {history.length === 0 ? (
+          <div className="linked-channel-transcript__empty">{emptyCopy}</div>
+        ) : (
+          history.map(log => {
+            const tone = resolveLinkedChannelMessageTone(log);
+            return (
+              <article
+                key={log.id}
+                className={`linked-channel-transcript__item linked-channel-transcript__item--${tone}`}
+              >
+                <div className="linked-channel-transcript__item-meta">
+                  <span>{getLinkedChannelSpeakerLabel(log, locale)}</span>
+                  <span>{formatLinkedChannelTimestamp(log.createdAt, locale)}</span>
+                </div>
+                <div className="linked-channel-transcript__item-title">{log.title}</div>
+                <div className="linked-channel-transcript__item-detail">{log.detail}</div>
+              </article>
+            );
+          })
+        )}
+      </div>
+
+      {fillAvailable ? (
+        <div className="linked-channel-transcript__foot">{fillCopy}</div>
+      ) : null}
+    </section>
+  );
 }
 
 export default function App() {
@@ -202,6 +374,8 @@ export default function App() {
         includeUserMessage: true,
         taskDescription: `${nextItem.taskDescription} [自动值守]`,
         includeActiveProjectMemory: true,
+        entityType: nextItem.entityType,
+        entityId: nextItem.entityId,
       });
 
       recordBusinessOperation({
@@ -1078,6 +1252,8 @@ function DashboardTab({ onOpenTab }: { onOpenTab: (tab: AppTab) => void }) {
                 includeUserMessage: true,
                 taskDescription: item.taskDescription,
                 includeActiveProjectMemory: true,
+                entityType: item.entityType,
+                entityId: item.entityId,
               });
 
               recordBusinessOperation({
@@ -1437,6 +1613,9 @@ function TasksTab() {
   const workspaceRoot = useStore(s => s.workspaceRoot);
   const chatSessions = useStore(s => s.chatSessions);
   const activeSessionId = useStore(s => s.activeSessionId);
+  const businessOperationLogs = useStore(s => s.businessOperationLogs);
+  const businessChannelSessions = useStore(s => s.businessChannelSessions);
+  const markBusinessChannelSessionHandled = useStore(s => s.markBusinessChannelSessionHandled);
   const createChatSession = useStore(s => s.createChatSession);
   const setCommandDraft = useStore(s => s.setCommandDraft);
   const activeTeamOperatingTemplateId = useStore(s => s.activeTeamOperatingTemplateId);
@@ -1450,6 +1629,35 @@ function TasksTab() {
   const activeSession = useMemo(
     () => chatSessions.find(session => session.id === activeSessionId) ?? null,
     [activeSessionId, chatSessions],
+  );
+  const linkedChannelSession = useMemo(
+    () =>
+      activeSession?.linkedChannelSessionId
+        ? businessChannelSessions.find(session => session.id === activeSession.linkedChannelSessionId) ?? null
+        : null,
+    [activeSession, businessChannelSessions],
+  );
+  const linkedChannelHistory = useMemo(
+    () =>
+      linkedChannelSession
+        ? businessOperationLogs
+            .filter(log =>
+              log.entityType === "channelSession"
+              && log.entityId === linkedChannelSession.id
+              && log.eventType === "message",
+            )
+            .sort((left, right) => left.createdAt - right.createdAt)
+        : [],
+    [businessOperationLogs, linkedChannelSession],
+  );
+  const hasLinkedChannelView = Boolean(linkedChannelSession);
+  const canResumeAiWatch = Boolean(
+    linkedChannelSession
+    && (
+      linkedChannelSession.status === "waiting"
+      || linkedChannelSession.requiresReply
+      || linkedChannelSession.handledBy === "manual"
+    ),
   );
   useEffect(() => {
     if (!historyOpen) return;
@@ -1479,6 +1687,21 @@ function TasksTab() {
   const handleCreateChat = () => {
     createChatSession(activeSession?.workspaceRoot ?? workspaceRoot ?? null);
     setHistoryOpen(false);
+  };
+
+  const handleResumeAiWatch = () => {
+    if (!linkedChannelSession) return;
+    markBusinessChannelSessionHandled({
+      channelSessionId: linkedChannelSession.id,
+      trigger: "auto",
+      handledBy: "greeter",
+      detail: pickLocaleText(locale, {
+        "zh-CN": "已从聊天区切回 AI 值守模式，后续消息将继续由数字员工接待。",
+        "zh-TW": "已從聊天區切回 AI 值守模式，後續消息將繼續由數位員工接待。",
+        en: "Switched back to AI watch mode from chat. The digital worker will continue the conversation.",
+        ja: "チャット画面から AI 応対モードへ戻しました。以後のメッセージはデジタルワーカーが継続対応します。",
+      }),
+    });
   };
 
   return (
@@ -1523,6 +1746,16 @@ function TasksTab() {
                 </div>
                 <div className="ios-chat-page__meta">
                   <span>{activeSession?.title || DEFAULT_CHAT_TITLE}</span>
+                  {linkedChannelSession ? (
+                    <span className="ios-chat-page__meta-tag">
+                      {pickLocaleText(locale, {
+                        "zh-CN": `渠道映射 · ${getMappedChannelLabel(linkedChannelSession.channel)}`,
+                        "zh-TW": `渠道映射 · ${getMappedChannelLabel(linkedChannelSession.channel)}`,
+                        en: `Mapped · ${getMappedChannelLabel(linkedChannelSession.channel)}`,
+                        ja: `マップ済み · ${getMappedChannelLabel(linkedChannelSession.channel)}`,
+                      })}
+                    </span>
+                  ) : null}
                 </div>
                 <button
                   type="button"
@@ -1536,7 +1769,7 @@ function TasksTab() {
             </div>
           </div>
 
-          {tasks.length === 0 ? (
+          {tasks.length === 0 && !hasLinkedChannelView ? (
             <div className="ios-chat-page__empty">
               <div className="ios-chat-page__empty-badge">{uiText.tasks.newChatBadge}</div>
               <div className="ios-chat-page__empty-title">{uiText.tasks.emptyTitle}</div>
@@ -1555,11 +1788,21 @@ function TasksTab() {
               </div>
             </div>
           ) : (
-            <>
-              <div className="ios-chat-page__stream">
+            <div className="ios-chat-page__stream">
+              {linkedChannelSession ? (
+                <LinkedChannelTranscript
+                  locale={locale}
+                  session={linkedChannelSession}
+                  history={linkedChannelHistory}
+                  fillAvailable={tasks.length === 0}
+                  canResumeAiWatch={canResumeAiWatch}
+                  onResumeAiWatch={handleResumeAiWatch}
+                />
+              ) : null}
+              {tasks.length > 0 ? (
                 <TaskPipeline fillHeight />
-              </div>
-            </>
+              ) : null}
+            </div>
           )}
 
           <div className="ios-chat-page__composer">
@@ -2869,10 +3112,24 @@ function MeetingSpeechContent({ text }: { text: string }) {
 function MeetingTab() {
   const locale = useStore(s => s.locale);
   const theme = useStore(s => s.theme);
+  const businessChannelSessions = useStore(s => s.businessChannelSessions);
+  const businessOperationLogs = useStore(s => s.businessOperationLogs);
   const [attachments, setAttachments] = useState<MeetingAttachmentItem[]>([]);
   const meetingHistory = useStore(s => s.meetingHistory);
   const latestMeetingRecord = useStore(s => s.latestMeetingRecord);
-  const { wsStatus, meetingSpeeches, meetingActive, meetingTopic: topic, clearMeeting, setMeetingActive, setMeetingTopic } = useStore();
+  const activeSessionId = useStore(s => s.activeSessionId);
+  const chatSessions = useStore(s => s.chatSessions);
+  const {
+    wsStatus,
+    meetingSpeeches,
+    meetingActive,
+    meetingTopic: topic,
+    meetingContextMentions,
+    clearMeeting,
+    setMeetingActive,
+    setMeetingTopic,
+    setMeetingContextMentions,
+  } = useStore();
   const scrollRef = useRef<HTMLDivElement>(null);
   const meetingAutoScrollRef = useRef(true);
   const previousMeetingSpeechCountRef = useRef(0);
@@ -2897,12 +3154,45 @@ function MeetingTab() {
     text: string;
   } | null>(null);
   const autoDeliveredMeetingIdRef = useRef<string | null>(latestMeetingRecord?.id ?? null);
-
-  const selectedHistoryRecord = useMemo(
-    () => meetingHistory.find(record => record.id === selectedHistoryId) ?? null,
-    [meetingHistory, selectedHistoryId],
+  const activeSession = useMemo(
+    () => chatSessions.find(session => session.id === activeSessionId) ?? null,
+    [activeSessionId, chatSessions],
   );
-  const exportableMeetingRecord = selectedHistoryRecord ?? latestMeetingRecord;
+  const hasScopedMeetingContext = Boolean(activeSession?.projectId || activeSession?.workspaceRoot);
+  const scopedMeetingHistory = useMemo(() => {
+    const scoped = [...filterByProjectScope(meetingHistory, activeSession ?? {})]
+      .sort((left, right) => right.finishedAt - left.finishedAt);
+    return hasScopedMeetingContext ? scoped : (scoped.length > 0 ? scoped : meetingHistory);
+  }, [activeSession, hasScopedMeetingContext, meetingHistory]);
+  const mentionCandidates = useMemo(
+    () =>
+      buildContextMentionCandidates({
+        chatSessions,
+        activeSessionId,
+        meetingHistory,
+        channelSessions: businessChannelSessions,
+        scope: activeSession ?? {},
+        includeActiveChatSession: true,
+      }),
+    [activeSession, activeSessionId, businessChannelSessions, chatSessions, meetingHistory],
+  );
+  const mentionComposer = useContextMentionComposer({
+    value: topic,
+    candidates: mentionCandidates,
+    selectedMentions: meetingContextMentions,
+    onValueChange: setMeetingTopic,
+    onSelectedMentionsChange: setMeetingContextMentions,
+    maxSuggestions: 12,
+  });
+  const selectedHistoryRecord = useMemo(
+    () => scopedMeetingHistory.find(record => record.id === selectedHistoryId) ?? null,
+    [scopedMeetingHistory, selectedHistoryId],
+  );
+  const latestScopedMeetingRecord = useMemo(
+    () => scopedMeetingHistory[0] ?? (hasScopedMeetingContext ? null : latestMeetingRecord),
+    [hasScopedMeetingContext, latestMeetingRecord, scopedMeetingHistory],
+  );
+  const exportableMeetingRecord = selectedHistoryRecord ?? latestScopedMeetingRecord;
   const visibleSpeeches = selectedHistoryRecord?.speeches ?? meetingSpeeches;
   const activeMeetingLabel = selectedHistoryRecord?.topic || topic.trim() || pickLocaleText(locale, {
     "zh-CN": "新会议",
@@ -3042,6 +3332,14 @@ function MeetingTab() {
     const composedTopic = attachments.length
       ? `${topic.trim()}\n\nAttachments: ${attachments.map(item => item.file.name).join(", ")}`
       : topic.trim();
+    const selectedContextMentions = meetingContextMentions;
+    const explicitMeetingContext = buildExplicitMentionContext({
+      mentions: selectedContextMentions,
+      chatSessions,
+      meetingHistory,
+      channelSessions: businessChannelSessions,
+      operationLogs: businessOperationLogs,
+    });
     meetingAutoScrollRef.current = true;
     setSelectedHistoryId(null);
     clearMeeting();
@@ -3049,7 +3347,14 @@ function MeetingTab() {
     setMeetingActive(true);
     setAttachments([]);
     void syncRuntimeSettings();
-    sendWs({ type: "meeting", topic: composedTopic });
+    sendWs({
+      type: "meeting",
+      topic: composedTopic,
+      context: explicitMeetingContext || undefined,
+      sessionId: activeSession?.id ?? null,
+      projectId: activeSession?.projectId ?? null,
+      workspaceRoot: activeSession?.workspaceRoot ?? null,
+    });
   };
 
   const handleAbortMeeting = () => {
@@ -3119,7 +3424,7 @@ function MeetingTab() {
   };
 
   const handleSelectMeetingHistory = (recordId: string) => {
-    const record = meetingHistory.find(item => item.id === recordId);
+    const record = scopedMeetingHistory.find(item => item.id === recordId);
     if (!record || meetingActive) return;
     meetingAutoScrollRef.current = true;
     setSelectedHistoryId(record.id);
@@ -3293,7 +3598,7 @@ function MeetingTab() {
                       aria-expanded={historyOpen}
                     >
                       <HistoryIcon />
-                      <span className="ios-chat-page__history-trigger-count">{meetingHistory.length}</span>
+                      <span className="ios-chat-page__history-trigger-count">{scopedMeetingHistory.length}</span>
                     </button>
 
                     {historyOpen ? (
@@ -3316,7 +3621,7 @@ function MeetingTab() {
                           })}</div>
                         </div>
                         <div className="ios-chat-page__history-body">
-                          {meetingHistory.length === 0 ? (
+                          {scopedMeetingHistory.length === 0 ? (
                             <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.7 }}>
                               {pickLocaleText(locale, {
                                 "zh-CN": "还没有会议记录。",
@@ -3328,7 +3633,7 @@ function MeetingTab() {
                           ) : (
                             <div className="session-panel meeting-history-panel">
                               <div className="session-panel__list meeting-history-panel__list">
-                                {meetingHistory.map(record => {
+                                {scopedMeetingHistory.map(record => {
                                   const isSelected = selectedHistoryId === record.id;
                                   const shortSummary = record.summary.length > 72
                                     ? `${record.summary.slice(0, 72)}...`
@@ -3611,63 +3916,115 @@ function MeetingTab() {
         disabled={meetingActive}
         uploadActive={attachments.length > 0}
         rowClassName="meeting-shell__composer"
-        attachments={attachments.length > 0 ? (
-          <div className="meeting-chat-page__attachments">
-            {attachments.map(({ id, file, kind }) => (
-              <div
-                key={id}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 8,
-                  padding: "6px 10px",
-                  borderRadius: "var(--radius-sm)",
-                  border: "1px solid var(--border)",
-                  background: theme === "dark" ? "rgba(11, 19, 34, 0.92)" : "rgba(247,249,253,0.96)",
-                  fontSize: 11,
-                }}
-              >
-                <span style={{ color: "var(--text-muted)" }}>{getMeetingAttachmentBadge(kind)}</span>
-                <span style={{ color: "var(--text)" }}>{file.name}</span>
-                <span style={{ color: "var(--text-muted)" }}>{formatMeetingFileSize(file.size)}</span>
-                <button
-                  type="button"
-                  className="btn-ghost"
-                  onClick={() => removeAttachment(id)}
-                  disabled={meetingActive}
-                  style={{ padding: "2px 6px", fontSize: 11 }}
-                >
-                  移除
-                </button>
+        attachments={meetingContextMentions.length > 0 || attachments.length > 0 ? (
+          <>
+            {meetingContextMentions.length > 0 ? (
+              <div className="context-mention-bar">
+                <div className="context-mention-bar__label">会议将引用这些 @ 上下文</div>
+                <div className="context-mention-chip-list">
+                  {meetingContextMentions.map((mention) => (
+                    <div key={`${mention.kind}:${mention.targetId}`} className={`context-mention-chip context-mention-chip--${mention.kind}`}>
+                      <span className="context-mention-chip__kind">{mention.kind === "chat-session" ? "聊天" : mention.kind === "meeting-record" ? "会议" : "客户"}</span>
+                      <span className="context-mention-chip__label">{mention.label}</span>
+                      {mention.description ? (
+                        <span className="context-mention-chip__description">{mention.description}</span>
+                      ) : null}
+                      <button
+                        type="button"
+                        className="context-mention-chip__remove"
+                        onClick={() => mentionComposer.removeMention(mention)}
+                        aria-label={`移除 ${mention.label}`}
+                        title={`移除 ${mention.label}`}
+                        disabled={meetingActive}
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ))}
+                </div>
               </div>
-            ))}
-          </div>
+            ) : null}
+            {attachments.length > 0 ? (
+              <div className="meeting-chat-page__attachments">
+                {attachments.map(({ id, file, kind }) => (
+                  <div
+                    key={id}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 8,
+                      padding: "6px 10px",
+                      borderRadius: "var(--radius-sm)",
+                      border: "1px solid var(--border)",
+                      background: theme === "dark" ? "rgba(11, 19, 34, 0.92)" : "rgba(247,249,253,0.96)",
+                      fontSize: 11,
+                    }}
+                  >
+                    <span style={{ color: "var(--text-muted)" }}>{getMeetingAttachmentBadge(kind)}</span>
+                    <span style={{ color: "var(--text)" }}>{file.name}</span>
+                    <span style={{ color: "var(--text-muted)" }}>{formatMeetingFileSize(file.size)}</span>
+                    <button
+                      type="button"
+                      className="btn-ghost"
+                      onClick={() => removeAttachment(id)}
+                      disabled={meetingActive}
+                      style={{ padding: "2px 6px", fontSize: 11 }}
+                    >
+                      移除
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+          </>
         ) : null}
         field={(
-          <textarea
-            className="input command-input__field meeting-shell__topic-input"
-            placeholder={pickLocaleText(locale, {
-              "zh-CN": "输入会议议题，例如：下一版产品首页该怎么改？",
-              "zh-TW": "輸入會議議題，例如：下一版產品首頁該怎麼改？",
-              en: "Enter a meeting topic, e.g. how should the next product homepage change?",
-              ja: "会議テーマを入力してください。例: 次の製品ホームページをどう改善するか？",
-            })}
-            value={topic}
-            rows={2}
-            onChange={event => {
-              if (selectedHistoryId) {
-                setSelectedHistoryId(null);
-              }
-              setMeetingTopic(event.target.value);
-            }}
-            onKeyDown={event => {
-              if (event.key === "Enter" && !event.shiftKey) {
-                event.preventDefault();
-                startMeeting();
-              }
-            }}
-            disabled={meetingActive}
-          />
+          <div className="context-mention-field">
+            <textarea
+              ref={mentionComposer.textareaRef}
+              className="input command-input__field meeting-shell__topic-input"
+              placeholder={pickLocaleText(locale, {
+                "zh-CN": "输入会议议题，输入 @ 可引用聊天 / 会议 / 客户会话记录",
+                "zh-TW": "輸入會議議題，輸入 @ 可引用聊天 / 會議 / 客戶會話記錄",
+                en: "Enter a meeting topic. Type @ to reference chat, meeting, or customer history.",
+                ja: "会議テーマを入力してください。@ でチャット / 会議 / 顧客会話履歴を参照できます。",
+              })}
+              value={topic}
+              rows={2}
+              onChange={event => {
+                if (selectedHistoryId) {
+                  setSelectedHistoryId(null);
+                }
+                mentionComposer.handleValueChange(event.target.value, event.target.selectionStart);
+              }}
+              onSelect={(event) => mentionComposer.handleSelectionChange(event.currentTarget.selectionStart)}
+              onClick={(event) => mentionComposer.handleSelectionChange(event.currentTarget.selectionStart)}
+              onBlur={mentionComposer.handleBlur}
+              onKeyDown={event => {
+                if (mentionComposer.handleKeyDown(event)) {
+                  return;
+                }
+                if (event.key === "Enter" && !event.shiftKey) {
+                  event.preventDefault();
+                  startMeeting();
+                }
+              }}
+              disabled={meetingActive}
+            />
+            {mentionComposer.hasSuggestionsOpen ? (
+              <ContextMentionDropdown
+                menuLevel={mentionComposer.menuLevel}
+                highlightedIndex={mentionComposer.highlightedIndex}
+                suggestionGroups={mentionComposer.suggestionGroups}
+                activeGroup={mentionComposer.activeGroup}
+                visibleSuggestions={mentionComposer.visibleSuggestions}
+                handleDropdownMouseDown={mentionComposer.handleDropdownMouseDown}
+                enterGroup={mentionComposer.enterGroup}
+                backToGroups={mentionComposer.backToGroups}
+                selectSuggestion={mentionComposer.selectSuggestion}
+              />
+            ) : null}
+          </div>
         )}
               action={(
                 <button
@@ -3719,7 +4076,13 @@ function MeetingTab() {
             )}
                 </button>
               )}
-              hint={null}
+              hint={(
+                <div className="meeting-shell__composer-hint">
+                  {meetingContextMentions.length > 0
+                    ? `当前会议会按你显式 @ 的 ${meetingContextMentions.length} 段历史来补充背景，不会默认串联其它会话。`
+                    : "默认不会自动带入其它聊天或会议历史；输入 @ 后再选择要引用的上下文。"}
+                </div>
+              )}
             />
           </div>
         </section>

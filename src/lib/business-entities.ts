@@ -6,6 +6,7 @@ import type {
   BusinessLead,
   BusinessTicket,
 } from "@/types/business-entities";
+import { normalizeBusinessCustomer } from "@/lib/customer-profile-schema";
 
 function makeId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -71,7 +72,7 @@ export function createDemoBusinessDataset(scope: { projectId: string | null; roo
   const leadId3 = makeId("lead");
 
   const customers: BusinessCustomer[] = [
-    {
+    normalizeBusinessCustomer({
       ...base,
       id: customerId,
       name: "杭州青禾商贸",
@@ -81,8 +82,72 @@ export function createDemoBusinessDataset(scope: { projectId: string | null; roo
       ownerAgentId: "greeter",
       tags: ["重点客户", "复购潜力"],
       summary: "主营家居收纳，近期希望扩展东南亚渠道，需要客服 SOP 和内容跟进。",
-    },
-    {
+      crmProfile: {
+        basic: {
+          companyName: "青禾商贸",
+          industry: "家居收纳",
+          salesProducts: ["收纳用品", "家居用品"],
+          socialAccounts: [],
+        },
+        interaction: {
+          callRecords: [],
+          smsRecords: [],
+          meetingRecords: ["已沟通过东南亚渠道扩张计划"],
+          preSalesNeeds: ["客服 SOP", "内容跟进", "渠道扩张支持"],
+          supportCases: [],
+          issueReports: [],
+          afterSalesNeeds: [],
+          inquiryHistory: ["近期多次询问内容营销和渠道拓展"],
+          preferredContactMethods: ["wecom"],
+          recentConversationSummary: "客户希望把客服 SOP 与内容运营一起打包推进。",
+        },
+        transaction: {
+          recentPurchases: [],
+          orderStatuses: [],
+          returnAndRefundHistory: [],
+          paymentMethods: [],
+          shippingAddresses: [],
+          logisticsMethods: [],
+          seasonalPurchasePatterns: ["旺季前集中备货"],
+          upsellSignals: ["对跨境渠道扩张有明确预算意愿"],
+          crossSellSignals: ["可同步推荐内容营销和自动化客服"],
+        },
+        behavior: {
+          websiteBehaviors: [],
+          interests: ["东南亚渠道", "内容营销", "客服自动化"],
+          favoriteItems: [],
+          abandonedCartSignals: [],
+          subscriptionTopics: ["跨境增长", "客服 SOP"],
+          campaignParticipations: ["参加过增长咨询"],
+          surveyResponses: [],
+          couponEngagement: [],
+        },
+        derived: {
+          completenessScore: 0,
+          fitKeywords: ["渠道扩张", "内容营销", "客服 SOP"],
+          excludedKeywords: [],
+          pushSensitivity: "low",
+        },
+      },
+      channelIdentities: [
+        {
+          channel: "wecom",
+          externalRef: "wecom:qinghe:pre-sale",
+          remoteUserId: "wecom-user-qinghe",
+          participantLabel: "王经理",
+          accountLabel: "售前接待号",
+          lastSeenAt: now,
+        },
+      ],
+      linkedSessionIds: [sessionId],
+      campaignPreferences: {
+        preferredTopics: ["渠道扩张", "跨境增长", "客服自动化"],
+        excludedTopics: [],
+        preferredChannels: ["wecom"],
+        preferredFormats: ["campaign", "post"],
+      },
+    }),
+    normalizeBusinessCustomer({
       ...base,
       id: customerId2,
       name: "上海云栖软件",
@@ -92,8 +157,73 @@ export function createDemoBusinessDataset(scope: { projectId: string | null; roo
       ownerAgentId: "greeter",
       tags: ["低置信度", "待人工演示"],
       summary: "正在评估数字员工平台，重点关注人工审批、人工接管和日志可追踪性。",
-    },
-    {
+      crmProfile: {
+        basic: {
+          companyName: "云栖软件",
+          industry: "企业软件",
+          salesProducts: ["协同软件", "企业服务"],
+          socialAccounts: [],
+        },
+        interaction: {
+          callRecords: [],
+          smsRecords: [],
+          meetingRecords: ["要求先看人工审批演示"],
+          preSalesNeeds: ["人工审批", "人工接管", "日志追踪"],
+          supportCases: [],
+          issueReports: [],
+          afterSalesNeeds: [],
+          inquiryHistory: ["关注自动回复是否可先给草稿再发送"],
+          preferredContactMethods: ["feishu"],
+          preferredContactTime: "工作日白天",
+          recentConversationSummary: "客户对自动回复很谨慎，需要明确的人审机制。",
+        },
+        transaction: {
+          recentPurchases: [],
+          orderStatuses: [],
+          returnAndRefundHistory: [],
+          paymentMethods: [],
+          shippingAddresses: [],
+          logisticsMethods: [],
+          seasonalPurchasePatterns: [],
+          upsellSignals: [],
+          crossSellSignals: [],
+        },
+        behavior: {
+          websiteBehaviors: [],
+          interests: ["合规审计", "人工审批", "交付可追踪性"],
+          favoriteItems: [],
+          abandonedCartSignals: [],
+          subscriptionTopics: ["审批流", "风险控制"],
+          campaignParticipations: [],
+          surveyResponses: [],
+          couponEngagement: [],
+        },
+        derived: {
+          completenessScore: 0,
+          fitKeywords: ["人工审批", "人工接管", "审计日志"],
+          excludedKeywords: ["全自动无人审核"],
+          pushSensitivity: "high",
+        },
+      },
+      channelIdentities: [
+        {
+          channel: "feishu",
+          externalRef: "feishu:yunqi:manual-review",
+          remoteUserId: "feishu-user-yunqi",
+          participantLabel: "刘总",
+          accountLabel: "方案咨询号",
+          lastSeenAt: now,
+        },
+      ],
+      linkedSessionIds: [sessionId2],
+      campaignPreferences: {
+        preferredTopics: ["人工审批", "审计日志", "人工接管"],
+        excludedTopics: ["无人审核全自动发送"],
+        preferredChannels: ["feishu"],
+        preferredFormats: ["post", "article"],
+      },
+    }),
+    normalizeBusinessCustomer({
       ...base,
       id: customerId3,
       name: "广州星链贸易",
@@ -103,7 +233,71 @@ export function createDemoBusinessDataset(scope: { projectId: string | null; roo
       ownerAgentId: "greeter",
       tags: ["桌面接管", "高意向"],
       summary: "希望把微信和飞书也纳入数字员工值守，需要看到桌面应用接管与失败恢复。",
-    },
+      crmProfile: {
+        basic: {
+          companyName: "星链贸易",
+          industry: "贸易",
+          salesProducts: ["跨境贸易", "渠道代理"],
+          socialAccounts: [],
+        },
+        interaction: {
+          callRecords: [],
+          smsRecords: [],
+          meetingRecords: ["重点关注桌面接管演示"],
+          preSalesNeeds: ["桌面接管", "失败恢复", "多平台值守"],
+          supportCases: [],
+          issueReports: [],
+          afterSalesNeeds: [],
+          inquiryHistory: ["希望微信和飞书统一纳管"],
+          preferredContactMethods: ["wecom"],
+          recentConversationSummary: "客户希望看到真实桌面接管、失败恢复和续跑能力。",
+        },
+        transaction: {
+          recentPurchases: [],
+          orderStatuses: [],
+          returnAndRefundHistory: [],
+          paymentMethods: [],
+          shippingAddresses: [],
+          logisticsMethods: [],
+          seasonalPurchasePatterns: [],
+          upsellSignals: ["有明确的多平台扩张需求"],
+          crossSellSignals: ["适合一起推荐会话治理与自动值守"],
+        },
+        behavior: {
+          websiteBehaviors: [],
+          interests: ["桌面接管", "故障恢复", "多平台值守"],
+          favoriteItems: [],
+          abandonedCartSignals: [],
+          subscriptionTopics: ["桌面自动化", "失败恢复"],
+          campaignParticipations: [],
+          surveyResponses: [],
+          couponEngagement: [],
+        },
+        derived: {
+          completenessScore: 0,
+          fitKeywords: ["桌面接管", "失败恢复", "多平台值守"],
+          excludedKeywords: [],
+          pushSensitivity: "medium",
+        },
+      },
+      channelIdentities: [
+        {
+          channel: "wecom",
+          externalRef: "wecom:xinglian:desktop-handoff",
+          remoteUserId: "wecom-user-xinglian",
+          participantLabel: "陈主管",
+          accountLabel: "售后接待号",
+          lastSeenAt: now,
+        },
+      ],
+      linkedSessionIds: [sessionId3],
+      campaignPreferences: {
+        preferredTopics: ["桌面接管", "失败恢复", "多平台值守"],
+        excludedTopics: [],
+        preferredChannels: ["wecom"],
+        preferredFormats: ["campaign", "post"],
+      },
+    }),
   ];
 
   const channelSessions: BusinessChannelSession[] = [

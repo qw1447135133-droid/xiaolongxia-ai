@@ -1,5 +1,5 @@
 "use client";
-import { useLayoutEffect, useMemo, useEffect, useRef, useState, type CSSProperties, type KeyboardEvent } from "react";
+import { useLayoutEffect, useMemo, useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from "react";
 import { useStore } from "@/store";
 import { AGENT_META } from "@/store/types";
 import { AgentIcon } from "./AgentIcon";
@@ -11,6 +11,7 @@ import { pickLocaleText } from "@/lib/ui-locale";
 
 type BubblePalette = { bg: string; text: string; border: string };
 type BubbleTheme = "light" | "dark";
+type TaskMessageRoleFilter = "all" | "user" | "assistant";
 
 function getBubblePalette(theme: BubbleTheme, isUser: boolean): BubblePalette {
   if (isUser) {
@@ -80,6 +81,32 @@ function sanitizeMessageContent(text: string) {
   return next;
 }
 
+function normalizeTaskSearchText(value: string) {
+  return value.trim().toLowerCase();
+}
+
+function escapeHighlightPattern(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function renderTaskHighlightedText(text: string, query: string): ReactNode {
+  const normalizedQuery = query.trim();
+  if (!normalizedQuery) return text;
+
+  const pattern = new RegExp(`(${escapeHighlightPattern(normalizedQuery)})`, "gi");
+  const segments = text.split(pattern);
+  if (segments.length === 1) return text;
+  const normalizedNeedle = normalizedQuery.toLowerCase();
+
+  return segments.map((segment, index) => (
+    segment.toLowerCase() === normalizedNeedle ? (
+      <mark key={`${segment}-${index}`} className="history-search-highlight">{segment}</mark>
+    ) : (
+      segment
+    )
+  ));
+}
+
 export function TaskPipeline({
   autoScroll = true,
   fillHeight = false,
@@ -94,6 +121,9 @@ export function TaskPipeline({
   const highlightTaskId = useStore(s => s.highlightTaskId);
   const finishPendingScroll = useStore(s => s.finishPendingScroll);
   const clearHighlightTask = useStore(s => s.clearHighlightTask);
+  const pendingTaskSearchQuery = useStore(s => s.pendingTaskSearchQuery);
+  const pendingTaskSearchSessionId = useStore(s => s.pendingTaskSearchSessionId);
+  const clearTaskSearchSeed = useStore(s => s.clearTaskSearchSeed);
   const locale = useStore(s => s.locale);
   const activeSessionId = useStore(s => s.activeSessionId);
   const assistantReasoning = useStore(s => s.assistantReasoning);
@@ -111,16 +141,36 @@ export function TaskPipeline({
   const [assistantActionErrorTaskId, setAssistantActionErrorTaskId] = useState<string | null>(null);
   const [assistantActionError, setAssistantActionError] = useState("");
   const [regeneratingTaskId, setRegeneratingTaskId] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [messageRoleFilter, setMessageRoleFilter] = useState<TaskMessageRoleFilter>("all");
+  const [searchHitCount, setSearchHitCount] = useState(0);
+  const [activeSearchHitIndex, setActiveSearchHitIndex] = useState(0);
 
-  const { sortedAsc, timeline, scrollSig } = useMemo(() => {
+  const { sortedAsc, filteredAsc, timeline, scrollSig } = useMemo(() => {
     const sortedAsc = [...tasks].sort((a, b) => a.createdAt - b.createdAt).slice(-CHAT_TIMELINE_MAX);
-    const timelineInner = buildTimeline(sortedAsc);
-    const last = sortedAsc[sortedAsc.length - 1];
+    const roleFilteredAsc = messageRoleFilter === "all"
+      ? sortedAsc
+      : sortedAsc.filter(task => (messageRoleFilter === "user" ? task.isUserMessage === true : task.isUserMessage !== true));
+    const normalizedQuery = normalizeTaskSearchText(searchQuery);
+    const filteredAsc = normalizedQuery
+      ? roleFilteredAsc.filter(task => {
+        const meta = AGENT_META[task.assignedTo];
+        const searchText = normalizeTaskSearchText([
+          task.description,
+          task.result ?? "",
+          task.isUserMessage ? "用户 你 user" : `${meta.name} assistant ai`,
+          task.status,
+        ].join(" "));
+        return searchText.includes(normalizedQuery);
+      })
+      : roleFilteredAsc;
+    const timelineInner = buildTimeline(filteredAsc);
+    const last = filteredAsc[filteredAsc.length - 1] ?? roleFilteredAsc[roleFilteredAsc.length - 1] ?? sortedAsc[sortedAsc.length - 1];
     const scrollSigInner = last
       ? `${last.id}:${last.status}:${last.completedAt ?? 0}:${last.result?.length ?? 0}`
       : "";
-    return { sortedAsc, timeline: timelineInner, scrollSig: scrollSigInner };
-  }, [tasks]);
+    return { sortedAsc, filteredAsc, timeline: timelineInner, scrollSig: scrollSigInner };
+  }, [messageRoleFilter, searchQuery, tasks]);
 
   const liveReasoningTrace = useMemo(
     () =>
@@ -166,6 +216,50 @@ export function TaskPipeline({
       });
     }
   }, [pendingScrollTaskId, tasks, finishPendingScroll]);
+
+  useLayoutEffect(() => {
+    const nodes = scrollRef.current
+      ? Array.from(scrollRef.current.querySelectorAll<HTMLElement>(".history-search-highlight"))
+      : [];
+    setSearchHitCount(nodes.length);
+    setActiveSearchHitIndex(current => {
+      if (nodes.length === 0) return 0;
+      return Math.min(current, nodes.length - 1);
+    });
+  }, [searchQuery, timeline]);
+
+  useLayoutEffect(() => {
+    const nodes = scrollRef.current
+      ? Array.from(scrollRef.current.querySelectorAll<HTMLElement>(".history-search-highlight"))
+      : [];
+
+    nodes.forEach((node, index) => {
+      if (searchQuery.trim() && index === activeSearchHitIndex) {
+        node.classList.add("is-active-search-hit");
+      } else {
+        node.classList.remove("is-active-search-hit");
+      }
+    });
+
+    const activeNode = nodes[activeSearchHitIndex];
+    if (activeNode && searchQuery.trim()) {
+      activeNode.scrollIntoView({ block: "center", behavior: "smooth" });
+    }
+  }, [activeSearchHitIndex, searchQuery, timeline]);
+
+  useEffect(() => {
+    if (!pendingTaskSearchQuery.trim()) return;
+    if (pendingTaskSearchSessionId !== activeSessionId) return;
+    setMessageRoleFilter("all");
+    setSearchQuery(pendingTaskSearchQuery);
+    setActiveSearchHitIndex(0);
+    clearTaskSearchSeed();
+  }, [
+    activeSessionId,
+    clearTaskSearchSeed,
+    pendingTaskSearchQuery,
+    pendingTaskSearchSessionId,
+  ]);
 
   useEffect(() => {
     if (!highlightTaskId) return;
@@ -435,38 +529,139 @@ export function TaskPipeline({
   }
 
   return (
-    <div
-      ref={scrollRef}
-      className={`task-pipeline ${fillHeight ? "task-pipeline--fill" : ""}`}
-      style={{ maxHeight: fillHeight ? "100%" : CHAT_VIEWPORT_MAX }}
-    >
-      {timeline.map(item => {
-        if (item.kind === "divider") {
-          return <TimeDivider key={`div-${item.at}`} at={item.at} locale={locale} />;
-        }
-        return (
-          <ChatBubble
-            key={item.task.id}
-            task={item.task}
-            reasoningTrace={liveReasoningTrace?.taskId === item.task.id ? liveReasoningTrace : null}
-            highlight={highlightTaskId === item.task.id}
-            isLatestEditableUserMessage={item.task.id === latestUserTaskId}
-            isLatestRegeneratableAssistantMessage={item.task.id === latestAssistantTaskId}
-            isEditing={editingTaskId === item.task.id}
-            editingDraft={editingTaskId === item.task.id ? editingDraft : ""}
-            editingError={editingTaskId === item.task.id ? editingError : ""}
-            editingBusy={editingTaskId === item.task.id && editingBusy}
-            assistantActionError={assistantActionErrorTaskId === item.task.id ? assistantActionError : ""}
-            regenerating={regeneratingTaskId === item.task.id}
-            onStartEdit={() => handleStartEdit(item.task)}
-            onCancelEdit={handleCancelEdit}
-            onEditingDraftChange={setEditingDraft}
-            onSaveEdit={() => void handleSaveEdit(item.task)}
-            onRateAssistant={(feedback) => handleRateAssistant(item.task, feedback)}
-            onRegenerateAssistant={() => void handleRegenerateAssistant(item.task)}
-          />
-        );
-      })}
+    <div className={`task-pipeline-shell ${fillHeight ? "task-pipeline-shell--fill" : ""}`}>
+      <div className="task-pipeline__search">
+        <input
+          type="search"
+          className="input task-pipeline__search-input"
+          value={searchQuery}
+          onChange={(event) => setSearchQuery(event.target.value)}
+          placeholder={pickLocaleText(locale, {
+            "zh-CN": "搜索当前会话历史",
+            "zh-TW": "搜尋目前會話歷史",
+            en: "Search this conversation",
+            ja: "この会話履歴を検索",
+          })}
+        />
+        <div className="control-center__role-filter-list">
+          {(["all", "user", "assistant"] as TaskMessageRoleFilter[]).map(filter => (
+            <button
+              key={filter}
+              type="button"
+              className={`control-center__role-filter-pill ${messageRoleFilter === filter ? "is-active" : ""}`}
+              onClick={() => setMessageRoleFilter(filter)}
+            >
+              {filter === "all"
+                ? pickLocaleText(locale, {
+                    "zh-CN": "全部",
+                    "zh-TW": "全部",
+                    en: "All",
+                    ja: "すべて",
+                  })
+                : filter === "user"
+                  ? pickLocaleText(locale, {
+                      "zh-CN": "用户",
+                      "zh-TW": "使用者",
+                      en: "User",
+                      ja: "ユーザー",
+                    })
+                  : pickLocaleText(locale, {
+                      "zh-CN": "AI",
+                      "zh-TW": "AI",
+                      en: "AI",
+                      ja: "AI",
+                    })}
+            </button>
+          ))}
+        </div>
+        {searchQuery.trim() ? (
+          <div className="task-pipeline__search-summary">
+            <span>
+              {pickLocaleText(locale, {
+                "zh-CN": `匹配 ${filteredAsc.length} 条消息`,
+                "zh-TW": `符合 ${filteredAsc.length} 則訊息`,
+                en: `${filteredAsc.length} messages matched`,
+                ja: `${filteredAsc.length} 件のメッセージに一致`,
+              })}
+            </span>
+            <div className="history-search-nav">
+              <button
+                type="button"
+                className="history-search-nav__button"
+                onClick={() => setActiveSearchHitIndex(current => (searchHitCount > 0 ? (current - 1 + searchHitCount) % searchHitCount : 0))}
+                disabled={searchHitCount === 0}
+              >
+                {pickLocaleText(locale, { "zh-CN": "上一条", "zh-TW": "上一則", en: "Prev", ja: "前へ" })}
+              </button>
+              <span className="history-search-nav__status">
+                {searchHitCount > 0 ? `${activeSearchHitIndex + 1}/${searchHitCount}` : "0/0"}
+              </span>
+              <button
+                type="button"
+                className="history-search-nav__button"
+                onClick={() => setActiveSearchHitIndex(current => (searchHitCount > 0 ? (current + 1) % searchHitCount : 0))}
+                disabled={searchHitCount === 0}
+              >
+                {pickLocaleText(locale, { "zh-CN": "下一条", "zh-TW": "下一則", en: "Next", ja: "次へ" })}
+              </button>
+            </div>
+          </div>
+        ) : messageRoleFilter !== "all" ? (
+          <div className="task-pipeline__search-summary">
+            <span>
+              {pickLocaleText(locale, {
+                "zh-CN": `当前显示 ${filteredAsc.length} 条${messageRoleFilter === "user" ? "用户" : "AI"}消息`,
+                "zh-TW": `目前顯示 ${filteredAsc.length} 則${messageRoleFilter === "user" ? "使用者" : "AI"}訊息`,
+                en: `Showing ${filteredAsc.length} ${messageRoleFilter === "user" ? "user" : "AI"} messages`,
+                ja: `${messageRoleFilter === "user" ? "ユーザー" : "AI"}メッセージを ${filteredAsc.length} 件表示中`,
+              })}
+            </span>
+          </div>
+        ) : null}
+      </div>
+      <div
+        ref={scrollRef}
+        className={`task-pipeline ${fillHeight ? "task-pipeline--fill" : ""}`}
+        style={{ maxHeight: fillHeight ? "100%" : CHAT_VIEWPORT_MAX }}
+      >
+        {timeline.length === 0 ? (
+          <div className="task-pipeline__empty">
+            {pickLocaleText(locale, {
+              "zh-CN": "当前搜索没有匹配的会话消息。",
+              "zh-TW": "目前搜尋沒有符合的會話訊息。",
+              en: "No messages match the current search.",
+              ja: "現在の検索に一致する会話メッセージはありません。",
+            })}
+          </div>
+        ) : timeline.map(item => {
+          if (item.kind === "divider") {
+            return <TimeDivider key={`div-${item.at}`} at={item.at} locale={locale} />;
+          }
+          return (
+            <ChatBubble
+              key={item.task.id}
+              task={item.task}
+              searchQuery={searchQuery}
+              reasoningTrace={liveReasoningTrace?.taskId === item.task.id ? liveReasoningTrace : null}
+              highlight={highlightTaskId === item.task.id}
+              isLatestEditableUserMessage={item.task.id === latestUserTaskId}
+              isLatestRegeneratableAssistantMessage={item.task.id === latestAssistantTaskId}
+              isEditing={editingTaskId === item.task.id}
+              editingDraft={editingTaskId === item.task.id ? editingDraft : ""}
+              editingError={editingTaskId === item.task.id ? editingError : ""}
+              editingBusy={editingTaskId === item.task.id && editingBusy}
+              assistantActionError={assistantActionErrorTaskId === item.task.id ? assistantActionError : ""}
+              regenerating={regeneratingTaskId === item.task.id}
+              onStartEdit={() => handleStartEdit(item.task)}
+              onCancelEdit={handleCancelEdit}
+              onEditingDraftChange={setEditingDraft}
+              onSaveEdit={() => void handleSaveEdit(item.task)}
+              onRateAssistant={(feedback) => handleRateAssistant(item.task, feedback)}
+              onRegenerateAssistant={() => void handleRegenerateAssistant(item.task)}
+            />
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -487,6 +682,7 @@ function TimeDivider({
 
 function ChatBubble({
   task,
+  searchQuery,
   reasoningTrace,
   highlight,
   isLatestEditableUserMessage,
@@ -505,6 +701,7 @@ function ChatBubble({
   onRegenerateAssistant,
 }: {
   task: Task;
+  searchQuery: string;
   reasoningTrace: AssistantReasoningTrace | null;
   highlight: boolean;
   isLatestEditableUserMessage: boolean;
@@ -714,7 +911,7 @@ function ChatBubble({
 
         {showUserContent || showAssistantFallbackDescription ? (
           <div className="chat-bubble__content">
-            {displayDescription}
+            {renderTaskHighlightedText(displayDescription, searchQuery)}
           </div>
         ) : null}
 
@@ -724,7 +921,7 @@ function ChatBubble({
 
         {showAssistantResult ? (
           <div className="chat-bubble__content chat-bubble__content--result">
-            {displayResult}
+            {renderTaskHighlightedText(displayResult, searchQuery)}
             {isStreamingAssistantResult ? (
               <span
                 aria-hidden="true"

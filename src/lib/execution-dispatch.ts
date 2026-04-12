@@ -4,6 +4,7 @@ import { sendWs } from "@/hooks/useWebSocket";
 import { syncRuntimeSettings } from "@/lib/runtime-settings-sync";
 import { useStore } from "@/store";
 import type { AssistantFeedbackProfile, ExecutionRun, ExecutionRunSource, Task } from "@/store/types";
+import type { DispatchAttachmentPayload } from "@/lib/attachment-payload";
 import {
   buildDeskNoteCollectionSnippet,
   buildKnowledgeDocumentCollectionSnippet,
@@ -13,14 +14,14 @@ import {
 import { filterByProjectScope, getSessionProjectLabel } from "@/lib/project-context";
 import { randomId } from "@/lib/utils";
 import { buildBusinessEntityGraph, buildBusinessGraphSnippet } from "@/lib/business-graph";
+import { buildCustomerPortfolioSnippet } from "@/lib/customer-profile-schema";
 import {
   buildLongTermMemoryCompressionDoc,
-  estimateContextTokens,
   isLongTermMemoryCompressionDoc,
-  LONG_TERM_MEMORY_CONTEXT_LIMIT_TOKENS,
   shouldAutoCompressLongTermMemory,
 } from "@/lib/memory-compression";
 import { buildWorldModelSnippet, deriveWorldModelSnapshot } from "@/lib/world-model";
+import { buildHermesContextBundle } from "@/lib/hermes-context";
 import {
   buildUserProfileOnboardingSnippet,
   buildUserProfileSnippet,
@@ -28,15 +29,9 @@ import {
   inferUserProfilePatchFromMessage,
   normalizeUserProfile,
 } from "@/lib/user-profile";
-
-type DispatchAttachmentMeta = {
-  id: string;
-  name: string;
-  size: number;
-  type: string;
-  kind: string;
-  lastModified: number;
-};
+import { buildRecentConversationSnippet } from "@/lib/conversation-bridge";
+import { buildExplicitMentionContext } from "@/lib/context-mentions";
+import type { ContextMentionRef } from "@/types/context-mentions";
 
 function buildAssistantFeedbackSnippet(profile: AssistantFeedbackProfile) {
   const liked = profile.liked.slice(0, 2).map(item => `- ${item.excerpt}`);
@@ -56,20 +51,6 @@ function buildAssistantFeedbackSnippet(profile: AssistantFeedbackProfile) {
     .join("\n");
 }
 
-function buildSessionTranscriptForEstimation(tasks: Task[]) {
-  if (tasks.length === 0) return "";
-
-  return [...tasks]
-    .sort((left, right) => left.createdAt - right.createdAt)
-    .map(task => {
-      const role = task.isUserMessage ? "User" : "Assistant";
-      const content = String(task.isUserMessage ? task.description : (task.result ?? task.description) ?? "").trim();
-      return content ? `${role}: ${content}` : "";
-    })
-    .filter(Boolean)
-    .join("\n");
-}
-
 export async function sendExecutionDispatch({
   instruction,
   source = "chat",
@@ -85,10 +66,11 @@ export async function sendExecutionDispatch({
   lastRecoveryHint,
   recentTasksOverride,
   skipUserProfileIngestion = false,
+  contextMentions = [],
 }: {
   instruction: string;
   source?: ExecutionRunSource;
-  attachments?: DispatchAttachmentMeta[];
+  attachments?: DispatchAttachmentPayload[];
   includeUserMessage?: boolean;
   taskDescription?: string;
   includeActiveProjectMemory?: boolean;
@@ -100,6 +82,7 @@ export async function sendExecutionDispatch({
   lastRecoveryHint?: string;
   recentTasksOverride?: Task[];
   skipUserProfileIngestion?: boolean;
+  contextMentions?: ContextMentionRef[];
 }) {
   const trimmed = instruction.trim();
   const store = useStore.getState();
@@ -186,6 +169,14 @@ export async function sendExecutionDispatch({
   const sessionTasks = recentTasksOverride ?? activeSession?.tasks ?? store.tasks;
   const orderedSessionTasks = [...sessionTasks].sort((left, right) => left.createdAt - right.createdAt);
   const recentTasks = sessionTasks;
+  const recentConversationSnippet = buildRecentConversationSnippet(orderedSessionTasks);
+  const explicitMentionSnippet = buildExplicitMentionContext({
+    mentions: contextMentions,
+    chatSessions: store.chatSessions,
+    meetingHistory: store.meetingHistory,
+    channelSessions: store.businessChannelSessions,
+    operationLogs: store.businessOperationLogs,
+  });
   const recallContext = {
     instruction: trimmed,
     workspaceRoot: store.workspaceRoot,
@@ -228,26 +219,26 @@ export async function sendExecutionDispatch({
   const graphSnippet = businessGraph.nodes.length > 0
     ? buildBusinessGraphSnippet(businessGraph, { entityType, entityId })
     : "";
+  const customerPortfolioSnippet = scopedBusinessCustomers.length > 0
+    ? buildCustomerPortfolioSnippet(scopedBusinessCustomers)
+    : "";
   const worldSnippet = buildWorldModelSnippet(worldSnapshot);
-  const standardInstructionSections = resolvedProjectMemory || noteSnippet || knowledgeSnippet || graphSnippet || worldSnippet
-    ? [
-        feedbackSnippet,
-        userProfileSnippet,
-        userProfileOnboardingSnippet,
-        activeSession ? `Project scope:\n${getSessionProjectLabel(activeSession)}` : "",
-        resolvedProjectMemory ? buildProjectMemorySnippet(resolvedProjectMemory) : "",
-        noteSnippet,
-        knowledgeSnippet,
-        graphSnippet,
-        worldSnippet,
-        `User request:\n${trimmed}`,
-      ]
-    : [feedbackSnippet, userProfileSnippet, userProfileOnboardingSnippet, `User request:\n${trimmed}`];
-  const standardInstruction = standardInstructionSections.filter(Boolean).join("\n\n---\n\n");
-  const sessionTranscript = buildSessionTranscriptForEstimation(orderedSessionTasks);
-  const estimatedContextTokens =
-    estimateContextTokens(standardInstruction)
-    + estimateContextTokens(sessionTranscript);
+  const standardInstructionSeed = buildHermesContextBundle({
+    feedbackSnippet,
+    userProfileSnippet,
+    userProfileOnboardingSnippet,
+    projectScopeSnippet: activeSession ? `Project scope:\n${getSessionProjectLabel(activeSession)}` : "",
+    recentConversationSnippet,
+    explicitMentionSnippet,
+    projectMemorySnippet: resolvedProjectMemory ? buildProjectMemorySnippet(resolvedProjectMemory) : "",
+    deskNoteSnippet: noteSnippet,
+    knowledgeSnippet,
+    customerPortfolioSnippet,
+    businessGraphSnippet: graphSnippet,
+    worldSnippet,
+    userRequest: trimmed,
+  });
+  const estimatedContextTokens = standardInstructionSeed.estimatedStandardTokens;
   const shouldUseCompression = shouldAutoCompressLongTermMemory(estimatedContextTokens);
   const compressionDoc = shouldUseCompression
     ? buildLongTermMemoryCompressionDoc({
@@ -264,17 +255,23 @@ export async function sendExecutionDispatch({
         graph: businessGraph,
       })
     : null;
-  const finalInstruction = compressionDoc
-    ? [
-        feedbackSnippet,
-        userProfileSnippet,
-        userProfileOnboardingSnippet,
-        activeSession ? `Project scope:\n${getSessionProjectLabel(activeSession)}` : "",
-        `System note: Long-term memory compression triggered automatically because the estimated context is approaching ${LONG_TERM_MEMORY_CONTEXT_LIMIT_TOKENS} tokens. Use the compressed snapshot below as the working memory baseline, and do not ask the user to repeat context that is already captured here.`,
-        `Compressed context snapshot:\n${compressionDoc.content}`,
-        `User request:\n${trimmed}`,
-      ].filter(Boolean).join("\n\n---\n\n")
-    : standardInstruction;
+  const hermesContextBundle = buildHermesContextBundle({
+    feedbackSnippet,
+    userProfileSnippet,
+    userProfileOnboardingSnippet,
+    projectScopeSnippet: activeSession ? `Project scope:\n${getSessionProjectLabel(activeSession)}` : "",
+    recentConversationSnippet,
+    explicitMentionSnippet,
+    projectMemorySnippet: resolvedProjectMemory ? buildProjectMemorySnippet(resolvedProjectMemory) : "",
+    deskNoteSnippet: noteSnippet,
+    knowledgeSnippet,
+    customerPortfolioSnippet,
+    businessGraphSnippet: graphSnippet,
+    worldSnippet,
+    userRequest: trimmed,
+    compressionDoc,
+  });
+  const finalInstruction = hermesContextBundle.finalInstruction;
   const executionRunId = store.createExecutionRun({
     sessionId: resolvedSessionId,
     instruction: trimmed,
@@ -295,6 +292,17 @@ export async function sendExecutionDispatch({
     });
   }
 
+  store.updateExecutionRun({
+    id: executionRunId,
+    event: {
+      id: `evt-hermes-context-${Date.now()}`,
+      type: "system",
+      title: hermesContextBundle.compressionEnabled ? "Hermes 上下文已装配（压缩模式）" : "Hermes 上下文已装配",
+      detail: hermesContextBundle.diagnosticSummary,
+      timestamp: Date.now(),
+    },
+  });
+
   if (resolvedProjectMemory) {
     store.updateExecutionRun({
       id: executionRunId,
@@ -309,6 +317,19 @@ export async function sendExecutionDispatch({
         detail: activeProjectMemory
           ? resolvedProjectMemory.name
           : `${resolvedProjectMemory.name}${autoRecalledWorkspaceContext.memoryRecommendation?.reasons.length ? ` · ${autoRecalledWorkspaceContext.memoryRecommendation.reasons.join(", ")}` : ""}`,
+        timestamp: Date.now(),
+      },
+    });
+  }
+
+  if (contextMentions.length > 0) {
+    store.updateExecutionRun({
+      id: executionRunId,
+      event: {
+        id: `evt-context-mention-${Date.now()}`,
+        type: "system",
+        title: "已附加 @ 引用上下文",
+        detail: contextMentions.map(item => item.label).join(" / "),
         timestamp: Date.now(),
       },
     });
@@ -394,7 +415,7 @@ export async function sendExecutionDispatch({
         id: `evt-compression-${Date.now()}`,
         type: "system",
         title: "已自动压缩上下文",
-        detail: `估算上下文 ${estimatedContextTokens.toLocaleString()} / ${LONG_TERM_MEMORY_CONTEXT_LIMIT_TOKENS.toLocaleString()} tokens，已切换为长期记忆压缩快照。`,
+        detail: `估算上下文 ${hermesContextBundle.estimatedStandardTokens.toLocaleString()} -> ${hermesContextBundle.estimatedFinalTokens.toLocaleString()} tokens，已切换为长期记忆压缩快照。`,
         timestamp: Date.now(),
       },
     });

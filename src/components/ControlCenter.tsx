@@ -8,7 +8,6 @@ import { getTeamOperatingTemplate, TEAM_OPERATING_SURFACES } from "@/store/types
 import type { ControlCenterSectionId, UiLocale } from "@/store/types";
 import { getUiText, pickLocaleText } from "@/lib/ui-locale";
 import { BusinessEntitiesCenter } from "./BusinessEntitiesCenter";
-import { ChannelsCenter } from "./ChannelsCenter";
 import { LaunchReadinessPanel } from "./LaunchReadinessPanel";
 import { PluginsCenter } from "./PluginsCenter";
 import { RemoteOpsCenter } from "./RemoteOpsCenter";
@@ -45,12 +44,12 @@ function getControlCenterSections(locale: UiLocale): Array<{ id: ControlCenterSe
     },
     {
       id: "entities",
-      label: pickLocaleText(locale, { "zh-CN": "业务与渠道", "zh-TW": "業務與渠道", en: "Business & Channels", ja: "業務とチャネル" }),
+      label: pickLocaleText(locale, { "zh-CN": "业务实体", "zh-TW": "業務實體", en: "Business Entities", ja: "業務エンティティ" }),
       hint: pickLocaleText(locale, {
-        "zh-CN": "客户、线索、工单、内容任务与渠道会话",
-        "zh-TW": "客戶、線索、工單、內容任務與渠道會話",
-        en: "Customers, leads, tickets, content tasks, and channels",
-        ja: "顧客、リード、チケット、コンテンツ、チャネル会話",
+        "zh-CN": "客户、线索、工单、内容任务，以及客户档案中的会话记录",
+        "zh-TW": "客戶、線索、工單、內容任務，以及客戶檔案中的會話記錄",
+        en: "Customers, leads, tickets, content tasks, and customer conversation records",
+        ja: "顧客、リード、チケット、コンテンツ、顧客档案内の会話記録",
       }),
     },
     {
@@ -111,7 +110,6 @@ export function ControlCenter() {
   const activeTeamOperatingTemplateId = useStore(s => s.activeTeamOperatingTemplateId);
   const section = useStore(s => s.activeControlCenterSectionId);
   const setActiveControlCenterSection = useStore(s => s.setActiveControlCenterSection);
-  const [entitiesSubTab, setEntitiesSubTab] = useState<"entities" | "channels">("entities");
   const activeTemplate = activeTeamOperatingTemplateId
     ? getTeamOperatingTemplate(activeTeamOperatingTemplateId)
     : null;
@@ -169,12 +167,8 @@ export function ControlCenter() {
 
   useEffect(() => {
     if (section === "channels") {
-      setEntitiesSubTab("channels");
       setActiveControlCenterSection("entities");
       return;
-    }
-    if (section === "entities") {
-      setEntitiesSubTab("entities");
     }
   }, [section, setActiveControlCenterSection]);
 
@@ -242,7 +236,7 @@ export function ControlCenter() {
           </div>
         )}
         {section === "user" && <UserProfileCenter />}
-        {section === "entities" && <EntitiesChannelsCenter activeTab={entitiesSubTab} onTabChange={setEntitiesSubTab} />}
+        {section === "entities" && <BusinessEntitiesCenter />}
         {section === "remote" && <RemoteOpsCenter />}
         {section === "skills" && <SkillsCenter />}
         {section === "plugins" && <PluginsCenter />}
@@ -299,41 +293,6 @@ function UnifiedSettingsCenter({
           showSectionTabs={false}
         />
       )}
-    </div>
-  );
-}
-
-function EntitiesChannelsCenter({
-  activeTab,
-  onTabChange,
-}: {
-  activeTab: "entities" | "channels";
-  onTabChange: (tab: "entities" | "channels") => void;
-}) {
-  const locale = useStore(s => s.locale);
-
-  return (
-    <div style={{ display: "grid", gap: 12 }}>
-      <div className="control-center__quick-actions" style={{ marginTop: 0 }}>
-        <button
-          type="button"
-          className="btn-ghost"
-          onClick={() => onTabChange("entities")}
-          style={activeTab === "entities" ? { borderColor: "rgba(var(--accent-rgb), 0.24)", background: "rgba(var(--accent-rgb), 0.1)", color: "var(--accent)" } : undefined}
-        >
-          {pickLocaleText(locale, { "zh-CN": "业务实体", "zh-TW": "業務實體", en: "Business Entities", ja: "業務エンティティ" })}
-        </button>
-        <button
-          type="button"
-          className="btn-ghost"
-          onClick={() => onTabChange("channels")}
-          style={activeTab === "channels" ? { borderColor: "rgba(var(--accent-rgb), 0.24)", background: "rgba(var(--accent-rgb), 0.1)", color: "var(--accent)" } : undefined}
-        >
-          {pickLocaleText(locale, { "zh-CN": "渠道中心", "zh-TW": "渠道中心", en: "Channels Center", ja: "チャネルセンター" })}
-        </button>
-      </div>
-
-      {activeTab === "entities" ? <BusinessEntitiesCenter /> : <ChannelsCenter />}
     </div>
   );
 }
@@ -455,8 +414,8 @@ function ControlOverview({
         en: "Prioritize unread, waiting, and human-handoff channel messages here.",
         ja: "未読・返信待ち・手動引き継ぎが必要な会話をここで優先処理します。",
       }),
-      actionLabel: pickLocaleText(locale, { "zh-CN": "去渠道中心", "zh-TW": "去渠道中心", en: "Open Channels", ja: "チャネルセンターを開く" }),
-      section: "channels" as const,
+      actionLabel: pickLocaleText(locale, { "zh-CN": "去业务实体", "zh-TW": "去業務實體", en: "Open Business Entities", ja: "業務エンティティを開く" }),
+      section: "entities" as const,
     } : null,
     manualTakeoverRequired ? {
       id: "takeover",
@@ -750,10 +709,10 @@ function AboutControlCenter() {
             ja: "6. 拡張の可視化、権限ラベル、ローカルプラグインを扱う Plugins Center。",
           })}</div>
           <div>{pickLocaleText(locale, {
-            "zh-CN": "7. Channels Center，复用现有平台配置做多平台桥接可见性。",
-            "zh-TW": "7. Channels Center，復用現有平台配置做多平台橋接可見性。",
-            en: "7. A Channels Center for multi-platform bridge visibility using the existing platform configs.",
-            ja: "7. 既存のプラットフォーム設定を使って可視化する Channels Center。",
+            "zh-CN": "7. 客户档案中的会话视图，把多平台消息桥接到业务实体里统一查看。",
+            "zh-TW": "7. 客戶檔案中的會話視圖，把多平台訊息橋接到業務實體裡統一查看。",
+            en: "7. A customer-embedded conversation view that bridges multi-platform messages into business entities.",
+            ja: "7. マルチプラットフォームの会話を業務エンティティへ統合する顧客埋め込み会話ビュー。",
           })}</div>
         </div>
       </div>

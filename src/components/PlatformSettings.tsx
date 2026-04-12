@@ -16,6 +16,31 @@ function deriveTelegramTargetFromInboundKey(inboundMessageKey: string | undefine
   return match?.[1]?.trim() || "";
 }
 
+function getPlatformDefaultDebugTarget(def: PlatformDef, config: { fields: Record<string, string>; lastInboundMessageKey?: string; lastInboundTarget?: string; lastDebugTarget?: string }) {
+  const inboundDebugTarget =
+    String(config.lastInboundTarget || "").trim()
+    || (def.id === "telegram" ? deriveTelegramTargetFromInboundKey(config.lastInboundMessageKey) : "");
+
+  let configuredDefaultTarget = "";
+  if (def.id === "telegram") configuredDefaultTarget = (config.fields.defaultChatId ?? "").trim();
+  if (def.id === "feishu" || def.id === "wechat_official" || def.id === "qq") configuredDefaultTarget = (config.fields.defaultOpenId ?? "").trim();
+  if (def.id === "dingtalk") configuredDefaultTarget = (config.fields.defaultWebhookUrl ?? "").trim() || (config.fields.defaultOpenConversationId ?? "").trim();
+  if (def.id === "web") configuredDefaultTarget = (config.fields.defaultVisitorId ?? "").trim();
+
+  const persistedDebugTarget = String(config.lastDebugTarget || "").trim();
+  const preferredTarget =
+    def.id === "telegram" || def.id === "dingtalk" || def.id === "wechat_official" || def.id === "qq"
+      ? (inboundDebugTarget || configuredDefaultTarget || persistedDebugTarget)
+      : (configuredDefaultTarget || inboundDebugTarget || persistedDebugTarget);
+
+  return {
+    inboundDebugTarget,
+    configuredDefaultTarget,
+    persistedDebugTarget,
+    preferredTarget,
+  };
+}
+
 export function PlatformSettings() {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
@@ -32,20 +57,12 @@ export function PlatformSettings() {
 function PlatformCard({ def }: { def: PlatformDef }) {
   const { platformConfigs, updatePlatformConfig, updatePlatformField, reconcilePlatformConfig } = useStore();
   const config = platformConfigs[def.id] ?? { enabled: false, fields: {}, status: "idle" };
-  const inboundDebugTarget =
-    String(config.lastInboundTarget || "").trim()
-    || (def.id === "telegram" ? deriveTelegramTargetFromInboundKey(config.lastInboundMessageKey) : "");
-  const defaultDebugTarget =
-    def.id === "telegram"
-      ? (config.fields.defaultChatId ?? "").trim()
-      : def.id === "feishu"
-        ? (config.fields.defaultOpenId ?? "").trim()
-        : "";
-  const persistedDebugTarget = String(config.lastDebugTarget || "").trim();
-  const preferredDebugTarget =
-    def.id === "telegram"
-      ? (inboundDebugTarget || defaultDebugTarget || persistedDebugTarget)
-      : (defaultDebugTarget || inboundDebugTarget || persistedDebugTarget);
+  const {
+    inboundDebugTarget,
+    configuredDefaultTarget: defaultDebugTarget,
+    persistedDebugTarget,
+    preferredTarget: preferredDebugTarget,
+  } = getPlatformDefaultDebugTarget(def, config);
   const canApplyInboundTelegramTarget =
     def.id === "telegram"
     && Boolean(inboundDebugTarget)
@@ -210,6 +227,101 @@ function PlatformCard({ def }: { def: PlatformDef }) {
               获取临时地址。
             </div>
           )}
+
+          {["web", "dingtalk", "wechat_official", "qq"].includes(def.id) ? (
+            <div className="platform-settings__notice platform-settings__notice--neutral">
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+                <a
+                  href="/channel-debug"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="btn-ghost"
+                  style={{ fontSize: 11, padding: "4px 10px", textDecoration: "none" }}
+                >
+                  打开统一联调页
+                </a>
+                <a
+                  href="/channel-integration-guide"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="btn-ghost"
+                  style={{ fontSize: 11, padding: "4px 10px", textDecoration: "none" }}
+                >
+                  打开运行指南
+                </a>
+                {def.id === "qq" ? (
+                  <span style={{ fontSize: 11, color: "var(--text-muted)", lineHeight: 1.6 }}>
+                    本地示例脚本：<code className="platform-settings__notice-code">node scripts/qq-bridge-example.mjs http://localhost:3001 &lt;bridgeSecret&gt; &lt;qqUserId&gt;</code>
+                  </span>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
+
+          {def.id === "web" ? (
+            <div className="platform-settings__notice platform-settings__notice--neutral">
+              <div style={{ display: "grid", gap: 6 }}>
+                <div>网页会话入站：<code className="platform-settings__notice-code">POST /webhook/web</code></div>
+                <div>网页会话拉取回复：<code className="platform-settings__notice-code">POST /api/web-channel/pull</code></div>
+                <div>轻量挂件脚本：<code className="platform-settings__notice-code">GET /starcraw-web-widget.js</code></div>
+                <div style={{ fontSize: 11, color: "var(--text-muted)", lineHeight: 1.6 }}>
+                  生产环境建议给挂件配置 <code className="platform-settings__notice-code">publicWidgetToken</code> + <code className="platform-settings__notice-code">allowedOrigins</code>，
+                  不要把 <code className="platform-settings__notice-code">signingSecret</code> 直接暴露在站点前端。
+                </div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+                  <a
+                    href="/web-channel-demo"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="btn-ghost"
+                    style={{ fontSize: 11, padding: "4px 10px", textDecoration: "none" }}
+                  >
+                    打开网页会话测试页
+                  </a>
+                  <span style={{ fontSize: 11, color: "var(--text-muted)", lineHeight: 1.6 }}>
+                    测试页里已经带了可复制的挂件嵌入片段，适合先联通前后端闭环，再挂到官网/H5。
+                  </span>
+                </div>
+              </div>
+            </div>
+          ) : null}
+
+          {def.id === "dingtalk" ? (
+            <div className="platform-settings__notice platform-settings__notice--neutral">
+              <div style={{ display: "grid", gap: 6 }}>
+                <div>Webhook 入站：<code className="platform-settings__notice-code">POST /webhook/dingtalk</code></div>
+                <div style={{ fontSize: 11, color: "var(--text-muted)", lineHeight: 1.6 }}>
+                  当前这版钉钉连接器优先走应用机器人会话中的 <code className="platform-settings__notice-code">sessionWebhook</code> 回消息。
+                  现在也支持 <code className="platform-settings__notice-code">openConversationId + robotCode</code> 的主动群发文本。
+                  如果要做主动联调，建议至少配置 <code className="platform-settings__notice-code">defaultWebhookUrl</code> 或 <code className="platform-settings__notice-code">defaultRobotCode</code>。
+                </div>
+              </div>
+            </div>
+          ) : null}
+
+          {def.id === "wechat_official" ? (
+            <div className="platform-settings__notice platform-settings__notice--neutral">
+              <div style={{ display: "grid", gap: 6 }}>
+                <div>Webhook 入站：<code className="platform-settings__notice-code">GET/POST /webhook/wechat-official</code></div>
+                <div style={{ fontSize: 11, color: "var(--text-muted)", lineHeight: 1.6 }}>
+                  当前已支持明文模式与安全模式的签名校验、加密消息解密、文本/事件接入和客服文本外发。
+                  如果你启用了安全模式，请确保 <code className="platform-settings__notice-code">encodingAESKey</code> 填写正确。
+                </div>
+              </div>
+            </div>
+          ) : null}
+
+          {def.id === "qq" ? (
+            <div className="platform-settings__notice platform-settings__notice--neutral">
+              <div style={{ display: "grid", gap: 6 }}>
+                <div>QQ Bridge 入站：<code className="platform-settings__notice-code">POST /webhook/qq</code></div>
+                <div>QQ Bridge 拉取回复：<code className="platform-settings__notice-code">POST /api/qq-bridge/pull</code></div>
+                <div style={{ fontSize: 11, color: "var(--text-muted)", lineHeight: 1.6 }}>
+                  这条渠道当前走本地桥接模式。外部 QQ 监听程序把真实消息推送进来，再从拉取接口取走 AI 回复并代发到 QQ。
+                </div>
+              </div>
+            </div>
+          ) : null}
 
           {/* 字段输入 */}
           {def.fields.map(field => {

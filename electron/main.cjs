@@ -1538,6 +1538,8 @@ async function startWsServer(reason = 'startup') {
   }
 
   const bootstrapScript = path.join(app.getAppPath(), 'electron', 'ws-bootstrap.cjs');
+  const packagedServerEntry = path.join(process.resourcesPath, 'server', 'ws-server.js');
+  const userDataPath = app.getPath('userData');
   log('[main] starting WS server via bootstrap:', bootstrapScript, 'reason:', reason);
 
   const child = spawn(process.execPath, [bootstrapScript], {
@@ -1546,7 +1548,10 @@ async function startWsServer(reason = 'startup') {
       ELECTRON_RUN_AS_NODE: '1',
       WS_PORT: String(WS_PORT),
       NODE_ENV: isDev() ? 'development' : 'production',
-      XIAOLONGXIA_OUTPUT_ROOT: path.join(app.getPath('userData'), 'output'),
+      XIAOLONGXIA_SERVER_ENTRY: !isDev() && safeExists(packagedServerEntry) ? packagedServerEntry : '',
+      XIAOLONGXIA_OUTPUT_ROOT: path.join(userDataPath, 'output'),
+      XIAOLONGXIA_LOCAL_SKILLS_DIR: path.join(userDataPath, 'skills'),
+      XIAOLONGXIA_RUNTIME_SKILL_CATALOG: path.join(userDataPath, 'output', 'runtime-skills-catalog.json'),
     },
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,

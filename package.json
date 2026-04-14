@@ -17,10 +17,10 @@
     "electron:dev:clean": "cross-env ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/ node scripts/electron-dev.js --clean",
     "prototype:dispatch": "node prototypes/hermes-dispatch/run.mjs",
     "prebuild": "node scripts/sync-skill-catalog.mjs",
-    "build": "next build",
+    "build": "node scripts/build-next.mjs",
     "typecheck": "node scripts/typecheck.mjs",
-    "electron:build": "cross-env ELECTRON_BUILD=true ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/ next build && cross-env ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/ electron-builder --win nsis portable",
-    "electron:build:mac": "cross-env ELECTRON_BUILD=true ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/ next build && cross-env ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/ electron-builder --mac",
+    "electron:build": "cross-env ELECTRON_BUILD=true ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/ node scripts/build-next.mjs && cross-env ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/ electron-builder --win nsis portable",
+    "electron:build:mac": "cross-env ELECTRON_BUILD=true ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/ node scripts/build-next.mjs && cross-env ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/ electron-builder --mac",
     "start": "next start"
   },
   "build": {
@@ -47,6 +47,18 @@
       {
         "from": "server/",
         "to": "server/"
+      },
+      {
+        "from": "skills/",
+        "to": "skills/"
+      },
+      {
+        "from": "src/generated/",
+        "to": "src/generated/"
+      },
+      {
+        "from": "prototypes/",
+        "to": "prototypes/"
       },
       {
         "from": "public/splash/",
@@ -82,6 +94,7 @@
     "openai": "^6.33.0",
     "pdf-parse": "^2.4.5",
     "pg": "^8.20.0",
+    "playwright": "^1.59.0",
     "pptxgenjs": "^4.0.1",
     "react": "^18.3.0",
     "react-dom": "^18.3.0",

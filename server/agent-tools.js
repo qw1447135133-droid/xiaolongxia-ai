@@ -8,7 +8,7 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 
-import { getBrowser, getPage } from "./browser-manager.js";
+import { getBrowser, getPage, hasStagehandModelConfig } from "./browser-manager.js";
 import { actDesktopCdpApp, openDesktopCdpApp, snapshotDesktopCdpApp } from "./cdp-app-manager.js";
 import { exportCustomerProfileWordDocument } from "./customer-profile-exporter.js";
 import { requestDesktopInputControl, requestDesktopInstalledApplications, requestDesktopLaunch, requestDesktopScreenshot } from "./desktop-bridge.js";
@@ -91,6 +91,7 @@ function buildDesktopSearchAliases(value) {
     ["chrome", "google chrome", "chrome.exe"],
     ["edge", "microsoft edge", "msedge.exe"],
     ["firefox", "mozilla firefox", "firefox.exe"],
+    ["brave", "brave browser", "brave.exe"],
     ["browser", "浏览器"],
     ["notepad", "notepad.exe", "记事本"],
   ];
@@ -131,6 +132,14 @@ const EXTERNAL_BROWSER_PROFILES = [
       ["Mozilla Firefox", "firefox.exe"],
     ],
   },
+  {
+    id: "brave",
+    label: "Brave",
+    aliases: buildDesktopSearchAliases("brave"),
+    knownRelativePaths: [
+      ["BraveSoftware", "Brave-Browser", "Application", "brave.exe"],
+    ],
+  },
 ];
 
 function normalizeExternalBrowserPreference(value) {
@@ -142,6 +151,7 @@ function normalizeExternalBrowserPreference(value) {
   if (["chrome", "google chrome", "chrome.exe"].includes(normalized)) return "chrome";
   if (["edge", "microsoft edge", "msedge.exe"].includes(normalized)) return "edge";
   if (["firefox", "mozilla firefox", "firefox.exe"].includes(normalized)) return "firefox";
+  if (["brave", "brave browser", "brave.exe"].includes(normalized)) return "brave";
   return "auto";
 }
 
@@ -157,7 +167,7 @@ function normalizeExternalBrowserUrl(value) {
 
 function getExternalBrowserProfiles(preference = "auto") {
   if (preference === "default") return [];
-  if (preference === "chrome" || preference === "edge" || preference === "firefox") {
+  if (preference === "chrome" || preference === "edge" || preference === "firefox" || preference === "brave") {
     return EXTERNAL_BROWSER_PROFILES.filter(profile => profile.id === preference);
   }
   return EXTERNAL_BROWSER_PROFILES;
@@ -192,6 +202,62 @@ function findInstalledBrowserCandidate(installedApps, preference = "auto") {
 }
 
 function findKnownBrowserPath(preference = "auto") {
+  const explicit = process.env.BROWSER_EXECUTABLE_PATH || process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH;
+  if (explicit && existsSync(explicit)) {
+    return {
+      profile: { id: "custom", label: "自定义浏览器" },
+      target: explicit,
+      matchedAppName: "自定义浏览器",
+      resolution: "env-path",
+      source: "env",
+    };
+  }
+
+  if (process.platform === "darwin") {
+    const macCandidates = [
+      ["chrome", "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"],
+      ["edge", "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"],
+      ["firefox", "/Applications/Firefox.app/Contents/MacOS/firefox"],
+      ["brave", "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser"],
+    ];
+    for (const [profileId, absolutePath] of macCandidates) {
+      if (preference !== "auto" && preference !== profileId) continue;
+      if (!existsSync(absolutePath)) continue;
+      const profile = EXTERNAL_BROWSER_PROFILES.find(item => item.id === profileId);
+      return {
+        profile,
+        target: absolutePath,
+        matchedAppName: profile?.label || profileId,
+        resolution: "known-path",
+        source: "filesystem",
+      };
+    }
+  }
+
+  if (process.platform !== "win32") {
+    const linuxCandidates = [
+      ["chrome", "/usr/bin/google-chrome"],
+      ["chrome", "/usr/bin/google-chrome-stable"],
+      ["chrome", "/usr/bin/chromium-browser"],
+      ["chrome", "/usr/bin/chromium"],
+      ["edge", "/usr/bin/microsoft-edge"],
+      ["firefox", "/usr/bin/firefox"],
+      ["brave", "/usr/bin/brave-browser"],
+    ];
+    for (const [profileId, absolutePath] of linuxCandidates) {
+      if (preference !== "auto" && preference !== profileId) continue;
+      if (!existsSync(absolutePath)) continue;
+      const profile = EXTERNAL_BROWSER_PROFILES.find(item => item.id === profileId);
+      return {
+        profile,
+        target: absolutePath,
+        matchedAppName: profile?.label || profileId,
+        resolution: "known-path",
+        source: "filesystem",
+      };
+    }
+  }
+
   const roots = [
     process.env.LOCALAPPDATA,
     process.env.ProgramFiles,
@@ -538,7 +604,7 @@ class BrowserListImagesTool extends ToolBase {
 
 class BrowserActTool extends ToolBase {
   name = "browser_act";
-  searchHint = "用自然语言执行浏览器操作，如点击按钮、填写表单、滚动页面等。示例：'点击搜索按钮'、'在搜索框输入 iPhone 15'";
+  searchHint = "用自然语言执行常见浏览器操作，如点击按钮、填写表单、搜索、滚动页面等。默认使用本地 Playwright 自动检测本机浏览器；若额外配置 Stagehand 模型，则会增强复杂语义动作。";
 
   inputSchema() {
     return {
@@ -551,9 +617,30 @@ class BrowserActTool extends ToolBase {
   }
 
   async call({ instruction }) {
-    const sh = await getBrowser();
-    await sh.act(instruction);
-    return { data: JSON.stringify({ success: true, action: instruction }) };
+    if (!hasStagehandModelConfig()) {
+      const page = await getPage();
+      const result = await runHeuristicBrowserAct(page, instruction);
+      return { data: JSON.stringify({ success: true, mode: "playwright-fallback", action: instruction, ...result }) };
+    }
+
+    try {
+      const sh = await getBrowser();
+      await sh.act(instruction);
+      return { data: JSON.stringify({ success: true, mode: "stagehand", action: instruction }) };
+    } catch (error) {
+      if (!isMissingStagehandKeyError(error)) {
+        try {
+          const page = await getPage();
+          const result = await runHeuristicBrowserAct(page, instruction);
+          return { data: JSON.stringify({ success: true, mode: "playwright-fallback", action: instruction, ...result }) };
+        } catch {
+          throw error;
+        }
+      }
+      const page = await getPage();
+      const result = await runHeuristicBrowserAct(page, instruction);
+      return { data: JSON.stringify({ success: true, mode: "playwright-fallback", action: instruction, ...result }) };
+    }
   }
 }
 
@@ -575,9 +662,9 @@ class BrowserActSingleTool extends ToolBase {
   }
 
   async call({ selector, method, arguments: args, description = "" }) {
-    const sh = await getBrowser();
-    await sh.act({ selector, method, arguments: args, description });
-    return { data: JSON.stringify({ success: true, selector, method }) };
+    const page = await getPage();
+    await runPreciseBrowserAction(page, { selector, method, arguments: args, description });
+    return { data: JSON.stringify({ success: true, selector, method, description }) };
   }
 }
 
@@ -609,11 +696,11 @@ class BrowserActMultiTool extends ToolBase {
   }
 
   async call({ actions }) {
-    const sh = await getBrowser();
+    const page = await getPage();
     const results = [];
     for (const action of actions) {
       try {
-        await sh.act(action);
+        await runPreciseBrowserAction(page, action);
         results.push({ selector: action.selector, method: action.method, success: true });
       } catch (err) {
         results.push({ selector: action.selector, method: action.method, success: false, error: err?.message });
@@ -654,6 +741,200 @@ class BrowserGetTextTool extends ToolBase {
       return { data: JSON.stringify({ url: page.url(), text: text.replace(/\s+/g, " ").trim().slice(0, 3000) }) };
     }
   }
+}
+
+function isMissingStagehandKeyError(error) {
+  return /Stagehand|ANTHROPIC_API_KEY|api key|模型 Key|model key/i.test(String(error?.message || error || ""));
+}
+
+function normalizeBrowserInstructionText(value) {
+  return String(value || "").replace(/\s+/g, " ").trim();
+}
+
+function stripActionTargetNoise(value) {
+  return normalizeBrowserInstructionText(value)
+    .replace(/^(?:一下|这个|這個|the)\s*/i, "")
+    .replace(/(?:按钮|按鈕|链接|鏈接|输入框|輸入框|搜索框|搜尋框|文本框|欄位|字段|field|button|link|input|box)$/i, "")
+    .trim();
+}
+
+function extractQuotedText(value) {
+  const text = normalizeBrowserInstructionText(value);
+  const match = text.match(/["“'‘]([^"”'’]+)["”'’]/u);
+  return match?.[1]?.trim() || "";
+}
+
+function parseHeuristicFillInstruction(instruction) {
+  const text = normalizeBrowserInstructionText(instruction);
+  const quoted = extractQuotedText(text);
+  const shouldSubmit = /回车|回車|提交|并搜索|並搜尋|然后搜索|然後搜尋|\bsubmit\b|\bpress enter\b/i.test(text);
+  const patterns = [
+    /^(?:在|向|往)?(.{0,40}?)(?:中|里|裡|内|內)?(?:输入|輸入|填写|填入|鍵入|键入|type|fill|enter)\s*[:：]?\s*(.+)$/iu,
+    /^(?:type|fill|enter)\s+(.+?)\s+(?:into|in)\s+(.+)$/iu,
+  ];
+
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (!match) continue;
+    if (/^(?:type|fill|enter)\b/i.test(text)) {
+      return {
+        target: stripActionTargetNoise(match[2] || ""),
+        value: quoted || normalizeBrowserInstructionText(match[1] || ""),
+        submit: shouldSubmit,
+      };
+    }
+    return {
+      target: stripActionTargetNoise(match[1] || ""),
+      value: quoted || normalizeBrowserInstructionText(match[2] || ""),
+      submit: shouldSubmit,
+    };
+  }
+
+  const searchMatch = text.match(/^(?:搜索|搜寻|搜尋|查询|查詢|search(?: for)?)\s*[:：]?\s*(.+)$/iu);
+  if (searchMatch) {
+    return {
+      target: "search",
+      value: quoted || normalizeBrowserInstructionText(searchMatch[1] || ""),
+      submit: true,
+    };
+  }
+
+  return null;
+}
+
+function parseHeuristicClickInstruction(instruction) {
+  const text = normalizeBrowserInstructionText(instruction);
+  const match = text.match(/^(?:点击|點擊|点一下|點一下|按下|选择|選擇|打开|開啟|open|click|select|choose)\s*[:：]?\s*(.+)$/iu);
+  if (!match) return null;
+  return stripActionTargetNoise(extractQuotedText(text) || match[1] || "");
+}
+
+function parseHeuristicPressInstruction(instruction) {
+  const text = normalizeBrowserInstructionText(instruction);
+  if (/^(?:回车|回車|按回车|按回車|press enter|hit enter)$/iu.test(text)) return "Enter";
+  const match = text.match(/^(?:按下|按|press)\s+([a-z0-9+\-_\s]+)$/iu);
+  return match?.[1]?.trim() || "";
+}
+
+async function findFirstUsableLocator(candidates) {
+  for (const locator of candidates) {
+    try {
+      const count = await locator.count();
+      for (let index = 0; index < Math.min(count, 8); index += 1) {
+        const item = locator.nth(index);
+        if (await item.isVisible().catch(() => false)) {
+          return item;
+        }
+      }
+    } catch {
+      // Try the next candidate.
+    }
+  }
+  return null;
+}
+
+function buildTargetRegex(target) {
+  const escaped = String(target || "")
+    .replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+    .replace(/\s+/g, "\\s+");
+  return new RegExp(escaped, "iu");
+}
+
+async function findClickableByNaturalTarget(page, target) {
+  const normalizedTarget = stripActionTargetNoise(target);
+  if (!normalizedTarget) throw new Error("点击目标不能为空。");
+  const targetRegex = buildTargetRegex(normalizedTarget);
+  return findFirstUsableLocator([
+    page.getByRole("button", { name: targetRegex }),
+    page.getByRole("link", { name: targetRegex }),
+    page.getByRole("menuitem", { name: targetRegex }),
+    page.getByLabel(targetRegex),
+    page.getByText(targetRegex),
+    page.locator(`[aria-label*="${normalizedTarget.replace(/"/g, '\\"')}"]`),
+    page.locator(`[title*="${normalizedTarget.replace(/"/g, '\\"')}"]`),
+  ]);
+}
+
+async function findInputByNaturalTarget(page, target) {
+  const normalizedTarget = stripActionTargetNoise(target).toLowerCase();
+  const isSearchTarget = !normalizedTarget || /搜索|搜寻|搜尋|查询|查詢|search|q/.test(normalizedTarget);
+  const targetRegex = normalizedTarget ? buildTargetRegex(normalizedTarget) : null;
+  const candidates = [];
+
+  if (targetRegex) {
+    candidates.push(
+      page.getByLabel(targetRegex),
+      page.getByPlaceholder(targetRegex),
+      page.getByRole("textbox", { name: targetRegex }),
+    );
+  }
+
+  if (isSearchTarget) {
+    candidates.push(
+      page.locator('input[type="search"]'),
+      page.locator('input[name="q"], input[name="wd"], input[name="query"], input[name="search"]'),
+      page.locator('input[placeholder*="搜索"], input[placeholder*="搜尋"], input[placeholder*="Search"], input[aria-label*="搜索"], input[aria-label*="Search"]'),
+    );
+  }
+
+  candidates.push(
+    page.locator("textarea"),
+    page.locator('input:not([type]), input[type="text"], input[type="email"], input[type="url"], input[type="tel"], input[type="password"]'),
+    page.getByRole("textbox"),
+  );
+
+  return findFirstUsableLocator(candidates);
+}
+
+async function runHeuristicBrowserAct(page, instruction) {
+  const text = normalizeBrowserInstructionText(instruction);
+  if (!text) throw new Error("browser_act 指令不能为空。");
+
+  if (/向下滚动|向下滾動|下滑|往下滚|往下滾|scroll down/i.test(text)) {
+    await page.mouse.wheel(0, 720);
+    return { heuristic: "scroll", direction: "down" };
+  }
+  if (/向上滚动|向上滾動|上滑|往上滚|往上滾|scroll up/i.test(text)) {
+    await page.mouse.wheel(0, -720);
+    return { heuristic: "scroll", direction: "up" };
+  }
+
+  const pressKey = parseHeuristicPressInstruction(text);
+  if (pressKey) {
+    await page.keyboard.press(pressKey);
+    return { heuristic: "press", key: pressKey };
+  }
+
+  const fillInstruction = parseHeuristicFillInstruction(text);
+  if (fillInstruction?.value) {
+    const input = await findInputByNaturalTarget(page, fillInstruction.target);
+    if (!input) throw new Error(`找不到可输入的目标：${fillInstruction.target || "默认输入框"}`);
+    await input.fill(fillInstruction.value);
+    if (fillInstruction.submit) {
+      await input.press("Enter");
+    }
+    try {
+      await page.waitForLoadState("domcontentloaded", { timeout: 5000 });
+    } catch {}
+    return {
+      heuristic: "fill",
+      target: fillInstruction.target || "default",
+      submitted: fillInstruction.submit,
+    };
+  }
+
+  const clickTarget = parseHeuristicClickInstruction(text);
+  if (clickTarget) {
+    const clickable = await findClickableByNaturalTarget(page, clickTarget);
+    if (!clickable) throw new Error(`找不到可点击目标：${clickTarget}`);
+    await clickable.click();
+    try {
+      await page.waitForLoadState("domcontentloaded", { timeout: 5000 });
+    } catch {}
+    return { heuristic: "click", target: clickTarget };
+  }
+
+  throw new Error(`本地 browser_act fallback 当前只能处理常见动作：点击、输入/搜索、滚动、按键。当前无法解析：${text}。如需更复杂网页语义操作，可选配 STAGEHAND_API_KEY / OPENAI_API_KEY / ANTHROPIC_API_KEY 增强，但普通工具调用不会强制要求它们。`);
 }
 
 class DesktopLaunchNativeApplicationTool extends ToolBase {
@@ -755,6 +1036,50 @@ class DesktopLaunchNativeApplicationTool extends ToolBase {
         ...result,
       }),
     };
+  }
+}
+
+function getBrowserLocator(page, selector) {
+  const normalized = String(selector || "").trim();
+  if (!normalized) throw new Error("selector 不能为空。");
+  if (normalized.startsWith("//") || normalized.startsWith("(//")) {
+    return page.locator(`xpath=${normalized}`).first();
+  }
+  return page.locator(normalized).first();
+}
+
+async function runPreciseBrowserAction(page, action) {
+  const selector = String(action?.selector || "").trim();
+  const method = String(action?.method || "").trim().toLowerCase();
+  const args = Array.isArray(action?.arguments) ? action.arguments : [];
+  const locator = getBrowserLocator(page, selector);
+
+  switch (method) {
+    case "click":
+      await locator.click();
+      break;
+    case "fill":
+      await locator.fill(String(args[0] ?? ""));
+      break;
+    case "type":
+      await locator.type(String(args[0] ?? ""));
+      break;
+    case "select":
+    case "selectoption":
+    case "select_option":
+      await locator.selectOption(String(args[0] ?? ""));
+      break;
+    case "press":
+      await locator.press(String(args[0] ?? "Enter"));
+      break;
+    default:
+      throw new Error(`不支持的浏览器精确动作：${method || "(empty)"}`);
+  }
+
+  try {
+    await page.waitForLoadState("domcontentloaded", { timeout: 3000 });
+  } catch {
+    // Many precise interactions do not navigate; this is only a best-effort settle.
   }
 }
 
@@ -983,7 +1308,7 @@ class DocumentWritePptxTool extends ToolBase {
 
 class DesktopOpenExternalBrowserTool extends ToolBase {
   name = "desktop_open_external_browser";
-  searchHint = "打开真实外部浏览器（Chrome / Edge / Firefox / 系统默认浏览器）。只有当用户明确要求打开浏览器，或明确要求打开/访问某个网站、链接、URL 时才应使用；纯网页搜索、资料查找、页面读取、新闻整理、写 Word/报告/总结并保存到桌面等任务，仍必须优先使用内置 browser_* 工具。";
+  searchHint = "打开真实外部浏览器（Chrome / Edge / Firefox / Brave / 系统默认浏览器）。只有当用户明确要求打开浏览器，或明确要求打开/访问某个网站、链接、URL 时才应使用；纯网页搜索、资料查找、页面读取、新闻整理、写 Word/报告/总结并保存到桌面等任务，仍必须优先使用内置 browser_* 工具。";
 
   inputSchema() {
     return {
@@ -991,8 +1316,8 @@ class DesktopOpenExternalBrowserTool extends ToolBase {
       properties: {
         browser: {
           type: "string",
-          enum: ["auto", "default", "chrome", "edge", "firefox"],
-          description: "希望打开的浏览器类型。auto 表示优先 Chrome，再尝试 Edge、Firefox；default 表示系统默认浏览器。",
+          enum: ["auto", "default", "chrome", "edge", "firefox", "brave"],
+          description: "希望打开的浏览器类型。auto 表示优先 Chrome，再尝试 Edge、Firefox、Brave；default 表示系统默认浏览器。",
         },
         url: {
           type: "string",
@@ -1100,11 +1425,12 @@ class DesktopOpenExternalBrowserTool extends ToolBase {
     }
 
     const browserLabelMap = {
-      auto: "Chrome / Edge / Firefox",
+      auto: "Chrome / Edge / Firefox / Brave",
       default: "系统默认浏览器",
       chrome: "Chrome",
       edge: "Edge",
       firefox: "Firefox",
+      brave: "Brave",
     };
 
     throw new Error(

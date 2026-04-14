@@ -97,7 +97,6 @@ export function RemoteOpsCenter() {
   const continueContentTaskNextCycle = useStore(s => s.continueContentTaskNextCycle);
   const applyContentChannelGovernance = useStore(s => s.applyContentChannelGovernance);
   const enforceManualApprovalForContentTasks = useStore(s => s.enforceManualApprovalForContentTasks);
-  const setActiveExecutionRun = useStore(s => s.setActiveExecutionRun);
   const setTab = useStore(s => s.setTab);
   const setActiveControlCenterSection = useStore(s => s.setActiveControlCenterSection);
   const focusBusinessContentTask = useStore(s => s.focusBusinessContentTask);
@@ -108,13 +107,6 @@ export function RemoteOpsCenter() {
   const openControlCenterSection = (section: ControlCenterSectionId) => {
     setActiveControlCenterSection(section);
     setTab("settings");
-  };
-
-  const focusExecutionRun = (runId?: string | null) => {
-    if (runId) {
-      setActiveExecutionRun(runId);
-    }
-    openControlCenterSection("execution");
   };
 
   const handoffChannelSessionToChat = (session: BusinessChannelSession) => {
@@ -392,9 +384,6 @@ export function RemoteOpsCenter() {
     const sessionItems = channelSessionWatchQueue.map(session => {
       const stateLabel = getChannelSessionStateLabel(session);
       const nextAction = getChannelSessionNextAction(session);
-      const linkedRun = session.lastExecutionRunId
-        ? executionRuns.find(run => run.id === session.lastExecutionRunId) ?? null
-        : null;
       const customerName = customerNameByEntityKey.get(`channelSession:${session.id}`) ?? session.title;
       return {
         key: `session:${session.id}`,
@@ -409,8 +398,8 @@ export function RemoteOpsCenter() {
         meta: [`客户 ${customerName}`, `下一步 ${nextAction}`, formatRemoteTimestamp(session.lastMessageAt)],
         primaryAction: () => handoffChannelSessionToChat(session),
         primaryLabel: "聊天接管",
-        secondaryAction: linkedRun ? (() => focusExecutionRun(linkedRun.id)) : null,
-        secondaryLabel: linkedRun ? "查看执行" : null,
+        secondaryAction: null,
+        secondaryLabel: null,
         tertiaryAction: null,
         tertiaryLabel: null,
       };
@@ -431,10 +420,10 @@ export function RemoteOpsCenter() {
         badgeLabel: getExecutionRunLabel(run.status),
         note: linkedContentTask ? `当前内容状态: ${linkedContentTask.status}` : run.instruction.slice(0, 110),
         meta: [`客户 ${customerName}`, run.workflowRunId ? "含 Workflow" : "无 Workflow"],
-        primaryAction: () => focusExecutionRun(run.id),
-        primaryLabel: "查看执行",
-        secondaryAction: () => setTab("tasks"),
-        secondaryLabel: "聊天续跑",
+        primaryAction: () => setTab("tasks"),
+        primaryLabel: "聊天接管",
+        secondaryAction: null,
+        secondaryLabel: null,
         tertiaryAction: run.workflowRunId ? (() => {
           focusWorkflowRun(run.workflowRunId!);
           openControlCenterSection("workflow");

@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useStore } from "@/store";
 import { filterByProjectScope, getSessionProjectLabel } from "@/lib/project-context";
 import {
+  BUSINESS_CHANNEL_SESSION_STATUSES,
   BUSINESS_ENTITY_LABELS,
 } from "@/lib/business-entities";
 import {
@@ -16,7 +17,6 @@ import {
   type QuantDecision,
 } from "@/lib/business-quantification";
 import type { BusinessChannelSession, BusinessCustomer, BusinessOperationRecord } from "@/types/business-entities";
-import type { ControlCenterSectionId } from "@/store/types";
 
 const BUSINESS_CHANNEL_LABELS: Record<BusinessChannelSession["channel"], string> = {
   wecom: "企业微信",
@@ -30,6 +30,17 @@ const BUSINESS_CHANNEL_LABELS: Record<BusinessChannelSession["channel"], string>
   web: "Web",
 };
 type BusinessMessageTone = "customer" | "manual" | "ai" | "system";
+
+const BUSINESS_CHANNEL_SESSION_STATUS_LABELS: Record<BusinessChannelSession["status"], string> = {
+  open: "新会话",
+  active: "跟进中",
+  waiting: "等待客户",
+  closed: "已关闭",
+};
+
+function getBusinessChannelSessionStatusLabel(status: BusinessChannelSession["status"]) {
+  return BUSINESS_CHANNEL_SESSION_STATUS_LABELS[status] ?? status;
+}
 
 function getBusinessChannelServiceModeLabel(session: BusinessChannelSession) {
   return session.serviceMode === "customer_service" ? "客服模式" : "私域模式";
@@ -111,26 +122,12 @@ export function BusinessEntitiesCenter() {
   const businessChannelSessions = useStore(s => s.businessChannelSessions);
   const businessOperationLogs = useStore(s => s.businessOperationLogs);
   const openChannelSessionChat = useStore(s => s.openChannelSessionChat);
-  const advanceBusinessChannelSessionStatus = useStore(s => s.advanceBusinessChannelSessionStatus);
-  const markBusinessChannelSessionHandled = useStore(s => s.markBusinessChannelSessionHandled);
+  const updateBusinessChannelSession = useStore(s => s.updateBusinessChannelSession);
+  const recordBusinessOperation = useStore(s => s.recordBusinessOperation);
   const seedBusinessEntitiesForProject = useStore(s => s.seedBusinessEntitiesForProject);
   const clearBusinessEntitiesForProject = useStore(s => s.clearBusinessEntitiesForProject);
-  const setActiveExecutionRun = useStore(s => s.setActiveExecutionRun);
-  const setActiveControlCenterSection = useStore(s => s.setActiveControlCenterSection);
   const setTab = useStore(s => s.setTab);
   const [activeCustomerId, setActiveCustomerId] = useState<string | null>(null);
-
-  const openControlCenterSection = (section: ControlCenterSectionId) => {
-    setActiveControlCenterSection(section);
-    setTab("settings");
-  };
-
-  const focusExecutionRun = (runId?: string | null) => {
-    if (runId) {
-      setActiveExecutionRun(runId);
-    }
-    openControlCenterSection("execution");
-  };
 
   const handoffChannelSessionToChat = (channelSessionId: string) => {
     openChannelSessionChat(channelSessionId);
@@ -138,6 +135,26 @@ export function BusinessEntitiesCenter() {
   };
 
   const closeCustomerDialog = () => setActiveCustomerId(null);
+
+  const selectBusinessChannelSessionStatus = (
+    channelSessionId: string,
+    status: BusinessChannelSession["status"],
+  ) => {
+    const session = businessChannelSessions.find(item => item.id === channelSessionId);
+    if (!session || session.status === status) return;
+
+    updateBusinessChannelSession(channelSessionId, { status });
+    recordBusinessOperation({
+      entityType: "channelSession",
+      entityId: channelSessionId,
+      eventType: "workflow",
+      trigger: "manual",
+      status: "completed",
+      title: "渠道会话状态已选择",
+      detail: `人工将渠道会话状态选择为 ${getBusinessChannelSessionStatusLabel(status)}。AI 后续仍可根据会话进展自动推进。`,
+      externalRef: session.externalRef,
+    });
+  };
 
   const activeSession = useMemo(
     () => chatSessions.find(session => session.id === activeSessionId) ?? null,
@@ -185,16 +202,6 @@ export function BusinessEntitiesCenter() {
     () => Object.fromEntries(scopedChannelSessions.map(item => [item.id, item])),
     [scopedChannelSessions],
   );
-  const latestOperationByEntity = useMemo(() => {
-    const nextMap: Record<string, BusinessOperationRecord> = {};
-    for (const record of scopedOperationLogs) {
-      const key = `${record.entityType}:${record.entityId}`;
-      if (!nextMap[key] || record.updatedAt > nextMap[key].updatedAt) {
-        nextMap[key] = record;
-      }
-    }
-    return nextMap;
-  }, [scopedOperationLogs]);
   const sortedScopedChannelSessions = useMemo(
     () => [...scopedChannelSessions].sort((left, right) => right.lastMessageAt - left.lastMessageAt),
     [scopedChannelSessions],
@@ -409,7 +416,6 @@ export function BusinessEntitiesCenter() {
             wide
             items={unassignedChannelSessions.map(session => {
               const decision = scoreChannelSession(session, null);
-              const latestOperation = latestOperationByEntity[`channelSession:${session.id}`];
               const sessionLogs = sessionMessageLogMap.get(session.id) ?? [];
               return (
                 <article key={session.id} className="control-center__entity-card">
@@ -427,9 +433,10 @@ export function BusinessEntitiesCenter() {
                     <button type="button" className="btn-ghost" onClick={() => handoffChannelSessionToChat(session.id)}>
                       聊天接管
                     </button>
-                    <button type="button" className="btn-ghost" onClick={() => advanceBusinessChannelSessionStatus(session.id)}>
-                      推进状态
-                    </button>
+                    <ChannelSessionStatusSelect
+                      status={session.status}
+                      onChange={(status) => selectBusinessChannelSessionStatus(session.id, status)}
+                    />
                   </div>
                   {sessionLogs.length > 0 ? (
                     <div className="control-center__customer-message-list">
@@ -451,11 +458,6 @@ export function BusinessEntitiesCenter() {
                       })}
                     </div>
                   ) : null}
-                  <EntityAuditSummary
-                    operation={latestOperation}
-                    onOpenRemoteOps={() => openControlCenterSection("remote")}
-                    onOpenExecution={latestOperation?.executionRunId ? () => focusExecutionRun(latestOperation.executionRunId) : undefined}
-                  />
                 </article>
               );
             })}
@@ -467,47 +469,58 @@ export function BusinessEntitiesCenter() {
         <CustomerDetailDialog
           customer={activeCustomer}
           customerSessions={customerChannelSessionsMap.get(activeCustomer.id) ?? []}
-          latestOperation={latestOperationByEntity[`customer:${activeCustomer.id}`]}
           sessionMessageLogMap={sessionMessageLogMap}
           onClose={closeCustomerDialog}
-          onOpenRemoteOps={() => openControlCenterSection("remote")}
-          onOpenExecution={(runId) => focusExecutionRun(runId)}
           onHandoffChannelSession={handoffChannelSessionToChat}
-          onAdvanceChannelSession={advanceBusinessChannelSessionStatus}
-          onMarkChannelSessionHandled={(channelSessionId, title) => markBusinessChannelSessionHandled({
-            channelSessionId,
-            trigger: "manual",
-            detail: `已在业务实体中将 ${title} 标记为已处理。`,
-            handledBy: "manual",
-          })}
+          onSelectChannelSessionStatus={selectBusinessChannelSessionStatus}
         />
       ) : null}
     </div>
   );
 }
 
+function ChannelSessionStatusSelect({
+  status,
+  onChange,
+}: {
+  status: BusinessChannelSession["status"];
+  onChange: (status: BusinessChannelSession["status"]) => void;
+}) {
+  return (
+    <label
+      className="control-center__status-select"
+      onClick={(event) => event.stopPropagation()}
+    >
+      <span>选择状态</span>
+      <select
+        value={status}
+        aria-label="选择渠道会话状态"
+        onChange={(event) => onChange(event.target.value as BusinessChannelSession["status"])}
+      >
+        {BUSINESS_CHANNEL_SESSION_STATUSES.map(option => (
+          <option key={option} value={option}>
+            {getBusinessChannelSessionStatusLabel(option)}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
 function CustomerDetailDialog({
   customer,
   customerSessions,
-  latestOperation,
   sessionMessageLogMap,
   onClose,
-  onOpenRemoteOps,
-  onOpenExecution,
   onHandoffChannelSession,
-  onAdvanceChannelSession,
-  onMarkChannelSessionHandled,
+  onSelectChannelSessionStatus,
 }: {
   customer: BusinessCustomer;
   customerSessions: BusinessChannelSession[];
-  latestOperation?: BusinessOperationRecord;
   sessionMessageLogMap: Map<string, BusinessOperationRecord[]>;
   onClose: () => void;
-  onOpenRemoteOps: () => void;
-  onOpenExecution: (runId?: string | null) => void;
   onHandoffChannelSession: (channelSessionId: string) => void;
-  onAdvanceChannelSession: (channelSessionId: string) => void;
-  onMarkChannelSessionHandled: (channelSessionId: string, title: string) => void;
+  onSelectChannelSessionStatus: (channelSessionId: string, status: BusinessChannelSession["status"]) => void;
 }) {
   const decision = scoreCustomerHealth(customer);
   const platformChannels = getCustomerPlatformChannels(customer, customerSessions);
@@ -688,18 +701,10 @@ function CustomerDetailDialog({
                           <button type="button" className="btn-ghost" onClick={() => onHandoffChannelSession(session.id)}>
                             聊天接管
                           </button>
-                          <button type="button" className="btn-ghost" onClick={() => onAdvanceChannelSession(session.id)}>
-                            推进状态
-                          </button>
-                          {(session.requiresReply || (session.unreadCount ?? 0) > 0) ? (
-                            <button
-                              type="button"
-                              className="btn-ghost"
-                              onClick={() => onMarkChannelSessionHandled(session.id, session.title)}
-                            >
-                              标记已处理
-                            </button>
-                          ) : null}
+                          <ChannelSessionStatusSelect
+                            status={session.status}
+                            onChange={(status) => onSelectChannelSessionStatus(session.id, status)}
+                          />
                         </div>
                       </section>
                     );
@@ -748,12 +753,6 @@ function CustomerDetailDialog({
                 <div className="control-center__entity-note">其余 {remainingMessageCount} 条消息已收纳，避免当前详情页信息过载。</div>
               ) : null}
             </section>
-
-            <EntityAuditSummary
-              operation={latestOperation}
-              onOpenRemoteOps={onOpenRemoteOps}
-              onOpenExecution={latestOperation?.executionRunId ? () => onOpenExecution(latestOperation.executionRunId) : undefined}
-            />
           </section>
         </div>
       </div>
@@ -819,112 +818,4 @@ function EntitySection({
   );
 }
 
-function EntityAuditSummary({
-  operation,
-  onOpenRemoteOps,
-  onOpenExecution,
-}: {
-  operation?: BusinessOperationRecord;
-  onOpenRemoteOps: () => void;
-  onOpenExecution?: () => void;
-}) {
-  return (
-    <div
-      style={{
-        marginTop: 12,
-        display: "grid",
-        gap: 10,
-        padding: 12,
-        borderRadius: 14,
-        border: "1px solid var(--border)",
-        background: "rgba(255,255,255,0.03)",
-      }}
-    >
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
-        <div style={{ fontSize: 11, color: "var(--text-muted)" }}>最近审计动作</div>
-        {operation ? (
-          <span className={`control-center__scenario-badge is-${getOperationTone(operation.status)}`}>
-            {getOperationLabel(operation)}
-          </span>
-        ) : (
-          <span className="control-center__scenario-badge is-partial">尚未进入审计链路</span>
-        )}
-      </div>
-      <div className="control-center__entity-note">
-        {operation ? operation.detail : "这个实体还没有审批或派发记录，适合从远程值守面板开始建立自动化链路。"}
-      </div>
-      <div className="control-center__quick-actions">
-        <button type="button" className="btn-ghost" onClick={onOpenRemoteOps}>
-          去远程值守
-        </button>
-        {onOpenExecution ? (
-          <button type="button" className="btn-ghost" onClick={onOpenExecution}>
-            查看对应执行
-          </button>
-        ) : null}
-      </div>
-    </div>
-  );
-}
-
-function getOperationTone(status: BusinessOperationRecord["status"]) {
-  if (status === "approved" || status === "sent" || status === "completed") {
-    return "ready";
-  }
-  if (status === "pending") {
-    return "partial";
-  }
-  return "blocked";
-}
-
-function getOperationLabel(operation: BusinessOperationRecord) {
-  if (operation.eventType === "approval") {
-    if (operation.status === "approved") return "已批准";
-    if (operation.status === "rejected") return "已驳回";
-    return "待审批";
-  }
-
-  if (operation.eventType === "workflow") {
-    if (operation.status === "completed") return "Workflow 完成";
-    if (operation.status === "failed") return "Workflow 失败";
-    return "Workflow 处理中";
-  }
-
-  if (operation.eventType === "connector") {
-    if (operation.status === "failed") return "连接器异常";
-    if (operation.status === "completed") return "连接器已同步";
-    return "连接器处理中";
-  }
-
-  if (operation.eventType === "message") {
-    if (operation.status === "failed") return "消息失败";
-    if (operation.status === "completed" || operation.status === "sent") return "消息已回写";
-    return "消息处理中";
-  }
-
-  if (operation.eventType === "publish") {
-    if (operation.status === "completed") return "已回写发布";
-    if (operation.status === "failed") return "发布失败";
-    return "发布处理中";
-  }
-
-  if (operation.eventType === "governance") {
-    return "治理动作";
-  }
-
-  if (operation.eventType === "desktop") {
-    if (operation.status === "completed") return "桌面现场已记录";
-    if (operation.status === "blocked") return "桌面动作待接管";
-    if (operation.status === "failed") return "桌面动作失败";
-    return "桌面动作";
-  }
-
-  if (operation.status === "sent") {
-    return "已派发";
-  }
-  if (operation.status === "blocked") {
-    return "已阻断";
-  }
-  return "处理中";
-}
 

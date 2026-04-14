@@ -4,6 +4,7 @@ import type {
   AgentConfig,
   AgentId,
   AgentGovernance,
+  AgentSkill,
   AgentState,
   AgentStatus,
   Activity,
@@ -19,6 +20,7 @@ import type {
   HermesDispatchSettings,
   HermesPlannerProfile,
   DesktopRuntimeState,
+  ExecutionAuditReceipt,
   ExecutionEvent,
   ExecutionRecoveryState,
   ExecutionRun,
@@ -98,6 +100,7 @@ import type {
 import type {
   WorkspaceDeskNote,
   WorkspaceEntry,
+  WorkspaceProjectFact,
   WorkspaceProjectMemory,
   WorkspacePreview,
   WorkspaceReferenceBundle,
@@ -248,6 +251,7 @@ interface MeetingSlice {
 interface SettingsSlice {
   providers: ModelProvider[];
   agentConfigs: Record<AgentId, AgentConfig>;
+  runtimeAgentSkills: AgentSkill[];
   platformConfigs: Record<string, PlatformConfig>;
   enabledPluginIds: string[];
   userNickname: string;
@@ -260,6 +264,7 @@ interface SettingsSlice {
   addProvider: (p: ModelProvider) => void;
   updateProvider: (id: string, updates: Partial<ModelProvider>) => void;
   removeProvider: (id: string) => void;
+  setRuntimeAgentSkills: (skills: AgentSkill[]) => void;
   updateAgentConfig: (id: AgentId, updates: Partial<AgentConfig>) => void;
   updatePlatformConfig: (id: string, updates: Partial<PlatformConfig>) => void;
   updatePlatformField: (platformId: string, fieldKey: string, value: string) => void;
@@ -541,6 +546,7 @@ interface ExecutionSlice {
     lastFailureReason?: string;
     recoveryState?: ExecutionRecoveryState;
     lastRecoveryHint?: string;
+    contextReceipt?: ExecutionAuditReceipt;
     event?: ExecutionEvent;
   }) => void;
   failExecutionRun: (runId: string, detail: string, options?: {
@@ -590,6 +596,13 @@ interface WorkspaceSlice {
   applyWorkspaceBundle: (id: string) => void;
   deleteWorkspaceBundle: (id: string) => void;
   saveWorkspaceProjectMemory: (name?: string) => void;
+  recordWorkspaceProjectFacts: (payload: {
+    projectId?: string | null;
+    rootPath?: string | null;
+    executionRunId?: string;
+    sourceLabel?: string;
+    facts: WorkspaceProjectFact[];
+  }) => void;
   applyWorkspaceProjectMemory: (id: string) => void;
   deleteWorkspaceProjectMemory: (id: string) => void;
   setActiveWorkspaceProjectMemory: (id: string | null) => void;
@@ -1183,6 +1196,38 @@ function capWorkspaceProjectMemories(memories: WorkspaceProjectMemory[]): Worksp
   return [...memories]
     .sort((left, right) => right.updatedAt - left.updatedAt)
     .slice(0, MAX_WORKSPACE_PROJECT_MEMORIES);
+}
+
+function capWorkspaceProjectFacts(facts: WorkspaceProjectFact[]) {
+  return [...facts]
+    .sort((left, right) => right.updatedAt - left.updatedAt)
+    .slice(0, 40);
+}
+
+function upsertWorkspaceProjectFacts(
+  currentFacts: WorkspaceProjectFact[] | undefined,
+  nextFacts: WorkspaceProjectFact[],
+) {
+  const existing = Array.isArray(currentFacts) ? currentFacts : [];
+  const merged = [...existing];
+
+  for (const fact of nextFacts) {
+    const index = merged.findIndex(item => item.key === fact.key);
+    if (index >= 0) {
+      merged[index] = {
+        ...merged[index],
+        ...fact,
+        id: merged[index].id || fact.id,
+        createdAt: merged[index].createdAt,
+        updatedAt: fact.updatedAt,
+        sourceIds: Array.from(new Set([...(merged[index].sourceIds ?? []), ...(fact.sourceIds ?? [])])),
+      };
+    } else {
+      merged.push(fact);
+    }
+  }
+
+  return capWorkspaceProjectFacts(merged);
 }
 
 function capBusinessOperationLogs(records: BusinessOperationRecord[]): BusinessOperationRecord[] {
@@ -2033,6 +2078,7 @@ export const useStore = create<Store>()(
 
       providers: [],
       agentConfigs: initAgentConfigs(),
+      runtimeAgentSkills: AGENT_SKILLS,
       enabledPluginIds: DEFAULT_ENABLED_PLUGIN_IDS,
       userNickname: "您",
       userProfile: createEmptyUserProfile(),
@@ -2141,6 +2187,23 @@ export const useStore = create<Store>()(
         set(s => ({ providers: s.providers.map(p => (p.id === id ? { ...p, ...updates } : p)) })),
       removeProvider: (id) =>
         set(s => ({ providers: s.providers.filter(p => p.id !== id) })),
+      setRuntimeAgentSkills: (skills) =>
+        set(s => {
+          const normalizedSkills = Array.isArray(skills) && skills.length > 0 ? skills : AGENT_SKILLS;
+          const allSkillIds = normalizedSkills.map(skill => skill.id);
+          return {
+            runtimeAgentSkills: normalizedSkills,
+            agentConfigs: Object.fromEntries(
+              (Object.keys(s.agentConfigs) as AgentId[]).map(id => [
+                id,
+                {
+                  ...s.agentConfigs[id],
+                  skills: Array.from(new Set([...allSkillIds, ...s.agentConfigs[id].skills])),
+                },
+              ]),
+            ) as Record<AgentId, AgentConfig>,
+          };
+        }),
       updateAgentConfig: (id, updates) =>
         set(s => ({
           agentConfigs: {
@@ -3739,6 +3802,7 @@ export const useStore = create<Store>()(
         lastFailureReason,
         recoveryState,
         lastRecoveryHint,
+        contextReceipt,
         event,
       }) =>
         set(s => {
@@ -3807,6 +3871,7 @@ export const useStore = create<Store>()(
             lastFailureReason: resolvedFailureReason,
             recoveryState: resolvedRecoveryState,
             lastRecoveryHint: resolvedRecoveryHint,
+            ...(contextReceipt !== undefined ? { contextReceipt } : {}),
             ...(currentAgentId === undefined ? {} : { currentAgentId }),
             ...(typeof totalTasks === "number" ? { totalTasks } : {}),
             ...(typeof completedTasks === "number" ? { completedTasks } : {}),
@@ -4082,6 +4147,7 @@ export const useStore = create<Store>()(
             previews: s.workspacePinnedPreviews.slice(0, 6),
             scratchpad: s.workspaceScratchpad,
             deskNotes: notesSnapshot,
+            facts: [],
           };
 
           return {
@@ -4090,6 +4156,66 @@ export const useStore = create<Store>()(
               ...s.workspaceProjectMemories.filter(memory => memory.name !== trimmedName),
             ]),
             activeWorkspaceProjectMemoryId: nextMemory.id,
+          };
+        }),
+      recordWorkspaceProjectFacts: ({ projectId, rootPath, executionRunId, sourceLabel, facts }) =>
+        set(s => {
+          if (!Array.isArray(facts) || facts.length === 0) return {};
+
+          const now = Date.now();
+          const resolvedProjectId = projectId ?? s.chatSessions.find(session => session.id === s.activeSessionId)?.projectId ?? null;
+          const resolvedRootPath = rootPath ?? s.workspaceRoot ?? null;
+          const targetMemory =
+            (s.activeWorkspaceProjectMemoryId
+              ? s.workspaceProjectMemories.find(item => item.id === s.activeWorkspaceProjectMemoryId) ?? null
+              : null)
+            ?? s.workspaceProjectMemories.find(item =>
+              (item.projectId ?? null) === resolvedProjectId
+              && (item.rootPath ?? null) === resolvedRootPath,
+            )
+            ?? null;
+
+          const preparedFacts = facts.map(fact => ({
+            ...fact,
+            sourceLabel: sourceLabel?.trim() || fact.sourceLabel,
+            sourceRunId: executionRunId ?? fact.sourceRunId,
+          }));
+
+          if (targetMemory) {
+            const nextMemory: WorkspaceProjectMemory = {
+              ...targetMemory,
+              updatedAt: now,
+              facts: upsertWorkspaceProjectFacts(targetMemory.facts, preparedFacts),
+            };
+
+            return {
+              workspaceProjectMemories: capWorkspaceProjectMemories([
+                nextMemory,
+                ...s.workspaceProjectMemories.filter(item => item.id !== nextMemory.id),
+              ]),
+            };
+          }
+
+          const autoMemory: WorkspaceProjectMemory = {
+            id: `memory-auto-${now}`,
+            name: "Hermes World Facts",
+            createdAt: now,
+            updatedAt: now,
+            projectId: resolvedProjectId,
+            rootPath: resolvedRootPath,
+            focusPath: null,
+            previews: [],
+            scratchpad: "",
+            deskNotes: [],
+            facts: upsertWorkspaceProjectFacts([], preparedFacts),
+          };
+
+          return {
+            workspaceProjectMemories: capWorkspaceProjectMemories([
+              autoMemory,
+              ...s.workspaceProjectMemories,
+            ]),
+            activeWorkspaceProjectMemoryId: s.activeWorkspaceProjectMemoryId ?? autoMemory.id,
           };
         }),
       applyWorkspaceProjectMemory: (id) =>

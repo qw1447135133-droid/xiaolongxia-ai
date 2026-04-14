@@ -127,6 +127,7 @@ export default function HermesArchitecturePage() {
   const automationMode = useStore(s => s.automationMode);
   const remoteSupervisorEnabled = useStore(s => s.remoteSupervisorEnabled);
   const autoDispatchScheduledTasks = useStore(s => s.autoDispatchScheduledTasks);
+  const workspaceProjectMemories = useStore(s => s.workspaceProjectMemories);
   const [diagnostics, setDiagnostics] = useState<HermesDiagnosticsPayload | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -170,6 +171,16 @@ export default function HermesArchitecturePage() {
     ];
     return parts.join(" / ");
   }, [autoDispatchScheduledTasks, automationMode, remoteSupervisorEnabled]);
+
+  const factSnapshot = useMemo(() => {
+    const facts = workspaceProjectMemories
+      .flatMap(memory => memory.facts ?? [])
+      .sort((left, right) => right.updatedAt - left.updatedAt);
+    return {
+      total: facts.length,
+      recent: facts.slice(0, 6),
+    };
+  }, [workspaceProjectMemories]);
 
   return (
     <main
@@ -312,6 +323,51 @@ export default function HermesArchitecturePage() {
             </div>
           </section>
         ) : null}
+
+        <section style={{
+          display: "grid",
+          gap: 10,
+          padding: 22,
+          borderRadius: 24,
+          background: "rgba(255,255,255,0.94)",
+          border: "1px solid rgba(148,163,184,0.16)",
+          boxShadow: "0 18px 40px rgba(15, 23, 42, 0.06)",
+        }}>
+          <h2 style={{ margin: 0, fontSize: 22 }}>World Facts Snapshot</h2>
+          <div style={{ fontSize: 14, lineHeight: 1.8, color: "#475569" }}>
+            当前项目记忆中已累计 {factSnapshot.total} 条结构化事实卡，执行开始和结束时的世界状态/结果会持续写回这里，并保留来源标签与运行 ID。
+          </div>
+          {factSnapshot.recent.length === 0 ? (
+            <div style={{ fontSize: 13, color: "#64748b" }}>还没有可展示的事实卡。</div>
+          ) : (
+            <div style={{ display: "grid", gap: 10 }}>
+              {factSnapshot.recent.map((fact) => (
+                <div
+                  key={fact.id}
+                  style={{
+                    padding: "12px 14px",
+                    borderRadius: 14,
+                    border: "1px solid rgba(148,163,184,0.16)",
+                    background: "rgba(248,250,252,0.88)",
+                    display: "grid",
+                    gap: 4,
+                  }}
+                >
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+                    <strong style={{ fontSize: 13 }}>{fact.summary}</strong>
+                    <span style={{ fontSize: 11, color: "#64748b" }}>
+                      {fact.sourceType} · {fact.confidence} · {new Intl.DateTimeFormat("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }).format(fact.updatedAt)}
+                    </span>
+                  </div>
+                  <div style={{ fontSize: 12, lineHeight: 1.7, color: "#334155" }}>{fact.detail}</div>
+                  <div style={{ fontSize: 11, color: "#64748b" }}>
+                    Source: {fact.sourceLabel}{fact.sourceRunId ? ` · run ${fact.sourceRunId.slice(0, 8)}` : ""}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
 
         <section style={{ display: "grid", gap: 16 }}>
           {architectureSections.map((section) => {

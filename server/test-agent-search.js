@@ -14,6 +14,7 @@ import { readFileSync } from "fs";
 import { resolve, dirname } from "path";
 import { fileURLToPath } from "url";
 import Anthropic from "@anthropic-ai/sdk";
+import OpenAI from "openai";
 import { queryAgent, clearAllSessions } from "./agent-engine.js";
 import { getAgentTools } from "./agent-tools.js";
 import { closeBrowser } from "./browser-manager.js";
@@ -117,12 +118,26 @@ async function runSearchFlow(userInput) {
 
   // Step 3: 初始化 Agent
   step(`[3/4] 初始化鹦鹉螺 Agent`);
-  const apiKey = process.env.ANTHROPIC_API_KEY;
+  const useAnthropic = !!process.env.ANTHROPIC_API_KEY && !process.env.OPENAI_API_KEY && !process.env.SILICONFLOW_API_KEY;
+  const apiKey = process.env.OPENAI_API_KEY || process.env.SILICONFLOW_API_KEY || process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
-    console.error(`${"\x1b[31m"}✗ 未找到 ANTHROPIC_API_KEY，请在 .env.local 中配置${R}`);
+    console.error(`${"\x1b[31m"}✗ 未找到可用模型 Key，请在 .env.local 中配置 OPENAI_API_KEY、SILICONFLOW_API_KEY 或 ANTHROPIC_API_KEY${R}`);
     process.exit(1);
   }
-  const client = new Anthropic({ apiKey });
+  const clientType = useAnthropic ? "anthropic" : "openai";
+  const client = useAnthropic
+    ? new Anthropic({ apiKey, ...(process.env.ANTHROPIC_BASE_URL ? { baseURL: process.env.ANTHROPIC_BASE_URL } : {}) })
+    : new OpenAI({
+        apiKey,
+        ...(process.env.SILICONFLOW_API_KEY
+          ? { baseURL: process.env.SILICONFLOW_BASE_URL || "https://api.siliconflow.cn/v1" }
+          : process.env.OPENAI_BASE_URL
+            ? { baseURL: process.env.OPENAI_BASE_URL }
+            : {}),
+      });
+  const model = useAnthropic
+    ? (process.env.ANTHROPIC_MODEL || "claude-3-5-sonnet-20241022")
+    : (process.env.OPENAI_MODEL || (process.env.SILICONFLOW_API_KEY ? "Qwen/Qwen2.5-72B-Instruct" : "gpt-5.4-mini"));
   const tools = getAgentTools("orchestrator");
   ok(`  工具已加载：${tools.map(t => t.name).join(", ")}`);
 
@@ -144,8 +159,9 @@ async function runSearchFlow(userInput) {
       systemPrompt: SYSTEM_PROMPT_ORCHESTRATOR,
       tools,
       maxTokens: 2048,
-      model: "claude-3-5-sonnet-20241022",
+      model,
       client,
+      clientType,
     });
 
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);

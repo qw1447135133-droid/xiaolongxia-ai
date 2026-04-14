@@ -49,7 +49,8 @@ function trimBlock(value: string, maxLength: number) {
 }
 
 export function describeProjectMemory(memory: WorkspaceProjectMemory) {
-  return `${memory.previews.length} refs · ${memory.deskNotes.length} notes · ${memory.scratchpad.trim() ? "scratchpad ready" : "no scratchpad"} · ${memory.rootPath ?? "no root"}`;
+  const factCount = memory.facts?.length ?? 0;
+  return `${memory.previews.length} refs · ${memory.deskNotes.length} notes · ${factCount} facts · ${memory.scratchpad.trim() ? "scratchpad ready" : "no scratchpad"} · ${memory.rootPath ?? "no root"}`;
 }
 
 export function buildProjectMemorySnippet(memory: WorkspaceProjectMemory) {
@@ -73,8 +74,14 @@ export function buildProjectMemorySnippet(memory: WorkspaceProjectMemory) {
     : "";
 
   const focusSection = memory.focusPath ? `\nFocus path: ${memory.focusPath}` : "";
+  const factSection = (memory.facts?.length ?? 0) > 0
+    ? `\n\nStructured facts:\n${memory.facts!
+        .slice(0, 8)
+        .map((fact, index) => `${index + 1}. ${fact.summary}\n   ${trimBlock(fact.detail, 220)}\n   Source: ${fact.sourceLabel}`)
+        .join("\n")}`
+    : "";
 
-  return `Project memory: ${memory.name}\nWorkspace root: ${memory.rootPath ?? "not set"}${focusSection}\n\nPinned references:\n${referenceSection}\n\nDesk note snapshots:\n${noteSection}${scratchpadSection}`;
+  return `Project memory: ${memory.name}\nWorkspace root: ${memory.rootPath ?? "not set"}${focusSection}\n\nPinned references:\n${referenceSection}\n\nDesk note snapshots:\n${noteSection}${factSection}${scratchpadSection}`;
 }
 
 export function buildProjectMemoryScratchpad(memory: WorkspaceProjectMemory) {
@@ -91,6 +98,12 @@ export function buildProjectMemoryScratchpad(memory: WorkspaceProjectMemory) {
     memory.deskNotes.length
       ? `Desk note snapshots:\n${memory.deskNotes
           .map((note, index) => `${index + 1}. ${note.title}\n${trimBlock(note.content, 320)}`)
+          .join("\n\n")}`
+      : "",
+    memory.facts?.length
+      ? `Structured facts:\n${memory.facts
+          .slice(0, 10)
+          .map((fact, index) => `${index + 1}. ${fact.summary}\n${trimBlock(fact.detail, 280)}\nSource: ${fact.sourceLabel}`)
           .join("\n\n")}`
       : "",
   ].filter(Boolean);

@@ -1,13 +1,12 @@
 import { existsSync } from "node:fs";
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import { spawn } from "node:child_process";
 
 const CATALOG_PATH = path.join("src", "generated", "skills-catalog.json");
-const CREATE_SKILL_SCRIPT = path.join("scripts", "create-local-skill.mjs");
-const SYNC_SKILLS_SCRIPT = path.join("scripts", "sync-skill-catalog.mjs");
 const AGENT_SKILL_DOCUMENTS_DIR = path.join("output", "agent-skill-documents");
 const AGENT_IDS = ["orchestrator", "explorer", "writer", "designer", "performer", "greeter"];
+const REQUIRED_LOCALES = ["zh-CN", "zh-TW", "en", "ja"];
+const REQUIRED_TEXT_FIELDS = ["name", "short", "description", "dispatch", "typicalTasks", "outputs"];
 
 const STOPWORDS = new Set([
   "帮我", "请帮我", "一下", "一个", "这个", "那个", "需要", "生成", "整理", "处理", "执行", "完成", "自动", "自动化",
@@ -24,12 +23,55 @@ function tokenizeTask(task) {
     .filter(token => token && !STOPWORDS.has(token));
 }
 
-async function loadSkillCatalog(repoRoot) {
-  const filePath = path.join(repoRoot, CATALOG_PATH);
-  if (!existsSync(filePath)) return [];
+async function readCatalogFile(filePath) {
+  if (!filePath || !existsSync(filePath)) return [];
   const raw = await fs.readFile(filePath, "utf8");
   const parsed = JSON.parse(raw);
   return Array.isArray(parsed) ? parsed : [];
+}
+
+function getRuntimeCatalogPath(repoRoot) {
+  return process.env.XIAOLONGXIA_RUNTIME_SKILL_CATALOG
+    ? path.resolve(process.env.XIAOLONGXIA_RUNTIME_SKILL_CATALOG)
+    : path.join(repoRoot, CATALOG_PATH);
+}
+
+function getLocalSkillsDir(repoRoot) {
+  return process.env.XIAOLONGXIA_LOCAL_SKILLS_DIR
+    ? path.resolve(process.env.XIAOLONGXIA_LOCAL_SKILLS_DIR)
+    : path.join(repoRoot, "skills");
+}
+
+function sortSkillCatalog(catalog) {
+  return [...catalog].sort((a, b) => (a.order ?? 9999) - (b.order ?? 9999) || String(a.id).localeCompare(String(b.id)));
+}
+
+function mergeSkillCatalog(...catalogs) {
+  const byId = new Map();
+  for (const catalog of catalogs) {
+    for (const skill of Array.isArray(catalog) ? catalog : []) {
+      if (!skill?.id) continue;
+      byId.set(String(skill.id), skill);
+    }
+  }
+  return sortSkillCatalog([...byId.values()]);
+}
+
+export async function loadSkillCatalog(repoRoot) {
+  const bundledCatalogPath = path.join(repoRoot, CATALOG_PATH);
+  const runtimeCatalogPath = getRuntimeCatalogPath(repoRoot);
+  const bundledCatalog = await readCatalogFile(bundledCatalogPath);
+  const runtimeCatalog = path.resolve(runtimeCatalogPath) === path.resolve(bundledCatalogPath)
+    ? []
+    : await readCatalogFile(runtimeCatalogPath);
+  return mergeSkillCatalog(bundledCatalog, runtimeCatalog);
+}
+
+async function writeRuntimeSkillCatalog(repoRoot, catalog) {
+  const runtimeCatalogPath = getRuntimeCatalogPath(repoRoot);
+  await fs.mkdir(path.dirname(runtimeCatalogPath), { recursive: true });
+  await fs.writeFile(runtimeCatalogPath, `${JSON.stringify(sortSkillCatalog(catalog), null, 2)}\n`, "utf8");
+  return runtimeCatalogPath;
 }
 
 function buildSkillHaystack(skill) {
@@ -151,6 +193,72 @@ function buildSkillPrompt(catalog, skillIds = []) {
   return `\n\n【本次任务命中的技能】\n${lines.join("\n")}\n以上技能是系统在任务开始前自动扫描命中的流程包，优先复用这些技能对应的步骤、产出结构和工具策略。`;
 }
 
+function buildLocalePayload(args, name) {
+  const short = args.short || `${name} capability`;
+  const description = args.description || `${name} skill`;
+  return {
+    name,
+    short,
+    description,
+    dispatch: args.dispatch || "Describe how the dispatcher should pick this skill.",
+    typicalTasks: args.typicalTasks || "List the common tasks for this skill.",
+    outputs: args.outputs || "List the outputs produced by this skill.",
+  };
+}
+
+function buildSkillMarkdown(args, name) {
+  return `---\nname: ${name}\ndescription: ${args.description || `${name} skill`}\n---\n\n# ${name}\n\n## Trigger\n\n- Add the concrete trigger conditions for this skill.\n\n## Typical Work\n\n- Describe the main workflow.\n\n## Outputs\n\n- Describe the expected outputs and artifacts.\n`;
+}
+
+function validateSkill(skill, folder) {
+  if (!skill.id) {
+    throw new Error(`Skill in ${folder} is missing id.`);
+  }
+
+  for (const locale of REQUIRED_LOCALES) {
+    const localePayload = skill.locales?.[locale];
+    if (!localePayload) {
+      throw new Error(`Skill ${skill.id} is missing locale ${locale}.`);
+    }
+    for (const field of REQUIRED_TEXT_FIELDS) {
+      if (!localePayload[field]) {
+        throw new Error(`Skill ${skill.id} is missing ${locale}.${field}.`);
+      }
+    }
+  }
+}
+
+async function createLocalSkillScaffold(repoRoot, args) {
+  const id = inferSkillId(args.id || args.name || args.description);
+  const name = args.name || id;
+  const folder = path.join(getLocalSkillsDir(repoRoot), id);
+  const skill = {
+    id,
+    order: Number(args.order || 999),
+    category: args.category || "automation",
+    sourceType: args.sourceType || "local",
+    sourceLabel: args.sourceLabel || "Local Skill",
+    accent: args.accent || "#38bdf8",
+    icon: args.icon || "spark",
+    tags: args.tags ? String(args.tags).split(",").map(item => item.trim()).filter(Boolean) : [],
+    recommendedAgents: args.recommendedAgents
+      ? String(args.recommendedAgents).split(",").map(item => item.trim()).filter(Boolean)
+      : [],
+    locales: {
+      "zh-CN": buildLocalePayload(args, name),
+      "zh-TW": buildLocalePayload(args, name),
+      en: buildLocalePayload(args, name),
+      ja: buildLocalePayload(args, name),
+    },
+  };
+
+  validateSkill(skill, folder);
+  await fs.mkdir(folder, { recursive: true });
+  await fs.writeFile(path.join(folder, "skill.json"), `${JSON.stringify(skill, null, 2)}\n`, "utf8");
+  await fs.writeFile(path.join(folder, "SKILL.md"), buildSkillMarkdown(args, name), "utf8");
+  return skill;
+}
+
 function listCatalogSkillIds(catalog) {
   return Array.from(new Set(
     (Array.isArray(catalog) ? catalog : [])
@@ -218,33 +326,6 @@ function selectTaskMatchedSkills(catalog, task, agentId, limit = 4) {
     .map(item => item.skill.id);
 }
 
-function runNodeScript(repoRoot, relativeScriptPath, args = []) {
-  return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [path.join(repoRoot, relativeScriptPath), ...args], {
-      cwd: repoRoot,
-      stdio: ["ignore", "pipe", "pipe"],
-      env: process.env,
-    });
-
-    let stdout = "";
-    let stderr = "";
-    child.stdout.on("data", chunk => {
-      stdout += String(chunk || "");
-    });
-    child.stderr.on("data", chunk => {
-      stderr += String(chunk || "");
-    });
-    child.on("error", reject);
-    child.on("close", (code) => {
-      if (code === 0) {
-        resolve({ stdout, stderr });
-        return;
-      }
-      reject(new Error(stderr.trim() || stdout.trim() || `script exited with code ${code}`));
-    });
-  });
-}
-
 export async function autoProvisionAgentSkills({
   repoRoot,
   settings,
@@ -269,20 +350,20 @@ export async function autoProvisionAgentSkills({
     const inferredId = inferSkillId(task);
     const alreadyExists = catalog.some(skill => skill.id === inferredId);
     if (!alreadyExists) {
-      await runNodeScript(repoRoot, CREATE_SKILL_SCRIPT, [
-        "--id", inferredId,
-        "--name", inferSkillName(task),
-        "--category", inferSkillCategory(task),
-        "--icon", inferSkillIcon(task),
-        "--accent", inferSkillAccent(task),
-        "--description", `Auto-provisioned from task: ${String(task || "").slice(0, 90)}`,
-        "--dispatch", "当现有技能覆盖不足时自动装配，并优先服务当前任务的执行。",
-        "--typicalTasks", String(task || "").slice(0, 120),
-        "--outputs", "新的本地技能说明、执行流程提示和目录同步结果。",
-        "--sourceLabel", "Auto Provisioned Skill",
-        "--recommendedAgents", agentId,
-      ]);
-      await runNodeScript(repoRoot, SYNC_SKILLS_SCRIPT, []);
+      const createdSkill = await createLocalSkillScaffold(repoRoot, {
+        id: inferredId,
+        name: inferSkillName(task),
+        category: inferSkillCategory(task),
+        icon: inferSkillIcon(task),
+        accent: inferSkillAccent(task),
+        description: `Auto-provisioned from task: ${String(task || "").slice(0, 90)}`,
+        dispatch: "当现有技能覆盖不足时自动装配，并优先服务当前任务的执行。",
+        typicalTasks: String(task || "").slice(0, 120),
+        outputs: "新的本地技能说明、执行流程提示和目录同步结果。",
+        sourceLabel: "Auto Provisioned Skill",
+        recommendedAgents: agentId,
+      });
+      await writeRuntimeSkillCatalog(repoRoot, mergeSkillCatalog(catalog, [createdSkill]));
       createdSkillIds = [inferredId];
     } else {
       createdSkillIds = [inferredId];

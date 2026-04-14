@@ -60,11 +60,13 @@ const sections = [
   },
   {
     title: "QQ Bridge",
-    intro: "QQ 当前采用本地桥接模式。桥接程序负责监听 QQ，把真实消息推到工作台，再把 AI 回复拉回去代发。",
+    intro: "QQ 当前采用本地桥接模式。桥接程序负责监听 QQ，把真实消息推到工作台，再把 AI 回复或文件拉回去代发，并通过回执把送达/失败写回工作台。",
     bullets: [
       "入站接口：`POST /webhook/qq`。",
       "拉取回复：`POST /api/qq-bridge/pull`。",
       "桥接鉴权：请求头 `x-starcraw-secret`。",
+      "拉取接口现在支持 `ackIds / deliveredIds / failedIds / receipts`，可以把成功、失败和 dead-letter 统计回写回来。",
+      "如果桥接程序支持文件代发，QQ 现在也能通过统一渠道层走 `sendFile` 下发。",
       "仓库已附带示例脚本：`node scripts/qq-bridge-example.mjs http://localhost:3001 <bridgeSecret> <qqUserId>`。",
     ],
     code: [
@@ -72,6 +74,12 @@ const sections = [
       '  method: "POST",',
       '  headers: { "x-starcraw-secret": "<bridge-secret>", "Content-Type": "application/json" },',
       '  body: JSON.stringify({ userId: "qq_demo_001", text: "你好" })',
+      "})",
+      "",
+      'fetch("/api/qq-bridge/pull", {',
+      '  method: "POST",',
+      '  headers: { "x-starcraw-secret": "<bridge-secret>", "Content-Type": "application/json" },',
+      '  body: JSON.stringify({ userId: "qq_demo_001", ackIds: ["qq-text-..."], failedIds: ["qq-file-..."] })',
       "})",
     ].join("\n"),
   },

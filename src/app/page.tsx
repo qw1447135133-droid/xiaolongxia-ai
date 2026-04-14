@@ -58,7 +58,7 @@ import { DEFAULT_CHAT_TITLE, sortChatSessions } from "@/lib/chat-sessions";
 import { AgentIcon, getAgentIconColor } from "@/components/AgentIcon";
 import { deliverMeetingExport, type MeetingExportFormat } from "@/lib/meeting-exports";
 import { buildContextMentionCandidates, buildExplicitMentionContext } from "@/lib/context-mentions";
-import type { BusinessChannelSession, BusinessOperationRecord } from "@/types/business-entities";
+import type { BusinessChannelSession } from "@/types/business-entities";
 
 function detectElectronRuntime() {
   if (typeof window === "undefined") return false;
@@ -121,151 +121,6 @@ function getMappedChannelLabel(channel: BusinessChannelSession["channel"]) {
     default:
       return "Web";
   }
-}
-
-function formatLinkedChannelTimestamp(timestamp: number, locale: UiLocale) {
-  return new Intl.DateTimeFormat(locale, {
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  }).format(timestamp);
-}
-
-function resolveLinkedChannelMessageTone(log: BusinessOperationRecord) {
-  const signal = `${log.title} ${log.detail}`;
-  if (/收到|入站|inbound|客户|客戶|用户消息|用戶消息/u.test(signal)) return "customer" as const;
-  if (/已处理|已處理|连接器|連接器|connector|同步|webhook|拦截|攔截|审批|審批|失败|失敗/u.test(signal)) {
-    return "system" as const;
-  }
-  if (log.trigger === "manual") return "manual" as const;
-  return "ai" as const;
-}
-
-function getLinkedChannelSpeakerLabel(log: BusinessOperationRecord, locale: UiLocale) {
-  const tone = resolveLinkedChannelMessageTone(log);
-  switch (tone) {
-    case "customer":
-      return pickLocaleText(locale, { "zh-CN": "客户", "zh-TW": "客戶", en: "Customer", ja: "顧客" });
-    case "manual":
-      return pickLocaleText(locale, { "zh-CN": "人工回复", "zh-TW": "人工回覆", en: "Manual Reply", ja: "手動返信" });
-    case "system":
-      return pickLocaleText(locale, { "zh-CN": "系统记录", "zh-TW": "系統記錄", en: "System Log", ja: "システム記録" });
-    default:
-      return pickLocaleText(locale, { "zh-CN": "AI值守", "zh-TW": "AI 值守", en: "AI Watch", ja: "AI 応対" });
-  }
-}
-
-function LinkedChannelTranscript({
-  locale,
-  session,
-  history,
-  fillAvailable = false,
-  canResumeAiWatch = false,
-  onResumeAiWatch,
-}: {
-  locale: UiLocale;
-  session: BusinessChannelSession;
-  history: BusinessOperationRecord[];
-  fillAvailable?: boolean;
-  canResumeAiWatch?: boolean;
-  onResumeAiWatch?: () => void;
-}) {
-  const transcriptCopy = pickLocaleText(locale, {
-    "zh-CN": "这里展示的是从业务实体客户档案映射过来的客户会话记录，原始历史仍保留在客户档案里。",
-    "zh-TW": "這裡展示的是從業務實體客戶檔案映射過來的客戶會話記錄，原始歷史仍保留在客戶檔案裡。",
-    en: "This is a mapped view of the customer conversation. The source history remains in the customer record under business entities.",
-    ja: "ここには業務エンティティ内の顧客記録からマップされた会話のみを表示し、元の履歴は顧客記録側に保持されます。",
-  });
-  const emptyCopy = pickLocaleText(locale, {
-    "zh-CN": "这条渠道会话已经关联到当前聊天窗，但客户档案里还没有可映射的消息日志。",
-    "zh-TW": "這條渠道會話已關聯到目前聊天窗，但客戶檔案裡還沒有可映射的消息日誌。",
-    en: "This channel session is linked, but there are no mapped message logs in the customer record yet.",
-    ja: "このチャネル会話は関連付け済みですが、顧客記録側にまだ表示できるメッセージログがありません。",
-  });
-  const fillCopy = pickLocaleText(locale, {
-    "zh-CN": "当前聊天窗口还没有 AI 会话记录，你现在看到的是客户在业务实体档案里的历史消息映射。",
-    "zh-TW": "目前聊天視窗還沒有 AI 會話記錄，你現在看到的是客戶在業務實體檔案裡的歷史消息映射。",
-    en: "There are no AI chat records in this window yet. What you see here is the mapped customer history from business entities.",
-    ja: "このウィンドウにはまだ AI 会話記録がありません。表示中なのは業務エンティティ由来の顧客履歴です。",
-  });
-  const modeLabel = session.serviceMode === "customer_service"
-    ? pickLocaleText(locale, { "zh-CN": "客服模式", "zh-TW": "客服模式", en: "Service", ja: "サポート" })
-    : pickLocaleText(locale, { "zh-CN": "私域模式", "zh-TW": "私域模式", en: "Owner", ja: "オーナー" });
-
-  return (
-    <section className={`linked-channel-transcript ${fillAvailable ? "linked-channel-transcript--fill" : ""}`}>
-      <div className="linked-channel-transcript__head">
-        <div className="linked-channel-transcript__head-main">
-          <div className="linked-channel-transcript__eyebrow">
-            {pickLocaleText(locale, {
-              "zh-CN": "渠道映射",
-              "zh-TW": "渠道映射",
-              en: "Channel Mapping",
-              ja: "チャネルマッピング",
-            })}
-          </div>
-          <div className="linked-channel-transcript__title">{session.title}</div>
-          <div className="linked-channel-transcript__copy">{transcriptCopy}</div>
-        </div>
-        <div className="linked-channel-transcript__meta">
-          <span className="linked-channel-transcript__pill">{getMappedChannelLabel(session.channel)}</span>
-          <span className="linked-channel-transcript__pill">{modeLabel}</span>
-          {canResumeAiWatch && onResumeAiWatch ? (
-            <button
-              type="button"
-              className="linked-channel-transcript__pill linked-channel-transcript__pill--action"
-              onClick={onResumeAiWatch}
-            >
-              {pickLocaleText(locale, {
-                "zh-CN": "AI值守",
-                "zh-TW": "AI 值守",
-                en: "AI Watch",
-                ja: "AI 応対",
-              })}
-            </button>
-          ) : null}
-          {session.participantLabel || session.accountLabel ? (
-            <span className="linked-channel-transcript__pill is-soft">
-              {session.participantLabel || session.accountLabel}
-            </span>
-          ) : null}
-        </div>
-      </div>
-
-      {session.summary ? (
-        <div className="linked-channel-transcript__summary">{session.summary}</div>
-      ) : null}
-
-      <div className="linked-channel-transcript__list">
-        {history.length === 0 ? (
-          <div className="linked-channel-transcript__empty">{emptyCopy}</div>
-        ) : (
-          history.map(log => {
-            const tone = resolveLinkedChannelMessageTone(log);
-            return (
-              <article
-                key={log.id}
-                className={`linked-channel-transcript__item linked-channel-transcript__item--${tone}`}
-              >
-                <div className="linked-channel-transcript__item-meta">
-                  <span>{getLinkedChannelSpeakerLabel(log, locale)}</span>
-                  <span>{formatLinkedChannelTimestamp(log.createdAt, locale)}</span>
-                </div>
-                <div className="linked-channel-transcript__item-title">{log.title}</div>
-                <div className="linked-channel-transcript__item-detail">{log.detail}</div>
-              </article>
-            );
-          })
-        )}
-      </div>
-
-      {fillAvailable ? (
-        <div className="linked-channel-transcript__foot">{fillCopy}</div>
-      ) : null}
-    </section>
-  );
 }
 
 export default function App() {
@@ -1408,7 +1263,7 @@ function DashboardSupervisionRail({
               <button
                 key={mode.id}
                 type="button"
-                className={automationMode === mode.id ? "btn-primary" : "btn-ghost"}
+                className={`ios-home__supervision-mode-button is-${mode.id} ${automationMode === mode.id ? "is-active" : ""}`}
                 onClick={() => onSetAutomationMode(mode.id)}
               >
                 {mode.label}
@@ -1613,7 +1468,6 @@ function TasksTab() {
   const workspaceRoot = useStore(s => s.workspaceRoot);
   const chatSessions = useStore(s => s.chatSessions);
   const activeSessionId = useStore(s => s.activeSessionId);
-  const businessOperationLogs = useStore(s => s.businessOperationLogs);
   const businessChannelSessions = useStore(s => s.businessChannelSessions);
   const markBusinessChannelSessionHandled = useStore(s => s.markBusinessChannelSessionHandled);
   const createChatSession = useStore(s => s.createChatSession);
@@ -1630,6 +1484,10 @@ function TasksTab() {
     () => chatSessions.find(session => session.id === activeSessionId) ?? null,
     [activeSessionId, chatSessions],
   );
+  const chatHistorySessionCount = useMemo(
+    () => chatSessions.filter(session => !session.linkedChannelSessionId).length,
+    [chatSessions],
+  );
   const linkedChannelSession = useMemo(
     () =>
       activeSession?.linkedChannelSessionId
@@ -1637,20 +1495,6 @@ function TasksTab() {
         : null,
     [activeSession, businessChannelSessions],
   );
-  const linkedChannelHistory = useMemo(
-    () =>
-      linkedChannelSession
-        ? businessOperationLogs
-            .filter(log =>
-              log.entityType === "channelSession"
-              && log.entityId === linkedChannelSession.id
-              && log.eventType === "message",
-            )
-            .sort((left, right) => left.createdAt - right.createdAt)
-        : [],
-    [businessOperationLogs, linkedChannelSession],
-  );
-  const hasLinkedChannelView = Boolean(linkedChannelSession);
   const canResumeAiWatch = Boolean(
     linkedChannelSession
     && (
@@ -1726,7 +1570,7 @@ function TasksTab() {
                     aria-expanded={historyOpen}
                   >
                     <HistoryIcon />
-                    <span className="ios-chat-page__history-trigger-count">{chatSessions.length}</span>
+                    <span className="ios-chat-page__history-trigger-count">{chatHistorySessionCount}</span>
                   </button>
 
                   {historyOpen ? (
@@ -1749,10 +1593,10 @@ function TasksTab() {
                   {linkedChannelSession ? (
                     <span className="ios-chat-page__meta-tag">
                       {pickLocaleText(locale, {
-                        "zh-CN": `渠道映射 · ${getMappedChannelLabel(linkedChannelSession.channel)}`,
-                        "zh-TW": `渠道映射 · ${getMappedChannelLabel(linkedChannelSession.channel)}`,
-                        en: `Mapped · ${getMappedChannelLabel(linkedChannelSession.channel)}`,
-                        ja: `マップ済み · ${getMappedChannelLabel(linkedChannelSession.channel)}`,
+                        "zh-CN": `人工接管 · ${getMappedChannelLabel(linkedChannelSession.channel)}`,
+                        "zh-TW": `人工接管 · ${getMappedChannelLabel(linkedChannelSession.channel)}`,
+                        en: `Manual handoff · ${getMappedChannelLabel(linkedChannelSession.channel)}`,
+                        ja: `手動引き継ぎ · ${getMappedChannelLabel(linkedChannelSession.channel)}`,
                       })}
                     </span>
                   ) : null}
@@ -1769,7 +1613,58 @@ function TasksTab() {
             </div>
           </div>
 
-          {tasks.length === 0 && !hasLinkedChannelView ? (
+          {linkedChannelSession ? (
+            <div className="ios-chat-page__handoff-banner">
+              <div className="ios-chat-page__handoff-main">
+                <div className="ios-chat-page__handoff-eyebrow">
+                  {pickLocaleText(locale, {
+                    "zh-CN": "人工接管中",
+                    "zh-TW": "人工接管中",
+                    en: "Manual Handoff",
+                    ja: "手動引き継ぎ中",
+                  })}
+                </div>
+                <div className="ios-chat-page__handoff-title">{linkedChannelSession.title}</div>
+                <div className="ios-chat-page__handoff-copy">
+                  {pickLocaleText(locale, {
+                    "zh-CN": "聊天页只保留你和 AI 的会话历史；客户聊天记录仍保存在业务实体客户档案中。",
+                    "zh-TW": "聊天頁只保留你和 AI 的會話歷史；客戶聊天記錄仍保存在業務實體客戶檔案中。",
+                    en: "Chat history here only keeps your AI conversations. Customer messages remain in the business entity record.",
+                    ja: "ここにはユーザーと AI の履歴だけを残し、顧客会話は業務エンティティ側に保持します。",
+                  })}
+                </div>
+              </div>
+              {canResumeAiWatch ? (
+                <button
+                  type="button"
+                  className="linked-channel-transcript__watch-button"
+                  onClick={handleResumeAiWatch}
+                >
+                  <span className="linked-channel-transcript__watch-badge" aria-hidden="true">AI</span>
+                  <span className="linked-channel-transcript__watch-copy">
+                    <span className="linked-channel-transcript__watch-eyebrow">
+                      {pickLocaleText(locale, {
+                        "zh-CN": "点击切回",
+                        "zh-TW": "點擊切回",
+                        en: "Switch Back",
+                        ja: "切り替え",
+                      })}
+                    </span>
+                    <span className="linked-channel-transcript__watch-title">
+                      {pickLocaleText(locale, {
+                        "zh-CN": "AI值守",
+                        "zh-TW": "AI 值守",
+                        en: "AI Watch",
+                        ja: "AI 応対",
+                      })}
+                    </span>
+                  </span>
+                </button>
+              ) : null}
+            </div>
+          ) : null}
+
+          {tasks.length === 0 ? (
             <div className="ios-chat-page__empty">
               <div className="ios-chat-page__empty-badge">{uiText.tasks.newChatBadge}</div>
               <div className="ios-chat-page__empty-title">{uiText.tasks.emptyTitle}</div>
@@ -1789,16 +1684,6 @@ function TasksTab() {
             </div>
           ) : (
             <div className="ios-chat-page__stream">
-              {linkedChannelSession ? (
-                <LinkedChannelTranscript
-                  locale={locale}
-                  session={linkedChannelSession}
-                  history={linkedChannelHistory}
-                  fillAvailable={tasks.length === 0}
-                  canResumeAiWatch={canResumeAiWatch}
-                  onResumeAiWatch={handleResumeAiWatch}
-                />
-              ) : null}
               {tasks.length > 0 ? (
                 <TaskPipeline fillHeight />
               ) : null}

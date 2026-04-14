@@ -1,16 +1,16 @@
 /**
  * 浏览器自动化功能测试脚本
- * 用法：ANTHROPIC_API_KEY=sk-xxx node server/test-browser.js
+ * 用法：node server/test-browser.js
  *
  * 测试流程：
- * 1. 初始化 Stagehand 浏览器
+ * 1. 自动检测并初始化本机浏览器（Chrome / Edge / Firefox / Playwright）
  * 2. 导航到 example.com
  * 3. 截图
  * 4. 用自然语言操作（act）
  * 5. 关闭浏览器
  */
 
-import { getBrowser, getPage, closeBrowser } from "./browser-manager.js";
+import { getPage, closeBrowser } from "./browser-manager.js";
 import { getAgentTools } from "./agent-tools.js";
 import { writeFileSync } from "fs";
 
@@ -49,9 +49,9 @@ async function runTest() {
   if (!allFound) { process.exit(1); }
 
   // ── 测试 2：浏览器初始化 ──────────────────────────
-  info("\n测试 2：启动浏览器（Stagehand + Chromium）");
+  info("\n测试 2：启动浏览器（本地 Playwright 自动检测）");
   try {
-    await getBrowser();
+    await getPage();
     ok("  浏览器启动成功");
   } catch (err) {
     fail(`  浏览器启动失败: ${err.message}`);

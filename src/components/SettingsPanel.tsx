@@ -15,7 +15,6 @@ import { syncRuntimeSettings } from "@/lib/runtime-settings-sync";
 import { pickLocaleText } from "@/lib/ui-locale";
 import { useStore } from "@/store";
 import {
-  AGENT_SKILLS,
   AGENT_META,
   TEAM_OPERATING_TEMPLATES,
   createDefaultAgentGovernance,
@@ -489,6 +488,7 @@ function AgentConfigCard({
   onApplyRolePreset: (providerId?: string) => Promise<void>;
 }) {
   const locale = useStore(s => s.locale);
+  const runtimeAgentSkills = useStore(s => s.runtimeAgentSkills);
   const meta = AGENT_META[agentId];
   const [draft, setDraft] = useState<AgentConfig>({
     ...config,
@@ -499,12 +499,12 @@ function AgentConfigCard({
   const selectedSkills = useMemo(
     () =>
       draft.skills
-        .map(skillId => AGENT_SKILLS.find(skill => skill.id === skillId))
+        .map(skillId => runtimeAgentSkills.find(skill => skill.id === skillId))
         .filter(Boolean) as AgentSkill[],
-    [draft.skills],
+    [draft.skills, runtimeAgentSkills],
   );
   const visibleSkills = useMemo(() => {
-    return [...AGENT_SKILLS].sort((left, right) => {
+    return [...runtimeAgentSkills].sort((left, right) => {
       const leftSelected = draft.skills.includes(left.id) ? 1 : 0;
       const rightSelected = draft.skills.includes(right.id) ? 1 : 0;
       if (leftSelected !== rightSelected) return rightSelected - leftSelected;
@@ -513,7 +513,7 @@ function AgentConfigCard({
       if (leftRecommended !== rightRecommended) return rightRecommended - leftRecommended;
       return (left.order ?? 9999) - (right.order ?? 9999) || left.id.localeCompare(right.id);
     });
-  }, [agentId, draft.skills]);
+  }, [agentId, draft.skills, runtimeAgentSkills]);
 
   useEffect(() => {
     setDraft({

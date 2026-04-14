@@ -49,7 +49,22 @@
         "campaign_review",
         "incident_response",
         "crm_hygiene"
-      ]
+      ],
+      "governance": {
+        "toolAccess": "full",
+        "memoryWriteScope": "project_memory",
+        "escalationMode": "auto",
+        "responseStyle": "neutral",
+        "meetingRoleMode": "judge",
+        "forbiddenTopics": [],
+        "stopConditions": [
+          "验证码",
+          "OTP",
+          "2FA",
+          "高风险转账",
+          "删除客户数据"
+        ]
+      }
     },
     "explorer": {
       "id": "explorer",
@@ -92,7 +107,20 @@
         "campaign_review",
         "incident_response",
         "crm_hygiene"
-      ]
+      ],
+      "governance": {
+        "toolAccess": "no_desktop",
+        "memoryWriteScope": "execution_events",
+        "escalationMode": "manual_first",
+        "responseStyle": "assertive",
+        "meetingRoleMode": "participant",
+        "forbiddenTopics": [],
+        "stopConditions": [
+          "验证码",
+          "OTP",
+          "2FA"
+        ]
+      }
     },
     "writer": {
       "id": "writer",
@@ -135,7 +163,20 @@
         "campaign_review",
         "incident_response",
         "crm_hygiene"
-      ]
+      ],
+      "governance": {
+        "toolAccess": "no_desktop",
+        "memoryWriteScope": "execution_events",
+        "escalationMode": "manual_first",
+        "responseStyle": "combative",
+        "meetingRoleMode": "participant",
+        "forbiddenTopics": [],
+        "stopConditions": [
+          "验证码",
+          "OTP",
+          "2FA"
+        ]
+      }
     },
     "designer": {
       "id": "designer",
@@ -178,7 +219,20 @@
         "campaign_review",
         "incident_response",
         "crm_hygiene"
-      ]
+      ],
+      "governance": {
+        "toolAccess": "no_desktop",
+        "memoryWriteScope": "execution_events",
+        "escalationMode": "manual_first",
+        "responseStyle": "assertive",
+        "meetingRoleMode": "participant",
+        "forbiddenTopics": [],
+        "stopConditions": [
+          "验证码",
+          "OTP",
+          "2FA"
+        ]
+      }
     },
     "performer": {
       "id": "performer",
@@ -221,7 +275,20 @@
         "campaign_review",
         "incident_response",
         "crm_hygiene"
-      ]
+      ],
+      "governance": {
+        "toolAccess": "no_desktop",
+        "memoryWriteScope": "execution_events",
+        "escalationMode": "manual_first",
+        "responseStyle": "assertive",
+        "meetingRoleMode": "participant",
+        "forbiddenTopics": [],
+        "stopConditions": [
+          "验证码",
+          "OTP",
+          "2FA"
+        ]
+      }
     },
     "greeter": {
       "id": "greeter",
@@ -264,7 +331,20 @@
         "campaign_review",
         "incident_response",
         "crm_hygiene"
-      ]
+      ],
+      "governance": {
+        "toolAccess": "no_desktop",
+        "memoryWriteScope": "execution_events",
+        "escalationMode": "manual_first",
+        "responseStyle": "assertive",
+        "meetingRoleMode": "participant",
+        "forbiddenTopics": [],
+        "stopConditions": [
+          "验证码",
+          "OTP",
+          "2FA"
+        ]
+      }
     }
   },
   "platformConfigs": {
@@ -350,7 +430,7 @@
           "at": 1775686778605
         }
       ],
-      "lastCheckedAt": 1775909246773,
+      "lastCheckedAt": 1776102795698,
       "pendingEvents": 0,
       "lastEventAt": 1775686778628,
       "lastInboundAt": 1775686774966,
@@ -402,7 +482,7 @@
           "retryCount": 1
         }
       ],
-      "lastSyncedAt": 1775909246773,
+      "lastSyncedAt": 1776102795698,
       "requireOutboundApproval": false,
       "lastOutboundSuccessAt": 1775686778628,
       "lastInboundTarget": "6470391105"

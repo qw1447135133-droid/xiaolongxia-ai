@@ -123,6 +123,7 @@ const PLATFORM_REGISTRY = {
     capabilities: createPlatformCapabilities({
       supportsWebhook: true,
       supportsPush: true,
+      supportsFileSend: true,
       supportsGroupChat: true,
       supportsDirectChat: true,
       supportsOwnerConversation: true,

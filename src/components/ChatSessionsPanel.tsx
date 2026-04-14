@@ -171,7 +171,7 @@ export function ChatSessionsPanel({ showHeader = true }: { showHeader?: boolean 
   const locale = useStore(s => s.locale);
 
   const sorted = useMemo(
-    () => sortChatSessions(chatSessions),
+    () => sortChatSessions(chatSessions.filter(session => !session.linkedChannelSessionId)),
     [chatSessions],
   );
   const activeSession = useMemo(

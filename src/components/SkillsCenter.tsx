@@ -4,7 +4,6 @@ import type { CSSProperties } from "react";
 import { useMemo, useState } from "react";
 import { pickLocaleText } from "@/lib/ui-locale";
 import { useStore } from "@/store";
-import { AGENT_SKILLS } from "@/store/types";
 import type { AgentSkill, UiLocale } from "@/store/types";
 
 type SkillCopy = AgentSkill["locales"][UiLocale];
@@ -12,35 +11,36 @@ type SkillCopy = AgentSkill["locales"][UiLocale];
 export function SkillsCenter() {
   const locale = useStore(s => s.locale);
   const theme = useStore(s => s.theme);
+  const runtimeAgentSkills = useStore(s => s.runtimeAgentSkills);
   const isDark = theme === "dark";
   const [category, setCategory] = useState<string>("all");
   const [selectedSkillId, setSelectedSkillId] = useState<string | null>(null);
   const [detailPosition, setDetailPosition] = useState<{ top: number; left: number } | null>(null);
 
   const categories = useMemo(
-    () => ["all", ...Array.from(new Set(AGENT_SKILLS.map(skill => skill.category)))],
-    [],
+    () => ["all", ...Array.from(new Set(runtimeAgentSkills.map(skill => skill.category)))],
+    [runtimeAgentSkills],
   );
 
   const filteredSkills = useMemo(
-    () => AGENT_SKILLS.filter(skill => category === "all" || skill.category === category),
-    [category],
+    () => runtimeAgentSkills.filter(skill => category === "all" || skill.category === category),
+    [category, runtimeAgentSkills],
   );
 
   const selectedSkill = useMemo(
-    () => AGENT_SKILLS.find(skill => skill.id === selectedSkillId) ?? null,
-    [selectedSkillId],
+    () => runtimeAgentSkills.find(skill => skill.id === selectedSkillId) ?? null,
+    [runtimeAgentSkills, selectedSkillId],
   );
 
-  const clawhubCount = useMemo(() => AGENT_SKILLS.filter(skill => skill.sourceType === "clawhub").length, []);
-  const localCount = useMemo(() => AGENT_SKILLS.filter(skill => skill.sourceType === "local").length, []);
+  const clawhubCount = useMemo(() => runtimeAgentSkills.filter(skill => skill.sourceType === "clawhub").length, [runtimeAgentSkills]);
+  const localCount = useMemo(() => runtimeAgentSkills.filter(skill => skill.sourceType === "local").length, [runtimeAgentSkills]);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
         <SkillMetric
           label={pickLocaleText(locale, { "zh-CN": "技能总数", "zh-TW": "技能總數", en: "Skill Count", ja: "スキル総数" })}
-          value={AGENT_SKILLS.length}
+          value={runtimeAgentSkills.length}
           accent="var(--accent)"
         />
         <SkillMetric

@@ -124,6 +124,19 @@ function summarizeProjectMemoryNotes(locale: UiLocale, memory: WorkspaceProjectM
   return memory.deskNotes.map(note => note.title).join(" · ");
 }
 
+function summarizeProjectMemoryFacts(locale: UiLocale, memory: WorkspaceProjectMemory) {
+  const facts = memory.facts ?? [];
+  if (facts.length === 0) {
+    return pickLocaleText(locale, {
+      "zh-CN": "暂无结构化事实",
+      "zh-TW": "暫無結構化事實",
+      en: "No structured facts yet",
+      ja: "構造化された事実はまだありません",
+    });
+  }
+  return facts.slice(0, 3).map(fact => fact.summary).join(" · ");
+}
+
 function sortEntries(entries: WorkspaceEntry[], mode: DeskSortMode) {
   return [...entries].sort((left, right) => {
     if (left.kind !== right.kind) {
@@ -933,6 +946,10 @@ export function WorkspaceDesk() {
                       <span>{pickLocaleText(locale, { "zh-CN": "便签", "zh-TW": "便箋", en: "Notes", ja: "ノート" })}</span>
                       <strong>{summarizeProjectMemoryNotes(locale, memory)}</strong>
                     </div>
+                    <div className="workspace-desk__memory-line">
+                      <span>{pickLocaleText(locale, { "zh-CN": "事实卡", "zh-TW": "事實卡", en: "Facts", ja: "ファクト" })}</span>
+                      <strong>{summarizeProjectMemoryFacts(locale, memory)}</strong>
+                    </div>
                     <p className="workspace-desk__memory-copy">
                       {memory.scratchpad.trim()
                         ? memory.scratchpad
@@ -949,6 +966,37 @@ export function WorkspaceDesk() {
                         >
                           {note.title}
                         </span>
+                      ))}
+                    </div>
+                  )}
+
+                  {(memory.facts?.length ?? 0) > 0 && (
+                    <div style={{ display: "grid", gap: 8 }}>
+                      {(memory.facts ?? []).slice(0, 4).map(fact => (
+                        <div
+                          key={`${memory.id}-${fact.id}`}
+                          style={{
+                            padding: "10px 12px",
+                            borderRadius: 12,
+                            border: "1px solid rgba(148,163,184,0.18)",
+                            background: "rgba(255,255,255,0.03)",
+                            display: "grid",
+                            gap: 4,
+                          }}
+                        >
+                          <div style={{ display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+                            <strong style={{ fontSize: 12 }}>{fact.summary}</strong>
+                            <span style={{ fontSize: 10, color: "var(--text-muted)" }}>
+                              {fact.sourceType} · {fact.confidence}
+                            </span>
+                          </div>
+                          <div style={{ fontSize: 11, lineHeight: 1.7, color: "var(--text-muted)" }}>
+                            {fact.detail}
+                          </div>
+                          <div style={{ fontSize: 10, color: "var(--text-muted)" }}>
+                            Source: {fact.sourceLabel}{fact.sourceRunId ? ` · run ${fact.sourceRunId.slice(0, 8)}` : ""} · {formatTimestamp(fact.updatedAt, locale)}
+                          </div>
+                        </div>
                       ))}
                     </div>
                   )}

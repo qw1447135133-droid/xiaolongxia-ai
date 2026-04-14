@@ -4,9 +4,9 @@ import { spawnSync } from "node:child_process";
 
 const repoRoot = process.cwd();
 const nextTypesEntry = resolve(repoRoot, ".next/types/app/layout.ts");
-const nextBin = resolve(repoRoot, "node_modules/next/dist/bin/next");
 const tscBin = resolve(repoRoot, "node_modules/typescript/bin/tsc");
 const tsconfigPath = resolve(repoRoot, "tsconfig.json");
+const buildScript = resolve(repoRoot, "scripts/build-next.mjs");
 
 function runNodeScript(scriptPath, args = []) {
   const result = spawnSync(process.execPath, [scriptPath, ...args], {
@@ -40,7 +40,7 @@ if (ensureNextTypes) {
       ? "[typecheck] 先执行 next build，确保 .next/types 与当前 app 路由保持一致..."
       : "[typecheck] .next/types 缺失，先执行 next build 生成类型产物...",
   );
-  const buildStatus = runNodeScript(nextBin, ["build"]);
+  const buildStatus = runNodeScript(buildScript);
   if (buildStatus !== 0) {
     process.exit(buildStatus);
   }

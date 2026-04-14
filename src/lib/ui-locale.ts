@@ -639,7 +639,7 @@ export function getUiText(locale: UiLocale): LocaleText {
 
 export function getPrimaryNavItems(locale: UiLocale): Array<{ id: AppTab; label: string; eyebrow: string }> {
   const text = getUiText(locale);
-  return (["dashboard", "tasks", "dispatch", "meeting", "settings"] as const).map(id => ({
+  return (["dashboard", "tasks", "meeting", "dispatch", "settings"] as const).map(id => ({
     id,
     label: text.nav[id].label,
     eyebrow: text.nav[id].eyebrow,

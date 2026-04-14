@@ -2,10 +2,12 @@
 
 import { useEffect } from "react";
 import { useStore } from "@/store";
+import { buildExecutionOutcomeFacts } from "@/lib/world-facts";
 import { randomId } from "@/lib/utils";
 import { canDirectReplySession } from "@/lib/channel-session-presentation";
 import type {
   AgentId,
+  AgentSkill,
   AgentStatus,
   Task,
   Activity,
@@ -29,6 +31,7 @@ type WsMessage =
   | { type: "connected" }
   | { type: "settings_ack" }
   | { type: "pong" }
+  | { type: "skill_catalog"; skills: AgentSkill[]; updatedAt?: number }
   | { type: "desktop_launch_request"; requestId: string; payload: NativeAppLaunchPayload; executionRunId?: string; taskId?: string; sessionId?: string }
   | { type: "desktop_input_request"; requestId: string; payload: DesktopInputControlPayload; executionRunId?: string; taskId?: string; sessionId?: string }
   | { type: "desktop_capture_request"; requestId: string; payload?: DesktopScreenshotPayload; executionRunId?: string; sessionId?: string }
@@ -914,11 +917,16 @@ function handleMessage(msg: WsMessage) {
     upsertBusinessCustomerFromChannelSession,
     updateBusinessChannelSession,
     recordBusinessOperation,
+    recordWorkspaceProjectFacts,
     setChannelActionResult,
     upsertAssistantReasoning,
+    setRuntimeAgentSkills,
   } = getStore();
 
   switch (msg.type) {
+    case "skill_catalog":
+      setRuntimeAgentSkills(msg.skills);
+      break;
     case "agent_status":
       setAgentStatus(msg.agentId, msg.status, msg.currentTask);
       break;
@@ -981,6 +989,19 @@ function handleMessage(msg: WsMessage) {
             : undefined,
         event: msg.event,
       });
+      if (msg.status === "completed" || msg.status === "failed") {
+        const latestStore = getStore();
+        const updatedRun = latestStore.executionRuns.find(item => item.id === msg.executionRunId) ?? null;
+        if (updatedRun) {
+          recordWorkspaceProjectFacts({
+            projectId: updatedRun.projectId ?? null,
+            rootPath: latestStore.chatSessions.find(session => session.id === updatedRun.sessionId)?.workspaceRoot ?? null,
+            executionRunId: updatedRun.id,
+            sourceLabel: `Execution outcome ${updatedRun.id}`,
+            facts: buildExecutionOutcomeFacts(updatedRun, msg.event ?? null),
+          });
+        }
+      }
       if (msg.status === "completed") {
         maybeAutoHandleRemoteOpsChannelRun(msg.executionRunId);
       }

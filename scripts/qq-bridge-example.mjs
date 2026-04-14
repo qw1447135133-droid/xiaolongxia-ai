@@ -54,7 +54,15 @@ async function pullReplies() {
   ackIds = messages.map(item => item.id);
   for (const item of messages) {
     const timestamp = new Date(item.createdAt || Date.now()).toLocaleTimeString("zh-CN", { hour12: false });
+    if (item.kind === "file" && item.attachment) {
+      console.log(`[ai ${timestamp}] [FILE] ${item.attachment.fileName}${item.attachment.caption ? ` · ${item.attachment.caption}` : ""}`);
+      continue;
+    }
     console.log(`[ai ${timestamp}] ${item.text}`);
+  }
+
+  if (result.deadLetterCount) {
+    console.log(`[qq-bridge] dead-letter: ${result.deadLetterCount}`);
   }
 }
 

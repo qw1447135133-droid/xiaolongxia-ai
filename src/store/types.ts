@@ -119,6 +119,32 @@ export interface ExecutionEvent {
   createdSkillIds?: string[];
 }
 
+export interface ExecutionReceiptLayer {
+  id: string;
+  title: string;
+  summary: string;
+  estimatedTokens: number;
+}
+
+export interface ExecutionAuditReceipt {
+  createdAt: number;
+  compressionEnabled: boolean;
+  estimatedStandardTokens: number;
+  estimatedFinalTokens: number;
+  activeLayerIds: string[];
+  finalLayerIds: string[];
+  layers: ExecutionReceiptLayer[];
+  mentionLabels: string[];
+  projectMemoryName?: string;
+  deskNoteTitles: string[];
+  knowledgeDocTitles: string[];
+  customerCount: number;
+  graphNodes: number;
+  graphEdges: number;
+  worldSummary: string;
+  compressedDocumentTitle?: string;
+}
+
 export interface ExecutionRun {
   id: string;
   sessionId: string;
@@ -143,6 +169,7 @@ export interface ExecutionRun {
   completedTasks: number;
   failedTasks: number;
   events: ExecutionEvent[];
+  contextReceipt?: ExecutionAuditReceipt;
   verificationStatus?: VerificationStatus;
   verificationResults?: VerificationStepResult[];
   verificationUpdatedAt?: number;
@@ -1496,13 +1523,13 @@ export const PLATFORM_DEFINITIONS: PlatformDef[] = [
       id: "qq",
       name: "QQ",
       emoji: "🐧",
-      description: "QQ 本地桥接统一接入位点，现已支持桥接程序推送入站消息并拉取 AI 回复。",
+      description: "QQ 本地桥接统一接入位点，现已支持桥接程序推送入站消息、拉取 AI 回复、回执对账与文件下发。",
       mode: "webhook",
       webhookBased: true,
       capabilities: {
         supportsWebhook: true,
         supportsPush: true,
-        supportsFileSend: false,
+        supportsFileSend: true,
         supportsMediaSend: false,
         supportsGroupChat: true,
         supportsDirectChat: true,

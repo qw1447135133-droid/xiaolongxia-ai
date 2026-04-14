@@ -32,6 +32,8 @@ import {
 import { buildRecentConversationSnippet } from "@/lib/conversation-bridge";
 import { buildExplicitMentionContext } from "@/lib/context-mentions";
 import type { ContextMentionRef } from "@/types/context-mentions";
+import { buildExecutionAuditReceipt } from "@/lib/execution-audit";
+import { buildWorldSnapshotFacts } from "@/lib/world-facts";
 
 function buildAssistantFeedbackSnippet(profile: AssistantFeedbackProfile) {
   const liked = profile.liked.slice(0, 2).map(item => `- ${item.excerpt}`);
@@ -271,6 +273,17 @@ export async function sendExecutionDispatch({
     userRequest: trimmed,
     compressionDoc,
   });
+  const auditReceipt = buildExecutionAuditReceipt({
+    bundle: hermesContextBundle,
+    contextMentions,
+    projectMemory: resolvedProjectMemory,
+    deskNotes: recalledDeskNotes,
+    knowledgeDocs: recalledKnowledgeDocs,
+    customerCount: scopedBusinessCustomers.length,
+    graphNodes: businessGraph.nodes.length,
+    graphEdges: businessGraph.edges.length,
+    worldSnapshot,
+  });
   const finalInstruction = hermesContextBundle.finalInstruction;
   const executionRunId = store.createExecutionRun({
     sessionId: resolvedSessionId,
@@ -294,6 +307,7 @@ export async function sendExecutionDispatch({
 
   store.updateExecutionRun({
     id: executionRunId,
+    contextReceipt: auditReceipt,
     event: {
       id: `evt-hermes-context-${Date.now()}`,
       type: "system",
@@ -321,6 +335,14 @@ export async function sendExecutionDispatch({
       },
     });
   }
+
+  store.recordWorkspaceProjectFacts({
+    projectId: activeSession?.projectId ?? null,
+    rootPath: activeSession?.workspaceRoot ?? store.workspaceRoot,
+    executionRunId,
+    sourceLabel: `Execution dispatch ${executionRunId}`,
+    facts: buildWorldSnapshotFacts(worldSnapshot, executionRunId),
+  });
 
   if (contextMentions.length > 0) {
     store.updateExecutionRun({

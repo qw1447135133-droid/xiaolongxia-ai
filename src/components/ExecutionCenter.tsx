@@ -16,6 +16,7 @@ import { AgentIcon } from "./AgentIcon";
 import { timeAgo } from "@/lib/utils";
 import { runExecutionVerification } from "@/lib/execution-verification";
 import type { ControlCenterSectionId } from "@/store/types";
+import { buildExecutionReplayInstruction } from "@/lib/execution-audit";
 
 function formatTimestamp(timestamp: number, locale: UiLocale) {
   return new Intl.DateTimeFormat(locale, {
@@ -130,6 +131,12 @@ export function ExecutionCenter({ compact = false }: { compact?: boolean }) {
           ? `继续接管这次桌面阻断执行，并先处理人工验证步骤：\n${run.instruction}`
           : `继续处理这次异常执行，并优先分析恢复路径：\n${run.instruction}`,
     );
+    setTab("tasks");
+  };
+
+  const replayInChat = (run: ExecutionRun) => {
+    setActiveChatSession(run.sessionId);
+    setCommandDraft(buildExecutionReplayInstruction(run));
     setTab("tasks");
   };
 
@@ -476,6 +483,67 @@ export function ExecutionCenter({ compact = false }: { compact?: boolean }) {
                   </div>
                 ) : null}
 
+                {run.contextReceipt ? (
+                  <div
+                    style={{
+                      padding: 12,
+                      borderRadius: 14,
+                      border: "1px solid rgba(96, 165, 250, 0.2)",
+                      background: "linear-gradient(180deg, rgba(96, 165, 250, 0.1), rgba(255,255,255,0.03))",
+                      display: "grid",
+                      gap: 10,
+                    }}
+                  >
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+                      <div>
+                        <div style={{ fontSize: 11, color: "var(--text-muted)" }}>
+                          {pickLocaleText(locale, { "zh-CN": "审计回执", "zh-TW": "稽核回執", en: "Audit Receipt", ja: "監査レシート" })}
+                        </div>
+                        <div style={{ marginTop: 4, fontSize: 13, fontWeight: 700 }}>
+                          {run.contextReceipt.compressionEnabled
+                            ? pickLocaleText(locale, { "zh-CN": "Hermes 压缩上下文已生效", "zh-TW": "Hermes 壓縮上下文已生效", en: "Hermes compressed context applied", ja: "Hermes 圧縮コンテキスト適用済み" })
+                            : pickLocaleText(locale, { "zh-CN": "Hermes 标准上下文已生效", "zh-TW": "Hermes 標準上下文已生效", en: "Hermes standard context applied", ja: "Hermes 標準コンテキスト適用済み" })}
+                        </div>
+                      </div>
+                      <span style={badgeStyle("#60a5fa")}>
+                        {run.contextReceipt.estimatedStandardTokens.toLocaleString()} → {run.contextReceipt.estimatedFinalTokens.toLocaleString()}
+                      </span>
+                    </div>
+
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 8 }}>
+                      <TraceStat label={pickLocaleText(locale, { "zh-CN": "层数", "zh-TW": "層數", en: "Layers", ja: "レイヤー" })} value={run.contextReceipt.layers.length} />
+                      <TraceStat label={pickLocaleText(locale, { "zh-CN": "@ 引用", "zh-TW": "@ 引用", en: "@ Mentions", ja: "@ 参照" })} value={run.contextReceipt.mentionLabels.length} />
+                      <TraceStat label={pickLocaleText(locale, { "zh-CN": "客户", "zh-TW": "客戶", en: "Customers", ja: "顧客" })} value={run.contextReceipt.customerCount} />
+                      <TraceStat label={pickLocaleText(locale, { "zh-CN": "关系图", "zh-TW": "關係圖", en: "Graph", ja: "グラフ" })} value={`${run.contextReceipt.graphNodes}/${run.contextReceipt.graphEdges}`} />
+                    </div>
+
+                    <div style={{ display: "grid", gap: 8 }}>
+                      {run.contextReceipt.layers.map(layer => (
+                        <div
+                          key={`${run.id}-${layer.id}`}
+                          style={{
+                            padding: "10px 12px",
+                            borderRadius: 12,
+                            border: "1px solid var(--border)",
+                            background: "rgba(255,255,255,0.04)",
+                          }}
+                        >
+                          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                            <strong style={{ fontSize: 12 }}>{layer.title}</strong>
+                            <span style={{ fontSize: 10, color: "var(--text-muted)" }}>{layer.estimatedTokens} tok</span>
+                          </div>
+                          <div style={{ marginTop: 4, fontSize: 11, lineHeight: 1.7, color: "var(--text-muted)" }}>{layer.summary || "—"}</div>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div style={{ fontSize: 11, lineHeight: 1.7, color: "var(--text-muted)" }}>
+                      {run.contextReceipt.projectMemoryName ? `Project memory: ${run.contextReceipt.projectMemoryName} · ` : ""}
+                      {run.contextReceipt.worldSummary}
+                    </div>
+                  </div>
+                ) : null}
+
                 {semanticEvents.length > 0 && (
                   <div
                     style={{
@@ -726,6 +794,9 @@ export function ExecutionCenter({ compact = false }: { compact?: boolean }) {
                     {run.verificationStatus === "running"
                       ? pickLocaleText(locale, { "zh-CN": "验证中...", "zh-TW": "驗證中...", en: "Verifying...", ja: "検証中..." })
                       : pickLocaleText(locale, { "zh-CN": "重新验证", "zh-TW": "重新驗證", en: "Verify Again", ja: "再検証" })}
+                  </button>
+                  <button type="button" className="btn-handoff" onClick={() => replayInChat(run)}>
+                    {pickLocaleText(locale, { "zh-CN": "按审计回放", "zh-TW": "按稽核回放", en: "Replay from Audit", ja: "監査から再開" })}
                   </button>
                 </div>
               </article>

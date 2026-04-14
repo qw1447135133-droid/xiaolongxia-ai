@@ -37,7 +37,7 @@ import { queryAgent, clearAllSessions } from "./agent-engine.js";
 import { getAgentTools, getMeetingTools } from "./agent-tools.js";
 import { buildAttachmentUserContentBlocks } from "./attachment-context.js";
 import { checkSemanticMemoryStore, querySemanticMemoryStore } from "./semantic-memory-store.js";
-import { autoProvisionAgentSkills, buildAgentSkillPrompt, syncAgentSkillDocuments } from "./skill-provisioner.js";
+import { autoProvisionAgentSkills, buildAgentSkillPrompt, loadSkillCatalog, syncAgentSkillDocuments } from "./skill-provisioner.js";
 import { createPlatformConversationHelpers } from "./channel/platform-conversation.js";
 import { createPlatformMessageOrchestrator } from "./channel/platform-message-orchestrator.js";
 import { buildHermesDiagnostics } from "./hermes-diagnostics.js";
@@ -1241,6 +1241,38 @@ async function syncRuntimeSkillDocuments() {
   } catch (error) {
     console.error("[ws-server] sync skill documents failed:", error?.message || error);
     return { changed: false, allSkillIds: [], documents: {} };
+  }
+}
+
+async function buildRuntimeSkillCatalogMessage() {
+  const skills = await loadSkillCatalog(repoRoot);
+  return {
+    type: "skill_catalog",
+    skills,
+    updatedAt: Date.now(),
+  };
+}
+
+async function sendRuntimeSkillCatalog(ws) {
+  try {
+    ws.send(JSON.stringify(await buildRuntimeSkillCatalogMessage()));
+  } catch (error) {
+    console.error("[ws-server] send skill catalog failed:", error?.message || error);
+  }
+}
+
+async function broadcastRuntimeSkillCatalog() {
+  let message;
+  try {
+    message = JSON.stringify(await buildRuntimeSkillCatalogMessage());
+  } catch (error) {
+    console.error("[ws-server] broadcast skill catalog failed:", error?.message || error);
+    return;
+  }
+  for (const ws of clients) {
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(message);
+    }
   }
 }
 
@@ -3804,14 +3836,132 @@ function routeTask(instruction, source = "chat") {
   return { agent: "orchestrator", complexity: "medium" };
 }
 
-function getDefaultModel() {
-  if (process.env.ANTHROPIC_MODEL) return process.env.ANTHROPIC_MODEL;
-  return "claude-haiku-4-5-20251001";
+function isProviderConfigured(provider) {
+  return !!String(provider?.apiKey || "").trim();
 }
 
-function getModelForComplexity(complexity) {
-  if (complexity === "high") return "claude-sonnet-4-6";
-  return "claude-haiku-4-5-20251001";
+function inferProviderRuntime(provider, config = {}) {
+  const configuredProviders = Array.isArray(settings.providers)
+    ? settings.providers.filter(isProviderConfigured)
+    : [];
+  const selectedProvider = isProviderConfigured(provider)
+    ? provider
+    : configuredProviders[0] || null;
+
+  if (selectedProvider) {
+    const providerId = String(selectedProvider.id || config.providerId || "").trim();
+    const baseURL = String(selectedProvider.baseUrl || "").trim() || undefined;
+    const useAnthropic =
+      providerId.startsWith("anthropic")
+      || String(baseURL || "").includes("api.anthropic.com");
+    return {
+      apiKey: String(selectedProvider.apiKey || "").trim(),
+      baseURL,
+      providerId,
+      clientType: useAnthropic ? "anthropic" : "openai",
+      source: "settings",
+    };
+  }
+
+  if (process.env.OPENAI_API_KEY) {
+    return {
+      apiKey: process.env.OPENAI_API_KEY,
+      baseURL: process.env.OPENAI_BASE_URL,
+      providerId: "openai",
+      clientType: "openai",
+      source: "env",
+    };
+  }
+
+  if (process.env.SILICONFLOW_API_KEY) {
+    return {
+      apiKey: process.env.SILICONFLOW_API_KEY,
+      baseURL: process.env.SILICONFLOW_BASE_URL || "https://api.siliconflow.cn/v1",
+      providerId: "siliconflow",
+      clientType: "openai",
+      source: "env",
+    };
+  }
+
+  if (process.env.DEEPSEEK_API_KEY) {
+    return {
+      apiKey: process.env.DEEPSEEK_API_KEY,
+      baseURL: process.env.DEEPSEEK_BASE_URL || "https://api.deepseek.com/v1",
+      providerId: "deepseek",
+      clientType: "openai",
+      source: "env",
+    };
+  }
+
+  if (process.env.ANTHROPIC_API_KEY) {
+    return {
+      apiKey: process.env.ANTHROPIC_API_KEY,
+      baseURL: process.env.ANTHROPIC_BASE_URL,
+      providerId: "anthropic",
+      clientType: "anthropic",
+      source: "env",
+    };
+  }
+
+  return {
+    apiKey: "",
+    baseURL: process.env.OPENAI_BASE_URL,
+    providerId: "openai",
+    clientType: "openai",
+    source: "empty",
+  };
+}
+
+function getDefaultModel(runtime = {}) {
+  const providerId = String(runtime.providerId || "").trim();
+  const baseURL = String(runtime.baseURL || "").toLowerCase();
+
+  if (runtime.clientType === "anthropic") {
+    if (process.env.ANTHROPIC_MODEL) return process.env.ANTHROPIC_MODEL;
+    return "claude-haiku-4-5-20251001";
+  }
+
+  if (process.env.OPENAI_MODEL) return process.env.OPENAI_MODEL;
+  if (providerId === "siliconflow" || baseURL.includes("siliconflow")) return "Qwen/Qwen2.5-72B-Instruct";
+  if (providerId === "deepseek" || baseURL.includes("deepseek")) return "deepseek-chat";
+  if (baseURL.includes("dashscope")) return "qwen3.5-plus";
+  if (baseURL.includes("ark.cn-beijing.volces.com") || baseURL.includes("volces.com/api/coding")) return "doubao-seed-2.0-code";
+  return "gpt-5.4-mini";
+}
+
+function getModelForComplexity(complexity, runtime = {}) {
+  const providerId = String(runtime.providerId || "").trim();
+  const baseURL = String(runtime.baseURL || "").toLowerCase();
+
+  if (runtime.clientType === "anthropic") {
+    if (complexity === "high") return "claude-sonnet-4-6";
+    return "claude-haiku-4-5-20251001";
+  }
+
+  if (providerId === "siliconflow" || baseURL.includes("siliconflow")) {
+    if (complexity === "high") return "deepseek-ai/DeepSeek-R1";
+    if (complexity === "medium") return "deepseek-ai/DeepSeek-V3";
+    return "Qwen/Qwen2.5-7B-Instruct";
+  }
+
+  if (providerId === "deepseek" || baseURL.includes("deepseek")) {
+    if (complexity === "high") return "deepseek-reasoner";
+    return "deepseek-chat";
+  }
+
+  if (baseURL.includes("dashscope")) {
+    if (complexity === "high") return "qwen3-max-2026-01-23";
+    return "qwen3.5-plus";
+  }
+
+  if (baseURL.includes("ark.cn-beijing.volces.com") || baseURL.includes("volces.com/api/coding")) {
+    if (complexity === "high") return "doubao-seed-2.0-pro";
+    return "doubao-seed-2.0-code";
+  }
+
+  if (complexity === "high") return "gpt-5.4";
+  if (complexity === "medium") return "gpt-5.4-mini";
+  return "gpt-5.4-nano";
 }
 
 function buildClient(agentId, injectedSkillPrompt = "", options = {}) {
@@ -3819,10 +3969,11 @@ function buildClient(agentId, injectedSkillPrompt = "", options = {}) {
   const provider = config?.providerId
     ? settings.providers.find((p) => p.id === config.providerId)
     : null;
+  const runtime = inferProviderRuntime(provider, config);
 
-  const apiKey = provider?.apiKey || process.env.ANTHROPIC_API_KEY || "";
-  const baseURL = provider?.baseUrl || process.env.ANTHROPIC_BASE_URL;
-  const model = config?.model || getDefaultModel();
+  const apiKey = runtime.apiKey;
+  const baseURL = runtime.baseURL;
+  const model = config?.model || getDefaultModel(runtime);
   const personality = options.includePersonality !== false && config?.personality
     ? `\n\n个性补充：${config.personality}`
     : "";
@@ -3831,18 +3982,14 @@ function buildClient(agentId, injectedSkillPrompt = "", options = {}) {
   const systemPrompt = options.systemPromptOverride
     ? `${String(options.systemPromptOverride).trim()}${governancePrompt ? `\n\n${governancePrompt}` : ""}${personality}`
     : `${SYSTEM_PROMPTS[agentId]}${governancePrompt ? `\n\n${governancePrompt}` : ""}${personality}${skillPrompt ? `\n\n${skillPrompt}` : ""}`;
-  const providerId = provider?.id || config?.providerId || "";
-  const useAnthropic =
-    providerId.startsWith("anthropic")
-    || String(baseURL || "").includes("api.anthropic.com");
-
   return {
-    client: useAnthropic
+    client: runtime.clientType === "anthropic"
       ? new Anthropic({ apiKey, ...(baseURL ? { baseURL } : {}) })
       : new OpenAI({ apiKey, ...(baseURL ? { baseURL } : {}) }),
-    clientType: useAnthropic ? "anthropic" : "openai",
+    clientType: runtime.clientType,
     model,
     systemPrompt,
+    providerRuntime: runtime,
   };
 }
 
@@ -3854,14 +4001,14 @@ async function callMeetingAgent(agentId, task, complexity, maxTokensOverride, se
     imageCandidates: [],
     usedScreenshot: false,
   };
-  const { client, clientType, model, systemPrompt } = buildClient(agentId, "", {
+  const { client, clientType, model, systemPrompt, providerRuntime } = buildClient(agentId, "", {
     systemPromptOverride: buildMeetingAgentSystemPrompt(agentId),
     includePersonality: true,
     includeSkillPrompt: false,
     meetingMode: true,
   });
   const hasCustomModel = !!settings.agentConfigs?.[agentId]?.model;
-  const actualModel = hasCustomModel ? model : getModelForComplexity(complexity);
+  const actualModel = hasCustomModel ? model : getModelForComplexity(complexity, providerRuntime);
   const defaultMax = complexity === "high" ? 1024 : complexity === "medium" ? 700 : 500;
   const tools = getMeetingTools(agentId);
 
@@ -3964,6 +4111,7 @@ async function callAgent(agentId, task, complexity, maxTokensOverride, sessionId
     if (provisionResult.createdSkillIds.length > 0) {
       await syncAgentSkillDocuments({ repoRoot, settings });
       await persistRuntimeSettings();
+      await broadcastRuntimeSkillCatalog();
     }
   } catch (error) {
     console.error("[ws-server] skill auto-provision failed:", error?.message || error);
@@ -3979,10 +4127,10 @@ async function callAgent(agentId, task, complexity, maxTokensOverride, sessionId
     }
   }
 
-  const { client, clientType, model, systemPrompt } = buildClient(agentId, provisionResult.skillPrompt);
+  const { client, clientType, model, systemPrompt, providerRuntime } = buildClient(agentId, provisionResult.skillPrompt);
   // 若 Agent 已显式配置了模型则尊重该设置，否则按复杂度自动选择
   const hasCustomModel = !!settings.agentConfigs?.[agentId]?.model;
-  const actualModel = hasCustomModel ? model : getModelForComplexity(complexity);
+  const actualModel = hasCustomModel ? model : getModelForComplexity(complexity, providerRuntime);
   const defaultMax = complexity === "high" ? 1024 : complexity === "medium" ? 600 : 400;
   const userMessageContent = Array.isArray(executionMeta.userContentBlocks) && executionMeta.userContentBlocks.length > 0
     ? [{ type: "text", text: String(task || "") }, ...executionMeta.userContentBlocks]
@@ -4649,6 +4797,7 @@ async function callMeetingExportAgent(task, sessionId = "meeting-export", signal
     if (provisionResult.createdSkillIds.length > 0) {
       await syncAgentSkillDocuments({ repoRoot, settings });
       await persistRuntimeSettings();
+      await broadcastRuntimeSkillCatalog();
     }
   } catch (error) {
     console.error("[ws-server] meeting export skill auto-provision failed:", error?.message || error);
@@ -4674,13 +4823,13 @@ async function callMeetingExportAgent(task, sessionId = "meeting-export", signal
     .filter(Boolean)
     .join("\n\n");
 
-  const { client, clientType, model } = buildClient(agentId, "", {
+  const { client, clientType, model, providerRuntime } = buildClient(agentId, "", {
     systemPromptOverride: exportSystemPrompt,
     includePersonality: false,
     includeSkillPrompt: false,
   });
   const hasCustomModel = !!settings.agentConfigs?.[agentId]?.model;
-  const actualModel = hasCustomModel ? model : getModelForComplexity("medium");
+  const actualModel = hasCustomModel ? model : getModelForComplexity("medium", providerRuntime);
 
   return await queryAgent({
     agentId,
@@ -5590,6 +5739,15 @@ const httpServer = createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === "GET" && url.pathname === "/api/skills/catalog") {
+    try {
+      writeJson(res, 200, await buildRuntimeSkillCatalogMessage());
+    } catch (err) {
+      writeJson(res, 500, { ok: false, error: err instanceof Error ? err.message : String(err) });
+    }
+    return;
+  }
+
   if (await handlePlatformWebhookHttpRequest(req, res, url)) {
     return;
   }
@@ -5603,6 +5761,7 @@ const wss = new WebSocketServer({ server: httpServer });
 wss.on("connection", (ws) => {
   clients.add(ws);
   ws.send(JSON.stringify({ type: "connected" }));
+  void sendRuntimeSkillCatalog(ws);
   for (const [platformId, config] of Object.entries(settings.platformConfigs ?? {})) {
     ws.send(JSON.stringify({
       type: "platform_status",
@@ -5629,7 +5788,10 @@ wss.on("connection", (ws) => {
         if (msg.desktopProgramSettings) settings.desktopProgramSettings = msg.desktopProgramSettings;
         if (msg.hermesDispatchSettings) settings.hermesDispatchSettings = normalizeHermesDispatchSettings(msg.hermesDispatchSettings);
         if (msg.runtime) updateClientRuntime(ws, msg.runtime);
-        void syncRuntimeSkillDocuments().then(() => persistRuntimeSettings());
+        void syncRuntimeSkillDocuments().then(async () => {
+          await persistRuntimeSettings();
+          await broadcastRuntimeSkillCatalog();
+        });
         void ensureEnabledPlatformsRunning("settings_sync");
         ws.send(JSON.stringify({ type: "settings_ack" }));
         break;

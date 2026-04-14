@@ -53,6 +53,22 @@ export interface WorkspaceProjectMemoryNote {
   linkedKind: WorkspacePreviewKind | null;
 }
 
+export interface WorkspaceProjectFact {
+  id: string;
+  key: string;
+  summary: string;
+  detail: string;
+  sourceType: "world_model" | "execution" | "channel" | "operation";
+  sourceLabel: string;
+  sourceRunId?: string;
+  sourceIds: string[];
+  entityType?: string | null;
+  entityId?: string | null;
+  confidence: "high" | "medium";
+  createdAt: number;
+  updatedAt: number;
+}
+
 export interface WorkspaceProjectMemory {
   id: string;
   name: string;
@@ -64,6 +80,7 @@ export interface WorkspaceProjectMemory {
   previews: WorkspacePreview[];
   scratchpad: string;
   deskNotes: WorkspaceProjectMemoryNote[];
+  facts?: WorkspaceProjectFact[];
 }
 
 export type WorkspaceDeskNoteTone = "amber" | "mint" | "sky" | "rose";

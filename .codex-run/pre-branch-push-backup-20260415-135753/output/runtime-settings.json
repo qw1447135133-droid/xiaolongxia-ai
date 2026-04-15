@@ -1,0 +1,569 @@
+{
+  "providers": [
+    {
+      "id": "volcengine-coding-uikol2z0",
+      "name": "火山方舟 Coding Plan",
+      "apiKey": "8997b6ae-3bcd-4043-bbd5-41eb38e0aa04",
+      "baseUrl": "https://ark.cn-beijing.volces.com/api/coding/v3"
+    }
+  ],
+  "agentConfigs": {
+    "orchestrator": {
+      "id": "orchestrator",
+      "name": "鹦鹉螺",
+      "emoji": "🐚",
+      "personality": "你是 AI 团队的总调度员，负责任务拆解、团队协调和统一对外表达。",
+      "model": "doubao-seed-2.0-code",
+      "providerId": "volcengine-coding-uikol2z0",
+      "skills": [
+        "frontend",
+        "doc_word",
+        "doc_ppt",
+        "doc_excel",
+        "screenshot",
+        "image_edit",
+        "find_skills",
+        "skill_creator",
+        "ontology",
+        "api_gateway",
+        "playwright_automation",
+        "web_search_plus",
+        "self_improving_agent",
+        "market_research",
+        "channel_support_triage",
+        "sales_follow_up",
+        "content_planning",
+        "content_publishing",
+        "ticket_resolution",
+        "approval_guardrails",
+        "desktop_takeover",
+        "local_app_operator",
+        "knowledge_maintenance",
+        "workflow_restage",
+        "remote_supervision",
+        "quote_proposal",
+        "lead_enrichment",
+        "customer_research",
+        "meeting_briefing",
+        "executive_reporting",
+        "campaign_review",
+        "incident_response",
+        "crm_hygiene"
+      ],
+      "governance": {
+        "toolAccess": "full",
+        "memoryWriteScope": "project_memory",
+        "escalationMode": "auto",
+        "responseStyle": "neutral",
+        "meetingRoleMode": "judge",
+        "forbiddenTopics": [],
+        "stopConditions": [
+          "验证码",
+          "OTP",
+          "2FA",
+          "高风险转账",
+          "删除客户数据"
+        ]
+      }
+    },
+    "explorer": {
+      "id": "explorer",
+      "name": "探海鲸鱼",
+      "emoji": "🐋",
+      "personality": "你是研究与分析专家，擅长竞品研究、信息梳理、趋势判断和结构化洞察输出。",
+      "model": "doubao-seed-2.0-lite",
+      "providerId": "volcengine-coding-uikol2z0",
+      "skills": [
+        "frontend",
+        "doc_word",
+        "doc_ppt",
+        "doc_excel",
+        "screenshot",
+        "image_edit",
+        "find_skills",
+        "skill_creator",
+        "ontology",
+        "api_gateway",
+        "playwright_automation",
+        "web_search_plus",
+        "self_improving_agent",
+        "market_research",
+        "channel_support_triage",
+        "sales_follow_up",
+        "content_planning",
+        "content_publishing",
+        "ticket_resolution",
+        "approval_guardrails",
+        "desktop_takeover",
+        "local_app_operator",
+        "knowledge_maintenance",
+        "workflow_restage",
+        "remote_supervision",
+        "quote_proposal",
+        "lead_enrichment",
+        "customer_research",
+        "meeting_briefing",
+        "executive_reporting",
+        "campaign_review",
+        "incident_response",
+        "crm_hygiene"
+      ],
+      "governance": {
+        "toolAccess": "no_desktop",
+        "memoryWriteScope": "execution_events",
+        "escalationMode": "manual_first",
+        "responseStyle": "assertive",
+        "meetingRoleMode": "participant",
+        "forbiddenTopics": [],
+        "stopConditions": [
+          "验证码",
+          "OTP",
+          "2FA"
+        ]
+      }
+    },
+    "writer": {
+      "id": "writer",
+      "name": "星海章鱼",
+      "emoji": "🐙",
+      "personality": "你是写作与表达专家，擅长多语种文案、结构化写作、标题优化和高转化表达。",
+      "model": "doubao-seed-2.0-code",
+      "providerId": "volcengine-coding-uikol2z0",
+      "skills": [
+        "frontend",
+        "doc_word",
+        "doc_ppt",
+        "doc_excel",
+        "screenshot",
+        "image_edit",
+        "find_skills",
+        "skill_creator",
+        "ontology",
+        "api_gateway",
+        "playwright_automation",
+        "web_search_plus",
+        "self_improving_agent",
+        "market_research",
+        "channel_support_triage",
+        "sales_follow_up",
+        "content_planning",
+        "content_publishing",
+        "ticket_resolution",
+        "approval_guardrails",
+        "desktop_takeover",
+        "local_app_operator",
+        "knowledge_maintenance",
+        "workflow_restage",
+        "remote_supervision",
+        "quote_proposal",
+        "lead_enrichment",
+        "customer_research",
+        "meeting_briefing",
+        "executive_reporting",
+        "campaign_review",
+        "incident_response",
+        "crm_hygiene"
+      ],
+      "governance": {
+        "toolAccess": "no_desktop",
+        "memoryWriteScope": "execution_events",
+        "escalationMode": "manual_first",
+        "responseStyle": "combative",
+        "meetingRoleMode": "participant",
+        "forbiddenTopics": [],
+        "stopConditions": [
+          "验证码",
+          "OTP",
+          "2FA"
+        ]
+      }
+    },
+    "designer": {
+      "id": "designer",
+      "name": "珊瑚水母",
+      "emoji": "🪼",
+      "personality": "你是视觉设计专家。当需要生成图片时，请先输出一段英文图片生成提示词（以 [IMAGE_PROMPT] 开头），然后再输出设计方案说明。",
+      "model": "doubao-seed-2.0-lite",
+      "providerId": "volcengine-coding-uikol2z0",
+      "skills": [
+        "frontend",
+        "doc_word",
+        "doc_ppt",
+        "doc_excel",
+        "screenshot",
+        "image_edit",
+        "find_skills",
+        "skill_creator",
+        "ontology",
+        "api_gateway",
+        "playwright_automation",
+        "web_search_plus",
+        "self_improving_agent",
+        "market_research",
+        "channel_support_triage",
+        "sales_follow_up",
+        "content_planning",
+        "content_publishing",
+        "ticket_resolution",
+        "approval_guardrails",
+        "desktop_takeover",
+        "local_app_operator",
+        "knowledge_maintenance",
+        "workflow_restage",
+        "remote_supervision",
+        "quote_proposal",
+        "lead_enrichment",
+        "customer_research",
+        "meeting_briefing",
+        "executive_reporting",
+        "campaign_review",
+        "incident_response",
+        "crm_hygiene"
+      ],
+      "governance": {
+        "toolAccess": "no_desktop",
+        "memoryWriteScope": "execution_events",
+        "escalationMode": "manual_first",
+        "responseStyle": "assertive",
+        "meetingRoleMode": "participant",
+        "forbiddenTopics": [],
+        "stopConditions": [
+          "验证码",
+          "OTP",
+          "2FA"
+        ]
+      }
+    },
+    "performer": {
+      "id": "performer",
+      "name": "逐浪海豚",
+      "emoji": "🐬",
+      "personality": "你是内容与短视频专家，擅长脚本策划、多平台内容策略和传播节奏设计。",
+      "model": "doubao-seed-2.0-lite",
+      "providerId": "volcengine-coding-uikol2z0",
+      "skills": [
+        "frontend",
+        "doc_word",
+        "doc_ppt",
+        "doc_excel",
+        "screenshot",
+        "image_edit",
+        "find_skills",
+        "skill_creator",
+        "ontology",
+        "api_gateway",
+        "playwright_automation",
+        "web_search_plus",
+        "self_improving_agent",
+        "market_research",
+        "channel_support_triage",
+        "sales_follow_up",
+        "content_planning",
+        "content_publishing",
+        "ticket_resolution",
+        "approval_guardrails",
+        "desktop_takeover",
+        "local_app_operator",
+        "knowledge_maintenance",
+        "workflow_restage",
+        "remote_supervision",
+        "quote_proposal",
+        "lead_enrichment",
+        "customer_research",
+        "meeting_briefing",
+        "executive_reporting",
+        "campaign_review",
+        "incident_response",
+        "crm_hygiene"
+      ],
+      "governance": {
+        "toolAccess": "no_desktop",
+        "memoryWriteScope": "execution_events",
+        "escalationMode": "manual_first",
+        "responseStyle": "assertive",
+        "meetingRoleMode": "participant",
+        "forbiddenTopics": [],
+        "stopConditions": [
+          "验证码",
+          "OTP",
+          "2FA"
+        ]
+      }
+    },
+    "greeter": {
+      "id": "greeter",
+      "name": "招潮蟹",
+      "emoji": "🦀",
+      "personality": "你是对话与客服专家，擅长客服话术、评论回复、互动策略与友好专业表达。",
+      "model": "doubao-seed-2.0-code",
+      "providerId": "volcengine-coding-uikol2z0",
+      "skills": [
+        "frontend",
+        "doc_word",
+        "doc_ppt",
+        "doc_excel",
+        "screenshot",
+        "image_edit",
+        "find_skills",
+        "skill_creator",
+        "ontology",
+        "api_gateway",
+        "playwright_automation",
+        "web_search_plus",
+        "self_improving_agent",
+        "market_research",
+        "channel_support_triage",
+        "sales_follow_up",
+        "content_planning",
+        "content_publishing",
+        "ticket_resolution",
+        "approval_guardrails",
+        "desktop_takeover",
+        "local_app_operator",
+        "knowledge_maintenance",
+        "workflow_restage",
+        "remote_supervision",
+        "quote_proposal",
+        "lead_enrichment",
+        "customer_research",
+        "meeting_briefing",
+        "executive_reporting",
+        "campaign_review",
+        "incident_response",
+        "crm_hygiene"
+      ],
+      "governance": {
+        "toolAccess": "no_desktop",
+        "memoryWriteScope": "execution_events",
+        "escalationMode": "manual_first",
+        "responseStyle": "assertive",
+        "meetingRoleMode": "participant",
+        "forbiddenTopics": [],
+        "stopConditions": [
+          "验证码",
+          "OTP",
+          "2FA"
+        ]
+      }
+    }
+  },
+  "platformConfigs": {
+    "telegram": {
+      "enabled": true,
+      "fields": {
+        "botToken": "8246778735:AAGUnsxj_O_p1w7GLnQrsoOZ8tlc1Ru2ucc",
+        "defaultChatId": "6470391105",
+        "proxy": "http://127.0.0.1:9974"
+      },
+      "status": "connected",
+      "detail": "连接器已启动，可直接接收和发送消息。",
+      "healthScore": 100,
+      "lastDebugAction": "send_test_message",
+      "lastDebugOk": true,
+      "lastDebugStatus": "sent",
+      "lastDebugMessage": "已向 6470391105 发送测试消息",
+      "lastDebugTarget": "6470391105",
+      "lastDebugAt": 1775686778605,
+      "debugHistory": [
+        {
+          "action": "send_test_message",
+          "ok": false,
+          "status": "failed",
+          "target": "qa-final-002",
+          "message": "ETELEGRAM: 400 Bad Request: chat not found",
+          "at": 1775590129730
+        },
+        {
+          "action": "send_test_message",
+          "ok": false,
+          "status": "failed",
+          "target": "@test0571bot",
+          "message": "ETELEGRAM: 400 Bad Request: chat not found",
+          "at": 1775591047447
+        },
+        {
+          "action": "send_test_message",
+          "ok": false,
+          "status": "failed",
+          "target": "test0571bot",
+          "message": "ETELEGRAM: 400 Bad Request: chat not found",
+          "at": 1775591054666
+        },
+        {
+          "action": "send_test_message",
+          "ok": false,
+          "status": "failed",
+          "target": "test0571bot",
+          "message": "ETELEGRAM: 400 Bad Request: chat not found",
+          "at": 1775591060971
+        },
+        {
+          "action": "send_test_message",
+          "ok": false,
+          "status": "failed",
+          "target": "@test0571bot",
+          "message": "ETELEGRAM: 400 Bad Request: chat not found",
+          "at": 1775591197316
+        },
+        {
+          "action": "send_test_message",
+          "ok": false,
+          "status": "failed",
+          "target": "@test0571bot",
+          "message": "ETELEGRAM: 400 Bad Request: chat not found",
+          "at": 1775591816647
+        },
+        {
+          "action": "send_test_message",
+          "ok": true,
+          "status": "sent",
+          "target": "6470391105",
+          "message": "已向 6470391105 发送测试消息",
+          "at": 1775592866508
+        },
+        {
+          "action": "send_test_message",
+          "ok": true,
+          "status": "sent",
+          "target": "6470391105",
+          "message": "已向 6470391105 发送测试消息",
+          "at": 1775686778605
+        }
+      ],
+      "lastCheckedAt": 1776230879751,
+      "pendingEvents": 0,
+      "lastEventAt": 1775686778628,
+      "lastInboundAt": 1775686774966,
+      "lastInboundMessageKey": "telegram:6470391105:30",
+      "accountLabel": "chat:6470391105",
+      "lastOutboundFailureAt": 1775591816646,
+      "outboundRetryCount": 0,
+      "recentFailedMessages": [
+        {
+          "target": "qa-final-002",
+          "message": "这是一条平台联调测试消息。",
+          "reason": "ETELEGRAM: 400 Bad Request: chat not found",
+          "at": 1775590129729,
+          "retryCount": 1
+        },
+        {
+          "target": "@test0571bot",
+          "message": "这是一条平台联调测试消息。",
+          "reason": "ETELEGRAM: 400 Bad Request: chat not found",
+          "at": 1775591047446,
+          "retryCount": 1
+        },
+        {
+          "target": "test0571bot",
+          "message": "这是一条平台联调测试消息。",
+          "reason": "ETELEGRAM: 400 Bad Request: chat not found",
+          "at": 1775591054665,
+          "retryCount": 1
+        },
+        {
+          "target": "test0571bot",
+          "message": "这是一条平台联调测试消息。",
+          "reason": "ETELEGRAM: 400 Bad Request: chat not found",
+          "at": 1775591060970,
+          "retryCount": 1
+        },
+        {
+          "target": "@test0571bot",
+          "message": "这是一条平台联调测试消息。",
+          "reason": "ETELEGRAM: 400 Bad Request: chat not found",
+          "at": 1775591197316,
+          "retryCount": 1
+        },
+        {
+          "target": "@test0571bot",
+          "message": "这是一条平台联调测试消息。",
+          "reason": "ETELEGRAM: 400 Bad Request: chat not found",
+          "at": 1775591816646,
+          "retryCount": 1
+        }
+      ],
+      "lastSyncedAt": 1776230879751,
+      "requireOutboundApproval": false,
+      "lastOutboundSuccessAt": 1775686778628,
+      "lastInboundTarget": "6470391105"
+    },
+    "line": {
+      "enabled": false,
+      "fields": {},
+      "status": "idle",
+      "detail": "当前未启用该连接器。",
+      "healthScore": 0
+    },
+    "feishu": {
+      "enabled": false,
+      "fields": {},
+      "status": "connected",
+      "detail": "渠道会话已人工标记为已处理。",
+      "healthScore": 100,
+      "pendingEvents": 0,
+      "lastEventAt": 1775471034657,
+      "accountLabel": "Feishu App",
+      "lastCheckedAt": 1775471034657
+    },
+    "wecom": {
+      "enabled": false,
+      "fields": {},
+      "status": "idle",
+      "detail": "当前未启用该连接器。",
+      "healthScore": 0
+    }
+  },
+  "userNickname": "您",
+  "semanticMemoryConfig": {
+    "providerId": "local",
+    "autoRecallProjectMemories": true,
+    "autoRecallDeskNotes": true,
+    "autoRecallKnowledgeDocs": true,
+    "pgvector": {
+      "enabled": false,
+      "connectionString": "",
+      "schema": "public",
+      "table": "semantic_memory_documents",
+      "embeddingModel": "text-embedding-3-small",
+      "dimensions": 1536
+    }
+  },
+  "desktopProgramSettings": {
+    "enabled": true,
+    "whitelistMode": false,
+    "favorites": [],
+    "whitelist": [],
+    "inputControl": {
+      "enabled": true,
+      "autoOpenPanelOnAction": true,
+      "requireManualTakeoverForVerification": true
+    }
+  },
+  "skillProvisioning": {
+    "enabled": true,
+    "autoCreateLocalSkills": true
+  },
+  "hermesDispatchSettings": {
+    "activePlannerProfileId": "default",
+    "plannerProfiles": [
+      {
+        "id": "default",
+        "label": "Default Brain",
+        "sessionStateFile": "output/hermes-dispatch/planner-sessions/default.json",
+        "description": "Default Hermes planner conversation."
+      },
+      {
+        "id": "research",
+        "label": "Research Brain",
+        "sessionStateFile": "output/hermes-dispatch/planner-sessions/research.json",
+        "description": "Separate planner context for research and discovery."
+      },
+      {
+        "id": "scratch",
+        "label": "Scratch Brain",
+        "sessionStateFile": "output/hermes-dispatch/planner-sessions/scratch.json",
+        "description": "Temporary planner context for experiments and dry runs."
+      }
+    ]
+  }
+}
